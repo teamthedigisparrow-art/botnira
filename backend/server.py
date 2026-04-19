@@ -33,6 +33,11 @@ EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 RETELL_API_KEY = os.environ.get("RETELL_API_KEY", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 
+# Voice plan limits (minutes per month included in the plan price).
+# When vendor crosses this we auto-pause voice so they can't bleed money.
+PLAN_LIMITS = {"starter": 100, "growth": 500, "pro": 1500}
+EXEMPT_EMAILS = {"kamal@thedigisparrow.com"}  # internal test vendor — no cap, no cost
+
 # Retell client (lazy singleton)
 _retell_client = None
 def get_retell():
@@ -282,6 +287,68 @@ async def seed_admin():
             }
         )
         logger.info("Seeded demo vendor demo@botnira.com / demo123")
+
+    # Ensure internal test vendor (unlimited, never billed)
+    test_email = "kamal@thedigisparrow.com"
+    if not await db.users.find_one({"email": test_email}):
+        tv = new_id()
+        await db.vendors.insert_one({
+            "id": tv,
+            "name": "The Digi Sparrow (Test)",
+            "slug": "digi-sparrow-test",
+            "business_description": (
+                "The Digi Sparrow is a digital marketing agency based in Toronto. "
+                "We help businesses grow through SEO, paid ads, and AI-powered automation. "
+                "Hours: Mon-Fri 10am-6pm ET. Email: hello@thedigisparrow.com."
+            ),
+            "status": "active",
+            "plan": "unlimited",
+            "is_exempt": True,
+            "created_at": now_iso(),
+        })
+        await db.users.insert_one({
+            "id": new_id(),
+            "email": test_email,
+            "password_hash": hash_password("kamal123"),
+            "full_name": "Kamal (Test Vendor)",
+            "role": "vendor",
+            "vendor_id": tv,
+            "created_at": now_iso(),
+        })
+        await db.bots.insert_one({
+            "id": new_id(),
+            "vendor_id": tv,
+            "bot_name": "Sparrow Assistant",
+            "greeting": "Hi! Welcome to The Digi Sparrow — how can I help?",
+            "tone": "warm and witty",
+            "business_description": (
+                "The Digi Sparrow is a digital marketing agency. Services: SEO, Google Ads, "
+                "Meta Ads, AI chatbots, website audits. Hours: Mon-Fri 10am-6pm ET. "
+                "Contact: hello@thedigisparrow.com."
+            ),
+            "faqs": [
+                {"q": "What do you do?", "a": "We help businesses grow with SEO, paid ads, and AI automation."},
+                {"q": "How much does it cost?", "a": "Every project is custom. Share your goals and we'll quote."},
+            ],
+            "fallback_message": "Great question — let me have Kamal follow up with you.",
+            "is_active": True,
+            "updated_at": now_iso(),
+        })
+        for ch in ["web", "whatsapp", "email", "sms", "voice"]:
+            await db.channels.insert_one({
+                "id": new_id(), "vendor_id": tv, "channel": ch,
+                "status": "connected" if ch == "web" else "disconnected",
+                "config": {}, "updated_at": now_iso(),
+            })
+        logger.info("Seeded exempt test vendor %s", test_email)
+    else:
+        # Make sure the exempt flag is present on the vendor doc
+        u = await db.users.find_one({"email": test_email}, {"_id": 0})
+        if u and u.get("vendor_id"):
+            await db.vendors.update_one(
+                {"id": u["vendor_id"]},
+                {"$set": {"is_exempt": True, "plan": "unlimited"}},
+            )
 
     # Ensure demo vendor always has 5 default channels (idempotent)
     demo = await db.users.find_one({"email": demo_email}, {"_id": 0})
@@ -900,6 +967,37 @@ def _build_voice_prompt(bot: dict, vendor: dict) -> str:
     )
 
 
+async def _is_exempt_vendor(vendor_id: str) -> bool:
+    v = await db.vendors.find_one({"id": vendor_id}, {"_id": 0, "is_exempt": 1})
+    return bool(v and v.get("is_exempt"))
+
+
+async def _enforce_voice_quota(vendor_id: str):
+    """If the vendor has used up their included minutes, detach the agent from
+    the phone number so inbound calls stop being answered. Exempt vendors skip."""
+    if await _is_exempt_vendor(vendor_id):
+        return
+    vc = await db.voice_connections.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    if not vc or vc.get("status") != "active":
+        return
+    plan = vc.get("plan", "starter")
+    limit = PLAN_LIMITS.get(plan, 0)
+    used = float(vc.get("minutes_used", 0.0))
+    if limit and used >= limit:
+        try:
+            get_retell().phone_number.update(
+                phone_number=vc["phone_number"],
+                inbound_agent_id=None,
+            )
+        except Exception as e:
+            logger.warning("failed to pause phone agent: %s", e)
+        await db.voice_connections.update_one(
+            {"vendor_id": vendor_id},
+            {"$set": {"status": "paused_quota", "paused_at": now_iso()}},
+        )
+        logger.info("Voice paused for vendor %s (over %s min)", vendor_id, limit)
+
+
 async def sync_retell_llm(vendor_id: str):
     vc = await db.voice_connections.find_one({"vendor_id": vendor_id}, {"_id": 0})
     if not vc or not vc.get("retell_llm_id") or vc.get("status") != "active":
@@ -1036,14 +1134,48 @@ async def voice_status(user: dict = Depends(require_vendor)):
     ).to_list(5000)
     total_seconds = sum(c.get("duration_seconds", 0) for c in calls)
     total_cost = sum(c.get("pricing", {}).get("total_cost", 0) for c in calls)
+    exempt = await _is_exempt_vendor(user["vendor_id"])
+    plan = (vc or {}).get("plan", "starter")
+    limit = None if exempt else PLAN_LIMITS.get(plan, 0)
+    used = float((vc or {}).get("minutes_used", 0.0))
     return {
         "connection": vc,
         "stats_this_month": {
             "calls": len(calls),
             "minutes": round(total_seconds / 60, 1),
-            "cost": round(total_cost, 2),
+            "cost": round(0 if exempt else total_cost, 2),
+        },
+        "quota": {
+            "exempt": exempt,
+            "plan": "unlimited" if exempt else plan,
+            "limit_minutes": limit,   # null if unlimited
+            "used_minutes": round(used, 1),
+            "remaining_minutes": None if exempt else max(0, round((limit or 0) - used, 1)),
+            "paused": (vc or {}).get("status") == "paused_quota",
         },
     }
+
+
+@api_router.post("/voice/resume")
+async def voice_resume(user: dict = Depends(require_vendor)):
+    """Re-enable a paused voice agent (after plan upgrade or month rollover).
+    Admin/upgrade flows can trigger this; we also auto-reset minutes_used."""
+    vc = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not vc:
+        raise HTTPException(status_code=404, detail="Voice not configured")
+    try:
+        get_retell().phone_number.update(
+            phone_number=vc["phone_number"],
+            inbound_agent_id=vc["retell_agent_id"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Resume failed: {str(e)[:200]}")
+    await db.voice_connections.update_one(
+        {"vendor_id": user["vendor_id"]},
+        {"$set": {"status": "active", "minutes_used": 0.0, "cost_accumulated": 0.0,
+                  "resumed_at": now_iso()}},
+    )
+    return {"status": "active"}
 
 
 @api_router.post("/voice/test-call")
@@ -1106,6 +1238,8 @@ async def retell_webhook(request: _FastRequest):
         from_num = call.get("from_number", "")
         to_num = call.get("to_number", "")
         cost = round(duration_s / 60 * 0.13, 4)
+        exempt = await _is_exempt_vendor(vendor_id)
+        meter_cost = 0.0 if exempt else cost
 
         conv = await db.conversations.find_one(
             {"vendor_id": vendor_id, "call_id": call_id}, {"_id": 0}
@@ -1161,8 +1295,10 @@ async def retell_webhook(request: _FastRequest):
         )
         await db.voice_connections.update_one(
             {"vendor_id": vendor_id},
-            {"$inc": {"minutes_used": duration_s / 60, "cost_accumulated": cost}},
+            {"$inc": {"minutes_used": duration_s / 60, "cost_accumulated": meter_cost}},
         )
+        # Pause the agent if the vendor has now exhausted their plan minutes
+        await _enforce_voice_quota(vendor_id)
         if event == "call_ended" and transcript:
             try:
                 bot_text = "\n".join(

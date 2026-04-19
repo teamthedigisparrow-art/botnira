@@ -16,22 +16,32 @@ const META = {
 };
 
 const AREA_CODES = [
-  { code: 415, label: "415 — San Francisco" },
-  { code: 212, label: "212 — New York" },
-  { code: 305, label: "305 — Miami" },
-  { code: 312, label: "312 — Chicago" },
-  { code: 213, label: "213 — Los Angeles" },
-  { code: 206, label: "206 — Seattle" },
-  { code: 617, label: "617 — Boston" },
-  { code: 404, label: "404 — Atlanta" },
-  { code: 469, label: "469 — Dallas" },
-  { code: 702, label: "702 — Las Vegas" },
+  { code: 416, label: "416 — Toronto" },
+  { code: 647, label: "647 — Toronto" },
+  { code: 437, label: "437 — Toronto (GTA)" },
+  { code: 905, label: "905 — Mississauga / Hamilton" },
+  { code: 289, label: "289 — Hamilton / Niagara" },
+  { code: 365, label: "365 — GTA South" },
+  { code: 613, label: "613 — Ottawa" },
+  { code: 343, label: "343 — Ottawa" },
+  { code: 514, label: "514 — Montréal" },
+  { code: 438, label: "438 — Montréal" },
+  { code: 450, label: "450 — Greater Montréal" },
+  { code: 604, label: "604 — Vancouver" },
+  { code: 778, label: "778 — Vancouver" },
+  { code: 236, label: "236 — BC" },
+  { code: 403, label: "403 — Calgary" },
+  { code: 587, label: "587 — Alberta" },
+  { code: 780, label: "780 — Edmonton" },
+  { code: 204, label: "204 — Winnipeg" },
+  { code: 902, label: "902 — Nova Scotia / PEI" },
+  { code: 709, label: "709 — Newfoundland" },
 ];
 
 const PLANS = [
-  { id: "starter", label: "Starter", price: "$49/mo", mins: "100 min incl.", over: "$0.30/min overage" },
-  { id: "growth", label: "Growth", price: "$149/mo", mins: "500 min incl.", over: "$0.25/min overage" },
-  { id: "pro", label: "Pro", price: "$399/mo", mins: "1500 min incl.", over: "$0.20/min overage" },
+  { id: "starter", label: "Starter", price: "$49/mo", mins: "100 min incl.", minsNum: 100, over: "Voice auto-pauses at 100 min" },
+  { id: "growth", label: "Growth", price: "$149/mo", mins: "500 min incl.", minsNum: 500, over: "Voice auto-pauses at 500 min" },
+  { id: "pro", label: "Pro", price: "$399/mo", mins: "1500 min incl.", minsNum: 1500, over: "Voice auto-pauses at 1500 min" },
 ];
 
 export default function Channels() {
@@ -46,7 +56,9 @@ export default function Channels() {
   // Voice state
   const [voice, setVoice] = useState(null);
   const [voiceLoading, setVoiceLoading] = useState(false);
-  const [areaCode, setAreaCode] = useState(415);
+  const areaCodeState = useState(416);
+  const areaCode = areaCodeState[0];
+  const setAreaCode = areaCodeState[1];
   const [plan, setPlan] = useState("starter");
   const [testNumber, setTestNumber] = useState("");
   const [activating, setActivating] = useState(false);
@@ -180,18 +192,61 @@ export default function Channels() {
             <PhoneCall size={20} />
             <div>
               <div className="font-display font-black text-xl">Voice — AI phone receptionist</div>
-              <div className="text-xs opacity-80">Fully BotNira-managed. Pick an area code, we handle the rest.</div>
+              <div className="text-xs opacity-80">BotNira-managed. Pick a Canadian area code, we do the rest.</div>
             </div>
           </div>
-          {isActive && (
-            <span className="badge bg-white text-[#002FA7] border-white">LIVE</span>
-          )}
+          <div className="flex items-center gap-2">
+            {voice?.quota?.exempt && (
+              <span className="badge bg-amber-300 text-black border-black" data-testid="unlimited-badge">⚡ UNLIMITED TEST</span>
+            )}
+            {isActive && !voice?.quota?.paused && (
+              <span className="badge bg-white text-[#002FA7] border-white">LIVE</span>
+            )}
+            {voice?.quota?.paused && (
+              <span className="badge bg-red-500 text-white border-white">PAUSED — QUOTA</span>
+            )}
+          </div>
         </div>
+
+        {/* Auto-pause banner when over quota */}
+        {voice?.quota?.paused && (
+          <div className="bg-red-50 border-b-2 border-black p-4 text-sm" data-testid="quota-pause-banner">
+            <div className="font-display font-bold text-red-800">Voice paused — monthly minutes exhausted</div>
+            <div className="mt-1 text-neutral-800">
+              Inbound calls are not being answered. Upgrade plan or wait for monthly reset.
+              We auto-pause so your account never accidentally overspends.
+            </div>
+            <button
+              data-testid="resume-voice-btn"
+              onClick={async () => {
+                try {
+                  await api.post("/voice/resume");
+                  toast.success("Voice resumed (minutes counter reset)");
+                  loadVoice();
+                } catch { toast.error("Resume failed"); }
+              }}
+              className="mt-3 bg-black text-white font-bold px-4 py-2 border-2 border-black text-xs"
+            >
+              Resume & reset minutes
+            </button>
+          </div>
+        )}
 
         {voiceLoading ? (
           <div className="p-6 font-mono text-sm text-neutral-600">Loading…</div>
         ) : !isActive ? (
           <div className="p-6 space-y-6">
+            {/* Procedure — always visible before activation */}
+            <div className="border-2 border-black p-5 bg-neutral-50" data-testid="voice-procedure">
+              <div className="font-display font-black text-lg">How to get your number (3 steps)</div>
+              <ol className="mt-3 space-y-2 text-sm">
+                <li><span className="font-bold">1.</span> Finish training your bot in <a href="/app/bot" className="underline font-bold">Bot Studio</a> (business description + FAQs). The phone agent uses that info verbatim.</li>
+                <li><span className="font-bold">2.</span> Pick a plan and Canadian area code below.</li>
+                <li><span className="font-bold">3.</span> Click <em>Activate voice</em>. In ~3 seconds you'll have a real Canadian number. Test it with the <em>Call me now</em> button. Share that number on your website & business cards.</li>
+              </ol>
+              <div className="mt-3 text-xs font-mono text-neutral-600">Every call is auto-transcribed into your Inbox. Booked appointments appear in Appointments. Voice auto-pauses when monthly minutes are used up — zero overage risk.</div>
+            </div>
+
             <div className="grid md:grid-cols-3 gap-3">
               {PLANS.map(p => (
                 <label key={p.id} className={`border-2 border-black p-4 cursor-pointer ${plan === p.id ? "bg-[#002FA7] text-white shadow-brutal" : "bg-white hover-lift"}`} data-testid={`plan-${p.id}`}>
@@ -208,7 +263,7 @@ export default function Channels() {
 
             <div className="grid md:grid-cols-2 gap-4 items-end">
               <div>
-                <label className="text-xs font-bold tracking-[0.2em] uppercase mb-1 block">Pick an area code</label>
+                <label className="text-xs font-bold tracking-[0.2em] uppercase mb-1 block">Pick a Canadian area code</label>
                 <select
                   data-testid="area-code-select"
                   value={areaCode}
@@ -228,19 +283,6 @@ export default function Channels() {
                 {activating ? "Activating…" : `Activate voice — ${PLANS.find(p => p.id === plan)?.price}`}
               </button>
             </div>
-
-            <div className="border-2 border-black bg-amber-50 p-4 text-sm flex gap-3" data-testid="voice-info">
-              <Info size={16} className="flex-shrink-0 mt-0.5"/>
-              <div>
-                <div className="font-bold">How it works</div>
-                <ul className="mt-1 list-disc pl-5 space-y-1 text-neutral-800">
-                  <li>We instantly spin up a real US phone number in your chosen area code.</li>
-                  <li>Your Bot Studio training (business description + FAQs) powers the phone agent — same brain as your web chat.</li>
-                  <li>Every call is transcribed and lands in your Inbox. Booked appointments auto-appear on your Appointments page.</li>
-                  <li>You're billed monthly; overage minutes are pro-rated.</li>
-                </ul>
-              </div>
-            </div>
           </div>
         ) : (
           <div className="p-6 space-y-6">
@@ -250,19 +292,52 @@ export default function Channels() {
                 <div className="font-display font-black text-3xl mt-2 tracking-tight">
                   {conn.phone_number_pretty || conn.phone_number}
                 </div>
-                <div className="text-xs font-mono text-neutral-600 mt-1">Plan: {conn.plan?.toUpperCase()}</div>
+                <div className="text-xs font-mono text-neutral-600 mt-1">
+                  Plan: {voice.quota.plan?.toUpperCase()}
+                  {voice.quota.exempt && " • INTERNAL TEST (no charge)"}
+                </div>
               </div>
               <div className="border-2 border-black p-4" data-testid="voice-stats-calls">
                 <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Calls this month</div>
                 <div className="font-display font-black text-3xl mt-2">{voice.stats_this_month.calls}</div>
-                <div className="text-xs font-mono text-neutral-600 mt-1">{voice.stats_this_month.minutes} min</div>
+                <div className="text-xs font-mono text-neutral-600 mt-1">{voice.stats_this_month.minutes} min used</div>
               </div>
               <div className="border-2 border-black p-4" data-testid="voice-stats-cost">
-                <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Cost this month</div>
-                <div className="font-display font-black text-3xl mt-2">${voice.stats_this_month.cost.toFixed(2)}</div>
+                <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Your cost this month</div>
+                <div className="font-display font-black text-3xl mt-2">
+                  {voice.quota.exempt ? "FREE" : `$${voice.stats_this_month.cost.toFixed(2)}`}
+                </div>
                 <div className="text-xs font-mono text-neutral-600 mt-1">metered</div>
               </div>
             </div>
+
+            {/* Quota progress */}
+            {!voice.quota.exempt && voice.quota.limit_minutes && (
+              <div className="border-2 border-black p-4" data-testid="quota-progress">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="font-bold">Plan minutes</div>
+                  <div className="font-mono">
+                    {voice.quota.used_minutes} / {voice.quota.limit_minutes} min
+                    <span className="ml-2 text-neutral-600">({voice.quota.remaining_minutes} left)</span>
+                  </div>
+                </div>
+                <div className="mt-2 h-3 bg-neutral-200 border-2 border-black">
+                  <div
+                    className="h-full bg-[#002FA7]"
+                    style={{ width: `${Math.min(100, (voice.quota.used_minutes / voice.quota.limit_minutes) * 100)}%` }}
+                  />
+                </div>
+                <div className="text-xs font-mono text-neutral-600 mt-2">
+                  Voice will auto-pause at {voice.quota.limit_minutes} minutes. Upgrade your plan for more.
+                </div>
+              </div>
+            )}
+            {voice.quota.exempt && (
+              <div className="border-2 border-black p-4 bg-amber-50 text-sm" data-testid="exempt-note">
+                <div className="font-bold">Internal test vendor</div>
+                <div className="mt-1 text-neutral-800">No minute cap, no BotNira charges. Retell pass-through costs still apply to your Retell account.</div>
+              </div>
+            )}
 
             <div className="border-2 border-black p-4 bg-neutral-50">
               <div className="font-display font-bold mb-2">Test your bot — have it call you</div>
@@ -270,7 +345,7 @@ export default function Channels() {
                 <input
                   data-testid="test-call-input"
                   type="tel"
-                  placeholder="+15551234567"
+                  placeholder="+14165551234"
                   value={testNumber}
                   onChange={e => setTestNumber(e.target.value)}
                   className="flex-1 border-2 border-black px-3 py-2 font-mono"
@@ -283,11 +358,11 @@ export default function Channels() {
                   <PhoneCall size={14}/> Call me now
                 </button>
               </div>
-              <div className="text-xs text-neutral-500 mt-2 font-mono">E.164 format required (must start with +).</div>
+              <div className="text-xs text-neutral-500 mt-2 font-mono">E.164 format required (e.g. +1 for Canada/US).</div>
             </div>
 
             <div className="border-t-2 border-black pt-4 flex items-center justify-between">
-              <div className="text-sm text-neutral-600">Need to pause? Releasing the number cannot be undone.</div>
+              <div className="text-sm text-neutral-600">Deactivating releases the number immediately.</div>
               <button
                 data-testid="deactivate-voice-btn"
                 onClick={deactivateVoice}
