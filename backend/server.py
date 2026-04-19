@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
+import asyncio
 import logging
 import uuid
 import bcrypt
@@ -268,6 +269,25 @@ async def seed_admin():
         )
         logger.info("Seeded demo vendor demo@botnira.com / demo123")
 
+    # Ensure demo vendor always has 5 default channels (idempotent)
+    demo = await db.users.find_one({"email": demo_email}, {"_id": 0})
+    if demo and demo.get("vendor_id"):
+        for ch in ["web", "whatsapp", "email", "sms", "voice"]:
+            existing_ch = await db.channels.find_one(
+                {"vendor_id": demo["vendor_id"], "channel": ch}
+            )
+            if not existing_ch:
+                await db.channels.insert_one(
+                    {
+                        "id": new_id(),
+                        "vendor_id": demo["vendor_id"],
+                        "channel": ch,
+                        "status": "connected" if ch == "web" else "disconnected",
+                        "config": {},
+                        "updated_at": now_iso(),
+                    }
+                )
+
 
 # ------------------------------ Auth routes ----------------------------------
 @api_router.post("/auth/signup")
@@ -416,7 +436,6 @@ async def get_ai_reply(vendor_id: str, conversation_id: str, user_text: str) -> 
         return bot.get("fallback_message", "I'm not able to respond right now.")
 
     system_prompt = build_system_prompt(bot, vendor)
-    # Include last 8 messages as context
     history = await db.messages.find(
         {"conversation_id": conversation_id}, {"_id": 0}
     ).sort("created_at", 1).to_list(50)
@@ -428,17 +447,32 @@ async def get_ai_reply(vendor_id: str, conversation_id: str, user_text: str) -> 
         if history_txt
         else user_text
     )
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=conversation_id,
-            system_message=system_prompt,
-        ).with_model("openai", "gpt-5.2")
-        reply = await chat.send_message(UserMessage(text=composed))
-        return (reply or "").strip() or bot.get("fallback_message", "…")
-    except Exception as e:
-        logger.exception("LLM error: %s", e)
-        return bot.get("fallback_message", "Sorry, I'm having trouble responding.")
+
+    # Try providers in order; auto-fallback if one is down.
+    # NOTE: OpenAI GPT-5.2 proxy had a 502 outage — Claude Sonnet 4.5 is
+    # primary until that recovers (behavior is identical for grounded Q&A).
+    providers = [
+        ("anthropic", "claude-sonnet-4-5-20250929"),
+        ("gemini", "gemini-2.5-flash"),
+        ("openai", "gpt-5.2"),
+    ]
+    for provider, model in providers:
+        try:
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=conversation_id,
+                system_message=system_prompt,
+            ).with_model(provider, model)
+            reply = await asyncio.wait_for(
+                chat.send_message(UserMessage(text=composed)), timeout=15
+            )
+            reply = (reply or "").strip()
+            if reply:
+                return reply
+        except Exception as e:
+            logger.warning("LLM %s/%s failed: %s", provider, model, str(e)[:120])
+            continue
+    return bot.get("fallback_message", "Sorry, I'm having trouble responding.")
 
 
 async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str):

@@ -28,7 +28,7 @@ export default function Login() {
         <Link to="/" className="font-display font-black text-2xl" data-testid="login-brand">BotNira</Link>
         <div>
           <div className="font-display text-5xl font-black leading-none tracking-tighter">Your AI<br/>front desk<br/>is one login<br/>away.</div>
-          <div className="mt-6 font-mono text-xs opacity-80">DEMO VENDOR — demo@botnira.com / demo123<br/>SUPERADMIN — admin@botnira.com / admin123</div>
+          <div className="mt-6 font-mono text-xs opacity-80">MULTI-TENANT • ISOLATED • 24/7</div>
         </div>
         <div className="font-mono text-xs opacity-80">© BotNira 2026</div>
       </div>
