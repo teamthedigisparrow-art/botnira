@@ -30,6 +30,19 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALG = "HS256"
 JWT_EXP_HOURS = 24 * 7
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+RETELL_API_KEY = os.environ.get("RETELL_API_KEY", "")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
+
+# Retell client (lazy singleton)
+_retell_client = None
+def get_retell():
+    global _retell_client
+    if _retell_client is None:
+        if not RETELL_API_KEY:
+            raise HTTPException(status_code=503, detail="Voice service not configured")
+        from retell import Retell
+        _retell_client = Retell(api_key=RETELL_API_KEY)
+    return _retell_client
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -400,6 +413,11 @@ async def update_bot(payload: BotUpdate, user: dict = Depends(require_vendor)):
     update["updated_at"] = now_iso()
     await db.bots.update_one({"vendor_id": user["vendor_id"]}, {"$set": update})
     bot = await db.bots.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    # Keep the Retell voice LLM in sync so chat + phone always say the same thing.
+    try:
+        await sync_retell_llm(user["vendor_id"])
+    except Exception as e:
+        logger.warning("sync_retell_llm after bot update failed: %s", e)
     return bot
 
 
@@ -647,7 +665,12 @@ async def get_conversation(cid: str, user: dict = Depends(require_vendor)):
     messages = await db.messages.find(
         {"conversation_id": cid}, {"_id": 0}
     ).sort("created_at", 1).to_list(1000)
-    return {"conversation": conv, "messages": messages}
+    call = None
+    if conv.get("channel") == "voice" and conv.get("call_id"):
+        call = await db.call_records.find_one(
+            {"vendor_id": user["vendor_id"], "call_id": conv["call_id"]}, {"_id": 0}
+        )
+    return {"conversation": conv, "messages": messages, "call": call}
 
 
 @api_router.post("/conversations/{cid}/resolve")
@@ -843,6 +866,314 @@ async def public_bot(vendor_id: str):
 @api_router.get("/")
 async def root():
     return {"service": "BotNira", "status": "ok"}
+
+
+# ============================== Voice (Retell AI) ============================
+class VoiceActivateReq(BaseModel):
+    area_code: Optional[int] = None
+    voice_id: Optional[str] = "11labs-Adrian"
+    plan: Optional[str] = "starter"
+
+
+class TestCallReq(BaseModel):
+    to_number: str
+
+
+def _build_voice_prompt(bot: dict, vendor: dict) -> str:
+    faqs = "\n".join(
+        f"Q: {f.get('q','')}\nA: {f.get('a','')}" for f in bot.get("faqs", []) if f.get("q")
+    )
+    fallback = bot.get("fallback_message", "I am not sure about that. A team member will follow up.")
+    return (
+        f"# Identity\n"
+        f"You are {bot.get('bot_name','BotNira')}, the AI phone receptionist for \"{vendor.get('name','this business')}\".\n"
+        f"Tone: {bot.get('tone','friendly and professional')}.\n\n"
+        f"# Business information (your ONLY source of truth)\n{bot.get('business_description','')}\n\n"
+        f"# Frequently asked questions\n{faqs if faqs else '(none)'}\n\n"
+        f"# Strict rules\n"
+        f"- Answer ONLY using the business information and FAQs above.\n"
+        f"- If the answer is not covered, say: \"{fallback}\"\n"
+        f"- Do not invent hours, prices, locations, services, or policies.\n"
+        f"- Never answer unrelated general-knowledge questions; steer back to the business.\n"
+        f"- Keep each response to 1-2 short sentences. Speak naturally — this is a phone call.\n"
+        f"- For appointments collect: full name, phone or email, preferred date/time, reason. Confirm the details back clearly."
+    )
+
+
+async def sync_retell_llm(vendor_id: str):
+    vc = await db.voice_connections.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    if not vc or not vc.get("retell_llm_id") or vc.get("status") != "active":
+        return
+    bot = await db.bots.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    if not bot or not vendor:
+        return
+    try:
+        get_retell().llm.update(
+            llm_id=vc["retell_llm_id"],
+            general_prompt=_build_voice_prompt(bot, vendor),
+            begin_message=bot.get("greeting", "Hello, how can I help?"),
+        )
+        await db.voice_connections.update_one(
+            {"vendor_id": vendor_id}, {"$set": {"last_synced_at": now_iso()}}
+        )
+    except Exception as e:
+        logger.warning("Retell LLM sync failed for %s: %s", vendor_id, str(e)[:120])
+
+
+@api_router.post("/voice/activate")
+async def voice_activate(req: VoiceActivateReq, user: dict = Depends(require_vendor)):
+    if not RETELL_API_KEY or not PUBLIC_BASE_URL:
+        raise HTTPException(status_code=503, detail="Voice service not configured")
+
+    existing = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if existing and existing.get("status") == "active":
+        return {"status": "already_active", "connection": existing}
+
+    bot = await db.bots.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    if not bot or not vendor:
+        raise HTTPException(status_code=400, detail="Bot or vendor missing")
+
+    rc = get_retell()
+    webhook_url = f"{PUBLIC_BASE_URL}/api/webhooks/retell"
+    llm = None
+    agent = None
+    try:
+        llm = rc.llm.create(
+            general_prompt=_build_voice_prompt(bot, vendor),
+            begin_message=bot.get("greeting", "Hello, how can I help?"),
+        )
+        agent = rc.agent.create(
+            response_engine={"type": "retell-llm", "llm_id": llm.llm_id},
+            voice_id=req.voice_id or "11labs-Adrian",
+            agent_name=f"{vendor['name']} Voice"[:64],
+            language="en-US",
+            webhook_url=webhook_url,
+        )
+        phone = rc.phone_number.create(
+            inbound_agent_id=agent.agent_id,
+            area_code=req.area_code,
+        )
+    except Exception as e:
+        logger.exception("Retell activation failed")
+        # rollback partial resources so we don't leak them
+        try:
+            if agent:
+                rc.agent.delete(agent.agent_id)
+        except Exception:
+            pass
+        msg = str(e)
+        if "card on file" in msg.lower() or "402" in msg:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    "Retell requires a payment method before provisioning phone numbers. "
+                    "Please add a card at https://dashboard.retellai.com/billing, then try again. "
+                    "(Your $10 free credit covers LLM/voice usage but not number rental.)"
+                ),
+            )
+        raise HTTPException(status_code=502, detail=f"Retell activation failed: {msg[:220]}")
+
+    conn = {
+        "id": new_id(),
+        "vendor_id": user["vendor_id"],
+        "retell_llm_id": llm.llm_id,
+        "retell_agent_id": agent.agent_id,
+        "phone_number": phone.phone_number,
+        "phone_number_pretty": getattr(phone, "phone_number_pretty", phone.phone_number),
+        "area_code": req.area_code,
+        "voice_id": req.voice_id or "11labs-Adrian",
+        "plan": req.plan or "starter",
+        "status": "active",
+        "webhook_url": webhook_url,
+        "minutes_used": 0.0,
+        "cost_accumulated": 0.0,
+        "created_at": now_iso(),
+    }
+    await db.voice_connections.replace_one(
+        {"vendor_id": user["vendor_id"]}, conn, upsert=True
+    )
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "voice"},
+        {"$set": {"status": "connected", "updated_at": now_iso()}},
+    )
+    return {"status": "active", "connection": conn}
+
+
+@api_router.post("/voice/deactivate")
+async def voice_deactivate(user: dict = Depends(require_vendor)):
+    vc = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not vc:
+        return {"status": "inactive"}
+    rc = get_retell()
+    try:
+        if vc.get("phone_number"):
+            try: rc.phone_number.delete(vc["phone_number"])
+            except Exception as e: logger.warning("phone delete failed: %s", e)
+        if vc.get("retell_agent_id"):
+            try: rc.agent.delete(vc["retell_agent_id"])
+            except Exception as e: logger.warning("agent delete failed: %s", e)
+    finally:
+        await db.voice_connections.update_one(
+            {"vendor_id": user["vendor_id"]},
+            {"$set": {"status": "inactive", "deactivated_at": now_iso()}},
+        )
+        await db.channels.update_one(
+            {"vendor_id": user["vendor_id"], "channel": "voice"},
+            {"$set": {"status": "disconnected", "updated_at": now_iso()}},
+        )
+    return {"status": "inactive"}
+
+
+@api_router.get("/voice/status")
+async def voice_status(user: dict = Depends(require_vendor)):
+    vc = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    calls = await db.call_records.find(
+        {"vendor_id": user["vendor_id"], "created_at": {"$gte": month_start}},
+        {"_id": 0},
+    ).to_list(5000)
+    total_seconds = sum(c.get("duration_seconds", 0) for c in calls)
+    total_cost = sum(c.get("pricing", {}).get("total_cost", 0) for c in calls)
+    return {
+        "connection": vc,
+        "stats_this_month": {
+            "calls": len(calls),
+            "minutes": round(total_seconds / 60, 1),
+            "cost": round(total_cost, 2),
+        },
+    }
+
+
+@api_router.post("/voice/test-call")
+async def voice_test_call(req: TestCallReq, user: dict = Depends(require_vendor)):
+    vc = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not vc or vc.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Voice not activated")
+    to = req.to_number.strip()
+    if not to.startswith("+"):
+        raise HTTPException(status_code=400, detail="Use E.164 format, e.g. +15551234567")
+    try:
+        call = get_retell().call.create_phone_call(
+            from_number=vc["phone_number"],
+            to_number=to,
+            override_agent_id=vc["retell_agent_id"],
+            metadata={"vendor_id": user["vendor_id"], "test": "true"},
+        )
+        return {"call_id": call.call_id, "status": getattr(call, "call_status", "initiated")}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Call failed: {str(e)[:220]}")
+
+
+from fastapi import Request as _FastRequest
+
+@api_router.post("/webhooks/retell")
+async def retell_webhook(request: _FastRequest):
+    raw = await request.body()
+    try:
+        sig = request.headers.get("x-retell-signature", "")
+        if sig and RETELL_API_KEY:
+            try:
+                get_retell().verify(raw, RETELL_API_KEY, sig)
+            except Exception:
+                logger.warning("Retell signature invalid (continuing)")
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        logger.exception("webhook parse failed: %s", e)
+        return {"ok": True}
+
+    event = payload.get("event")
+    call = payload.get("call", {}) or {}
+    agent_id = call.get("agent_id")
+    if not agent_id:
+        return {"ok": True}
+    vc = await db.voice_connections.find_one({"retell_agent_id": agent_id}, {"_id": 0})
+    if not vc:
+        logger.warning("Retell webhook for unknown agent %s", agent_id)
+        return {"ok": True}
+    vendor_id = vc["vendor_id"]
+
+    if event in ("call_ended", "call_analyzed"):
+        call_id = call.get("call_id")
+        start = call.get("start_timestamp") or 0
+        end = call.get("end_timestamp") or 0
+        duration_s = max(0, int((end - start) / 1000)) if end and start else 0
+        transcript = call.get("transcript") or ""
+        transcript_obj = call.get("transcript_object") or []
+        recording = call.get("recording_url")
+        analysis = call.get("call_analysis") or {}
+        from_num = call.get("from_number", "")
+        to_num = call.get("to_number", "")
+        cost = round(duration_s / 60 * 0.13, 4)
+
+        conv = await db.conversations.find_one(
+            {"vendor_id": vendor_id, "call_id": call_id}, {"_id": 0}
+        )
+        if not conv:
+            conv = {
+                "id": new_id(),
+                "vendor_id": vendor_id,
+                "channel": "voice",
+                "customer_name": from_num or "Caller",
+                "customer_contact": from_num,
+                "status": "resolved" if event == "call_ended" else "open",
+                "call_id": call_id,
+                "last_message_preview": (transcript[:120] if transcript else "Voice call"),
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+            }
+            await db.conversations.insert_one(conv)
+
+        if event == "call_ended" and transcript_obj:
+            await db.messages.delete_many({"conversation_id": conv["id"]})
+            for turn in transcript_obj:
+                role_in = (turn.get("role") or "").lower()
+                role = "bot" if role_in in ("agent", "assistant") else "user"
+                await db.messages.insert_one({
+                    "id": new_id(),
+                    "conversation_id": conv["id"],
+                    "vendor_id": vendor_id,
+                    "role": role,
+                    "content": turn.get("content", ""),
+                    "created_at": now_iso(),
+                })
+
+        await db.call_records.update_one(
+            {"vendor_id": vendor_id, "call_id": call_id},
+            {"$set": {
+                "id": new_id(),
+                "vendor_id": vendor_id,
+                "call_id": call_id,
+                "retell_agent_id": agent_id,
+                "conversation_id": conv["id"],
+                "direction": call.get("direction", "inbound"),
+                "from_number": from_num,
+                "to_number": to_num,
+                "duration_seconds": duration_s,
+                "disconnection_reason": call.get("disconnection_reason"),
+                "recording_url": recording,
+                "transcript": transcript,
+                "analysis": analysis,
+                "pricing": {"total_cost": cost},
+                "created_at": now_iso(),
+            }}, upsert=True,
+        )
+        await db.voice_connections.update_one(
+            {"vendor_id": vendor_id},
+            {"$inc": {"minutes_used": duration_s / 60, "cost_accumulated": cost}},
+        )
+        if event == "call_ended" and transcript:
+            try:
+                bot_text = "\n".join(
+                    t.get("content", "") for t in transcript_obj
+                    if (t.get("role") or "").lower() in ("agent", "assistant")
+                )[-1500:]
+                await _maybe_book_appointment(vendor_id, conv["id"], bot_text)
+            except Exception as e:
+                logger.warning("voice auto-book failed: %s", e)
+
+    return {"ok": True}
 
 
 # ------------------------------ App setup ------------------------------------

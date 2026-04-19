@@ -94,12 +94,30 @@ export default function Inbox() {
       <div className="flex flex-col h-full min-h-0">
         <div className="h-16 border-b-2 border-black px-6 flex items-center justify-between bg-white">
           <div>
-            <div className="font-display font-black text-lg">{detail?.conversation?.customer_name || "—"}</div>
+            <div className="font-display font-black text-lg flex items-center gap-2">
+              {detail?.conversation?.customer_name || "—"}
+              {detail?.conversation?.channel === "voice" && (
+                <span className="badge bg-[#002FA7] text-white border-black"><Phone size={10}/> VOICE CALL</span>
+              )}
+            </div>
             <div className="text-xs font-mono text-neutral-600">{detail?.conversation?.customer_contact || ""}</div>
           </div>
-          {detail?.conversation && detail.conversation.status !== "resolved" && (
-            <button data-testid="resolve-btn" onClick={resolve} className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-white flex items-center gap-2"><CheckCircle2 size={14}/> Mark resolved</button>
-          )}
+          <div className="flex items-center gap-2">
+            {detail?.call?.recording_url && (
+              <a
+                href={detail.call.recording_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="play-recording"
+                className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-white flex items-center gap-2"
+              >
+                🎧 Play recording
+              </a>
+            )}
+            {detail?.conversation && detail.conversation.status !== "resolved" && (
+              <button data-testid="resolve-btn" onClick={resolve} className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-white flex items-center gap-2"><CheckCircle2 size={14}/> Mark resolved</button>
+            )}
+          </div>
         </div>
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 bg-neutral-50" data-testid="thread-messages">
           {detail?.messages?.map(m => {
