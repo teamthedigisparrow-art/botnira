@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
+import json
 import asyncio
 import logging
 import uuid
@@ -420,7 +421,7 @@ Your tone: {bot.get('tone','friendly and professional')}.
 2. If the answer is not clearly covered, reply exactly: "{bot.get('fallback_message', 'I am not sure about that.')}"
 3. Do NOT invent hours, prices, locations, policies, or services.
 4. Never answer unrelated general-knowledge questions; politely steer back to the business.
-5. If the user wants to book an appointment, collect: full name, phone/email, preferred date/time, reason. Confirm back the details.
+5. If the user wants to book an appointment, collect (one question at a time if needed): full name, phone or email, preferred date AND time, reason for the visit. Once you have all four, CONFIRM by restating the details and saying something like "You're booked for <date time>, <name>" — that confirmation is what registers the appointment.
 6. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
 7. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
 8. Never use markdown tables. Use **bold** only for key details (price, date, phone).
@@ -476,6 +477,83 @@ async def get_ai_reply(vendor_id: str, conversation_id: str, user_text: str) -> 
             logger.warning("LLM %s/%s failed: %s", provider, model, str(e)[:120])
             continue
     return bot.get("fallback_message", "Sorry, I'm having trouble responding.")
+
+
+# --------- Appointment auto-extraction from chat transcripts ---------------
+_BOOKING_KEYWORDS = re.compile(
+    r"\b(book(?:ed|ing)?|schedul(?:ed|e|ing)?|reserved?|confirm(?:ed)?|"
+    r"appointment|see you on|slot|i['\u2019]ve set|you['\u2019]re set)\b",
+    re.IGNORECASE,
+)
+
+
+async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_bot_reply: str):
+    """If the bot just confirmed a booking, extract structured info and save it.
+
+    Fires only when (a) the bot's newest reply contains booking keywords AND
+    (b) this conversation does not already have an appointment row.
+    Uses a second, cheap LLM pass that must return JSON only.
+    """
+    if not latest_bot_reply or not _BOOKING_KEYWORDS.search(latest_bot_reply):
+        return None
+    existing = await db.appointments.find_one({"conversation_id": conversation_id})
+    if existing:
+        return None
+    if not EMERGENT_LLM_KEY:
+        return None
+
+    msgs = await db.messages.find(
+        {"conversation_id": conversation_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(10)
+    msgs.reverse()
+    transcript = "\n".join(
+        f"{m['role'].upper()}: {m['content']}" for m in msgs
+    )
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    system = (
+        "You extract confirmed appointment bookings from customer-bot chat transcripts. "
+        f"Today's date is {today}. "
+        "Respond with STRICT JSON (no markdown fences, no prose). "
+        'If a booking was just CONFIRMED (customer supplied name AND phone/email AND '
+        'a specific date/time, AND the bot acknowledged it), return: '
+        '{"booked": true, "customer_name": "...", "customer_contact": "...", '
+        '"scheduled_at": "YYYY-MM-DDTHH:MM", "notes": "short summary"}. '
+        'Otherwise return: {"booked": false}. '
+        "Resolve relative dates (tomorrow, Saturday) against today's date."
+    )
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"extract-{conversation_id}",
+            system_message=system,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        raw = await asyncio.wait_for(
+            chat.send_message(UserMessage(text=transcript)), timeout=10
+        )
+        raw = (raw or "").strip()
+        # strip code fences if model sneaks them in
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
+        data = json.loads(raw)
+        if not data.get("booked"):
+            return None
+        appt = {
+            "id": new_id(),
+            "vendor_id": vendor_id,
+            "customer_name": data.get("customer_name", "Guest") or "Guest",
+            "customer_contact": data.get("customer_contact", "") or "",
+            "scheduled_at": data.get("scheduled_at", "") or "",
+            "notes": data.get("notes", "Booked via BotNira chat"),
+            "status": "scheduled",
+            "conversation_id": conversation_id,
+            "created_at": now_iso(),
+        }
+        await db.appointments.insert_one(appt)
+        logger.info("Auto-booked appointment for vendor=%s conv=%s", vendor_id, conversation_id)
+        return {k: v for k, v in appt.items() if k != "_id"}
+    except Exception as e:
+        logger.warning("booking extraction failed: %s", str(e)[:120])
+        return None
 
 
 async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str):
@@ -539,6 +617,7 @@ async def chat_message(req: ChatMessageReq):
     await _push_message(conv["id"], req.vendor_id, "user", req.message)
     reply = await get_ai_reply(req.vendor_id, conv["id"], req.message)
     bot_msg = await _push_message(conv["id"], req.vendor_id, "bot", reply)
+    await _maybe_book_appointment(req.vendor_id, conv["id"], reply)
     return {"conversation_id": conv["id"], "reply": reply, "message": bot_msg}
 
 
@@ -608,6 +687,7 @@ async def simulate_inbound(
     await _push_message(conv["id"], user["vendor_id"], "user", req.message)
     reply = await get_ai_reply(user["vendor_id"], conv["id"], req.message)
     await _push_message(conv["id"], user["vendor_id"], "bot", reply)
+    await _maybe_book_appointment(user["vendor_id"], conv["id"], reply)
     return {"conversation_id": conv["id"], "reply": reply}
 
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
-import { Globe, MessageCircle, Mail, MessageSquare, Phone, PlayCircle } from "lucide-react";
+import { Globe, MessageCircle, Mail, MessageSquare, Phone, PlayCircle, Copy, ExternalLink, Check } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
 const META = {
@@ -19,6 +19,7 @@ export default function Channels() {
   const [simName, setSimName] = useState("Alex Customer");
   const [simMsg, setSimMsg] = useState("What are your hours?");
   const [simResp, setSimResp] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const load = () => api.get("/channels").then(r => setList(r.data));
   useEffect(() => { load(); }, []);
@@ -35,7 +36,19 @@ export default function Channels() {
     toast.success("Inbound simulated — check inbox");
   };
 
-  const embed = `<script src="${window.location.origin}/widget.js" data-botnira-vendor="${vendor?.id}"></script>`;
+  const widgetOrigin = process.env.REACT_APP_BACKEND_URL || window.location.origin;
+  const embed = `<script src="${widgetOrigin}/widget.js" data-botnira-vendor="${vendor?.id || ""}" defer></script>`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(embed);
+      setCopied(true);
+      toast.success("Snippet copied");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Copy failed — select and copy manually");
+    }
+  };
 
   return (
     <div className="p-8 space-y-8" data-testid="channels-page">
@@ -64,15 +77,74 @@ export default function Channels() {
         })}
       </div>
 
-      <div className="border-2 border-black bg-white p-6">
-        <div className="font-display font-black text-2xl">Embed the web widget</div>
-        <p className="text-sm text-neutral-600 mt-1">Paste this snippet in your website to enable BotNira chat.</p>
-        <pre className="mt-4 border-2 border-black bg-neutral-950 text-white p-4 font-mono text-xs overflow-x-auto" data-testid="embed-snippet">{embed}</pre>
+      {/* Web widget installer */}
+      <div className="border-2 border-black bg-white p-6" data-testid="web-install">
+        <div className="flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <div className="font-display font-black text-2xl">Install the web widget</div>
+            <p className="text-sm text-neutral-600 mt-1 max-w-2xl">
+              Paste this snippet just before <code className="font-mono text-xs bg-neutral-100 px-1 border border-black/20">&lt;/body&gt;</code> on your website (HTML, WordPress, PHP, Shopify, anything).
+              It loads only YOUR trained BotNira — all conversations are scoped to your vendor ID.
+            </p>
+          </div>
+          <a
+            href={`${widgetOrigin}/widget.js`}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="widget-js-link"
+            className="text-sm font-bold border-2 border-black px-3 py-2 bg-white hover-lift inline-flex items-center gap-2"
+          >
+            View widget.js <ExternalLink size={14}/>
+          </a>
+        </div>
+
+        <div className="mt-4 relative">
+          <pre
+            className="border-2 border-black bg-neutral-950 text-white p-4 font-mono text-xs overflow-x-auto whitespace-pre-wrap break-all"
+            data-testid="embed-snippet"
+          >{embed}</pre>
+          <button
+            onClick={copy}
+            data-testid="copy-embed-btn"
+            className="absolute top-2 right-2 bg-white text-black font-bold text-xs px-3 py-1 border-2 border-white shadow-brutal flex items-center gap-1"
+          >
+            {copied ? <><Check size={12}/> Copied</> : <><Copy size={12}/> Copy</>}
+          </button>
+        </div>
+
+        <div className="mt-5 grid md:grid-cols-3 gap-3 text-xs font-mono">
+          <div className="border-2 border-black p-3">
+            <div className="font-bold text-[10px] tracking-[0.2em] uppercase text-[#002FA7] mb-1">Your vendor ID</div>
+            <div className="break-all">{vendor?.id || "—"}</div>
+          </div>
+          <div className="border-2 border-black p-3">
+            <div className="font-bold text-[10px] tracking-[0.2em] uppercase text-[#002FA7] mb-1">Loads from</div>
+            <div className="break-all">{widgetOrigin}/widget.js</div>
+          </div>
+          <div className="border-2 border-black p-3">
+            <div className="font-bold text-[10px] tracking-[0.2em] uppercase text-[#002FA7] mb-1">API endpoint</div>
+            <div className="break-all">{widgetOrigin}/api/chat/message</div>
+          </div>
+        </div>
+
+        <div className="mt-5 border-t-2 border-black pt-4 text-sm space-y-2" data-testid="install-steps">
+          <div className="font-display font-bold">Install steps:</div>
+          <ol className="list-decimal pl-6 space-y-1 text-sm">
+            <li>Copy the snippet above.</li>
+            <li>
+              Paste it just before the closing <code className="font-mono">&lt;/body&gt;</code> tag of your site's template
+              (WordPress: <em>Appearance → Theme File Editor → footer.php</em>; Shopify: <em>Online Store → Themes → Edit code → theme.liquid</em>).
+            </li>
+            <li>Save / deploy. Refresh your site — a blue chat bubble appears bottom-right. That's BotNira, trained on YOUR info.</li>
+            <li>Every conversation shows up live in your <a className="underline font-bold" href="/app/inbox">Inbox</a>, and confirmed appointments appear in <a className="underline font-bold" href="/app/appointments">Appointments</a>.</li>
+          </ol>
+        </div>
       </div>
 
+      {/* Simulator */}
       <div className="border-2 border-black bg-neutral-50 p-6">
         <div className="font-display font-black text-2xl flex items-center gap-2"><PlayCircle size={20}/> Simulate an inbound message</div>
-        <p className="text-sm text-neutral-600 mt-1">Test your bot like a real customer would message via WhatsApp, email, SMS, or a phone call transcript.</p>
+        <p className="text-sm text-neutral-600 mt-1">Test BotNira like a real customer would message via WhatsApp, email, SMS, or a phone call transcript.</p>
         <div className="grid md:grid-cols-4 gap-3 mt-4">
           <select data-testid="sim-channel" value={simCh} onChange={e => setSimCh(e.target.value)} className="border-2 border-black px-3 py-2 font-bold">
             {["whatsapp","email","sms","voice"].map(c => <option key={c} value={c}>{c.toUpperCase()}</option>)}
