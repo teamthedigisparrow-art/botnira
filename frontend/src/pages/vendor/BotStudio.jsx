@@ -3,6 +3,7 @@ import { api } from "../../lib/api";
 import { toast } from "sonner";
 import { Send, Plus, Trash2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import RichText from "../../components/botnira/RichText";
 
 export default function BotStudio() {
   const { vendor } = useAuth();
@@ -111,18 +112,29 @@ export default function BotStudio() {
             <div className="w-2 h-2 rounded-full bg-green-500" />
           </div>
           <div className="p-4 h-96 overflow-y-auto space-y-3 bg-neutral-50" data-testid="preview-messages">
-            <div className="border-2 border-black bg-white px-3 py-2 text-sm"><span className="text-[10px] font-mono block opacity-60">BOT</span>{bot.greeting}</div>
+            <div className="border-2 border-black bg-white px-3 py-2 text-sm"><span className="text-[10px] font-mono block opacity-60">BOTNIRA</span><RichText text={bot.greeting} /></div>
             {chat.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-xs border-2 border-black px-3 py-2 text-sm ${m.role === "bot" ? "bg-[#002FA7] text-white" : "bg-black text-white"}`}>
-                  <span className="text-[10px] font-mono block opacity-60">{m.role.toUpperCase()}</span>{m.content}
+                  <span className="text-[10px] font-mono block opacity-60">{m.role === "bot" ? "BOTNIRA" : "YOU"}</span>
+                  <RichText text={m.content} />
                 </div>
               </div>
             ))}
             {sending && <div className="text-xs font-mono text-neutral-500">BotNira is typing…</div>}
           </div>
-          <div className="border-t-2 border-black p-3 flex gap-2">
-            <input data-testid="preview-input" value={msg} onChange={e => setMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder="Ask your bot…" className="flex-1 border-2 border-black px-3 py-2 text-sm" />
+          <div className="border-t-2 border-black p-3 flex gap-2 items-end">
+            <textarea
+              data-testid="preview-input"
+              value={msg}
+              onChange={e => setMsg(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              }}
+              rows={1}
+              placeholder="Ask BotNira… (Shift+Enter for new line)"
+              className="flex-1 border-2 border-black px-3 py-2 text-sm resize-none max-h-32 focus:outline-none focus:ring-2 focus:ring-[#002FA7]"
+            />
             <button data-testid="preview-send-btn" onClick={send} disabled={sending} className="bg-[#002FA7] text-white font-bold px-3 py-2 border-2 border-black shadow-brutal hover-lift disabled:opacity-60"><Send size={14}/></button>
           </div>
         </div>

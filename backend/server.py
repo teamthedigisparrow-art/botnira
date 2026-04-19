@@ -421,7 +421,10 @@ Your tone: {bot.get('tone','friendly and professional')}.
 3. Do NOT invent hours, prices, locations, policies, or services.
 4. Never answer unrelated general-knowledge questions; politely steer back to the business.
 5. If the user wants to book an appointment, collect: full name, phone/email, preferred date/time, reason. Confirm back the details.
-6. Keep replies short (1-3 sentences unless the user asks for detail).
+6. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
+7. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
+8. Never use markdown tables. Use **bold** only for key details (price, date, phone).
+9. When you share a URL, phone number, or email, output it as plain text — the UI will auto-link it.
 """
 
 

@@ -73,7 +73,7 @@ const Hero = () => (
             </div>
             <div className="flex gap-2 justify-end">
               <div className="bg-[#002FA7] text-white border-2 border-black px-3 py-2 max-w-xs">We're open Saturday 9am to 6pm. Would you like to book a slot?</div>
-              <div className="w-8 h-8 bg-black text-white grid place-items-center font-bold">B</div>
+              <div className="w-8 h-8 bg-black text-white grid place-items-center font-bold text-xs">BN</div>
             </div>
             <div className="flex gap-2">
               <div className="w-8 h-8 border-2 border-black grid place-items-center font-bold">C</div>
@@ -81,7 +81,7 @@ const Hero = () => (
             </div>
             <div className="flex gap-2 justify-end">
               <div className="bg-[#002FA7] text-white border-2 border-black px-3 py-2 max-w-xs">Booked — Saturday at 2:00 PM for a cleaning. Can I grab your name and phone?</div>
-              <div className="w-8 h-8 bg-black text-white grid place-items-center font-bold">B</div>
+              <div className="w-8 h-8 bg-black text-white grid place-items-center font-bold text-xs">BN</div>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
 import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe } from "lucide-react";
+import RichText from "../../components/botnira/RichText";
 
 const ICONS = { web: Globe, whatsapp: MessageCircle, email: Mail, sms: MessageSquare, voice: Phone };
 
@@ -101,18 +102,31 @@ export default function Inbox() {
           )}
         </div>
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 bg-neutral-50" data-testid="thread-messages">
-          {detail?.messages?.map(m => (
-            <div key={m.id} className={`flex ${m.role === "user" ? "justify-start" : "justify-end"}`}>
-              <div className={`max-w-lg border-2 border-black px-4 py-2 text-sm ${m.role === "bot" ? "bg-[#002FA7] text-white" : m.role === "agent" ? "bg-black text-white" : "bg-white"}`}>
-                <div className="text-[10px] font-mono opacity-70 mb-1">{m.role.toUpperCase()}</div>
-                {m.content}
+          {detail?.messages?.map(m => {
+            const label = m.role === "bot" ? "BOTNIRA" : m.role === "agent" ? "AGENT" : "CUSTOMER";
+            return (
+              <div key={m.id} className={`flex ${m.role === "user" ? "justify-start" : "justify-end"}`}>
+                <div className={`max-w-lg border-2 border-black px-4 py-3 text-sm ${m.role === "bot" ? "bg-[#002FA7] text-white" : m.role === "agent" ? "bg-black text-white" : "bg-white"}`}>
+                  <div className="text-[10px] font-mono opacity-70 mb-1">{label}</div>
+                  <RichText text={m.content} />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {!detail && <div className="text-sm text-neutral-500">Select a thread to view messages.</div>}
         </div>
-        <div className="border-t-2 border-black p-4 bg-white flex gap-2">
-          <input data-testid="reply-input" value={reply} onChange={e=>setReply(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendReply()} placeholder="Jump in as a human agent…" className="flex-1 border-2 border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#002FA7]" />
+        <div className="border-t-2 border-black p-4 bg-white flex gap-2 items-end">
+          <textarea
+            data-testid="reply-input"
+            value={reply}
+            onChange={e=>setReply(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendReply(); }
+            }}
+            rows={1}
+            placeholder="Jump in as a human agent… (Shift+Enter for new line)"
+            className="flex-1 border-2 border-black px-3 py-2 text-sm resize-none max-h-32 focus:outline-none focus:ring-2 focus:ring-[#002FA7]"
+          />
           <button data-testid="send-reply-btn" onClick={sendReply} className="bg-[#002FA7] text-white font-bold px-4 py-2 border-2 border-black shadow-brutal hover-lift flex items-center gap-2"><Send size={14} /> Send</button>
         </div>
       </div>
