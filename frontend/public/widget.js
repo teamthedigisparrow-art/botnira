@@ -35,19 +35,27 @@
   var STORAGE_KEY = "botnira_conv_" + vendorId;
 
   // --- Fetch the per-vendor bot info --------------------------------------
-  var botInfo = { vendor_name: "BotNira", bot_name: "BotNira", greeting: "Hi! How can I help?" };
+  var botInfo = { vendor_name: "", bot_name: "BotNira", greeting: "Hi! I'm here — talk with me." };
+  var botInfoLoaded = false;
+  var botInfoError = null;
   function loadBotInfo(cb) {
-    fetch(API_BASE + "/public/bot/" + encodeURIComponent(vendorId), { credentials: "omit" })
+    fetch(API_BASE + "/public/bot/" + encodeURIComponent(vendorId), {
+      method: "GET", mode: "cors", credentials: "omit"
+    })
       .then(function (r) {
-        if (!r.ok) throw new Error("vendor not available");
+        if (!r.ok) throw new Error("vendor-info HTTP " + r.status);
         return r.json();
       })
       .then(function (d) {
-        botInfo = d;
-        cb && cb();
+        botInfo = Object.assign(botInfo, d);
+        botInfoLoaded = true;
+        cb && cb(null);
       })
       .catch(function (e) {
-        console.error("[BotNira] cannot load bot info:", e);
+        botInfoError = e && e.message ? e.message : String(e);
+        console.error("[BotNira] cannot load bot info:", botInfoError,
+          "— check your site's CSP / firewall is not blocking", scriptUrl.origin);
+        cb && cb(botInfoError);
       });
   }
 
@@ -257,8 +265,18 @@
       .catch(function (e) {
         removeTyping();
         var msg = (e && e.message) ? e.message : String(e);
-        console.error("[BotNira]", msg);
-        addMsg("bot", "I couldn't reach the server. Please try again in a moment.\n\n(Technical details: " + msg + ")");
+        console.error("[BotNira] chat error:", msg);
+        var hint = "I couldn't reach the BotNira server.\n\n";
+        if (/failed to fetch/i.test(msg)) {
+          hint +=
+            "This usually means your website's **Content Security Policy** (CSP) is " +
+            "blocking requests to BotNira.\n\nFix: add `" + scriptUrl.origin +
+            "` to your site's CSP `connect-src` allowlist, or disable the CSP header " +
+            "from your security plugin temporarily to confirm.";
+        } else {
+          hint += "(Technical: " + msg + ")";
+        }
+        addMsg("bot", hint);
       })
       .finally(function () { sendBtn.disabled = false; input.focus(); });
   }
@@ -294,8 +312,9 @@
     input.style.height = Math.min(100, input.scrollHeight) + "px";
   });
 
-  // Preload bot info, then show the teaser after a short delay
+  // Preload bot info, then show the teaser regardless (even on fetch error,
+  // we still want the visitor to see the chat invite).
   loadBotInfo(function () {
-    setTimeout(showTeaser, 1800);
+    setTimeout(showTeaser, 1500);
   });
 })();

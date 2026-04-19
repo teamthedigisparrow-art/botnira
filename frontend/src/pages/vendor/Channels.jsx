@@ -37,7 +37,9 @@ export default function Channels() {
   };
 
   const widgetOrigin = process.env.REACT_APP_BACKEND_URL || window.location.origin;
-  const embed = `<script src="${widgetOrigin}/widget.js" data-botnira-vendor="${vendor?.id || ""}" defer></script>`;
+  // Versioned URL so hard-refreshing the vendor's site always gets the latest widget
+  const WIDGET_VERSION = "1.1";
+  const embed = `<script src="${widgetOrigin}/widget.js?v=${WIDGET_VERSION}" data-botnira-vendor="${vendor?.id || ""}" defer></script>`;
 
   const copy = async () => {
     try {
