@@ -1037,6 +1037,12 @@ async def voice_activate(req: VoiceActivateReq, user: dict = Depends(require_ven
     webhook_url = f"{PUBLIC_BASE_URL}/api/webhooks/retell"
     llm = None
     agent = None
+    phone = None
+
+    # Canadian area-code fallback ladder: if the picked code has no inventory,
+    # try a few nearby Canadian codes before giving up.
+    CA_FALLBACK = [416, 647, 437, 905, 289, 613, 514, 438, 604, 778, 403, 780, 587]
+
     try:
         llm = rc.llm.create(
             general_prompt=_build_voice_prompt(bot, vendor),
@@ -1049,26 +1055,58 @@ async def voice_activate(req: VoiceActivateReq, user: dict = Depends(require_ven
             language="en-US",
             webhook_url=webhook_url,
         )
-        phone = rc.phone_number.create(
-            inbound_agent_id=agent.agent_id,
-            area_code=req.area_code,
-        )
+
+        # Try requested area code, then fall back through Canadian codes.
+        attempts = [req.area_code] + [c for c in CA_FALLBACK if c != req.area_code]
+        last_err = None
+        for code in attempts:
+            try:
+                phone = rc.phone_number.create(
+                    inbound_agent_id=agent.agent_id,
+                    area_code=code,
+                )
+                req.area_code = code  # record what was actually provisioned
+                break
+            except Exception as e:
+                last_err = e
+                msg = str(e).lower()
+                # billing issue — stop retrying, no point
+                if "402" in msg or "payment" in msg or "card on file" in msg:
+                    raise
+                # inventory problem on this code — try the next
+                if "no phone numbers" in msg or "404" in msg:
+                    continue
+                raise
+        if phone is None and last_err is not None:
+            raise last_err
+
     except Exception as e:
         logger.exception("Retell activation failed")
-        # rollback partial resources so we don't leak them
+        # rollback partial resources
         try:
-            if agent:
-                rc.agent.delete(agent.agent_id)
-        except Exception:
-            pass
+            if agent: rc.agent.delete(agent.agent_id)
+        except Exception: pass
+        try:
+            if llm: rc.llm.delete(llm.llm_id)
+        except Exception: pass
+
         msg = str(e)
-        if "card on file" in msg.lower() or "402" in msg:
+        low = msg.lower()
+        if "402" in low or "payment overdue" in low or "card on file" in low:
             raise HTTPException(
                 status_code=402,
                 detail=(
-                    "Retell requires a payment method before provisioning phone numbers. "
-                    "Please add a card at https://dashboard.retellai.com/billing, then try again. "
-                    "(Your $10 free credit covers LLM/voice usage but not number rental.)"
+                    "Retell billing issue — payment overdue or no card on file. "
+                    "Open https://dashboard.retellai.com/billing, confirm a valid card and clear any unpaid balance, then try again."
+                ),
+            )
+        if "no phone numbers" in low or "404" in low:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No Canadian phone numbers are currently available through Retell (we tried all major area codes). "
+                    "Email support@retellai.com from your Retell-registered email and request Canadian number inventory — "
+                    "they typically provision it within 1 business day. We'll keep your trained bot ready to go."
                 ),
             )
         raise HTTPException(status_code=502, detail=f"Retell activation failed: {msg[:220]}")
