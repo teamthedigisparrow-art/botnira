@@ -64,6 +64,15 @@
     ".bn-fab{width:60px;height:60px;border-radius:50%;background:#002FA7;color:#fff;border:2px solid #0a0a0b;box-shadow:4px 4px 0 0 #0a0a0b;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .2s ease-out,box-shadow .2s ease-out}",
     ".bn-fab:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 0 #0a0a0b}",
     ".bn-fab svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}",
+    ".bn-fab .bn-dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#10b981;border:2px solid #0a0a0b;animation:bn-ping 2s ease-in-out infinite}",
+    "@keyframes bn-ping{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}",
+    ".bn-teaser{position:fixed;right:96px;bottom:28px;background:#fff;color:#0a0a0b;border:2px solid #0a0a0b;padding:12px 34px 12px 16px;width:260px;box-shadow:4px 4px 0 0 #0a0a0b;font-size:13px;line-height:1.4;font-weight:500;animation:bn-slide .4s ease-out both;cursor:pointer;transition:transform .15s,box-shadow .15s;z-index:2147483647}",
+    ".bn-teaser:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 0 #0a0a0b}",
+    ".bn-teaser:before{content:'';position:absolute;right:-9px;bottom:18px;width:14px;height:14px;background:#fff;border-right:2px solid #0a0a0b;border-bottom:2px solid #0a0a0b;transform:rotate(-45deg)}",
+    ".bn-teaser strong{display:block;font-weight:800;margin-bottom:2px}",
+    ".bn-teaser-x{position:absolute;top:4px;right:6px;background:transparent;border:0;font-size:16px;line-height:1;color:#0a0a0b;cursor:pointer;opacity:.6}",
+    ".bn-teaser-x:hover{opacity:1}",
+    "@keyframes bn-slide{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}",
     ".bn-panel{position:absolute;right:0;bottom:80px;width:380px;max-width:calc(100vw - 40px);height:560px;max-height:calc(100vh - 120px);background:#fff;border:2px solid #0a0a0b;box-shadow:8px 8px 0 0 #0a0a0b;display:flex;flex-direction:column;overflow:hidden;transform-origin:bottom right}",
     ".bn-head{background:#002FA7;color:#fff;padding:14px 16px;border-bottom:2px solid #0a0a0b;display:flex;justify-content:space-between;align-items:center}",
     ".bn-head h4{margin:0;font-size:15px;font-weight:800;letter-spacing:-.01em}",
@@ -108,6 +117,7 @@
     '  <div class="bn-foot">POWERED BY <a href="https://botnira.com" target="_blank" rel="noopener">BotNira</a></div>' +
     "</div>" +
     '<button class="bn-fab" id="bnFab" aria-label="Open chat">' +
+    '  <span class="bn-dot" id="bnDot" style="display:none"></span>' +
     '  <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
     "</button>";
   root.appendChild(wrap);
@@ -118,12 +128,55 @@
 
   var panel = q("#bnPanel");
   var fab = q("#bnFab");
+  var dotEl = q("#bnDot");
   var closeBtn = q("#bnClose");
   var msgsEl = q("#bnMsgs");
   var input = q("#bnInput");
   var sendBtn = q("#bnSend");
   var nameEl = q("#bnName");
   var subEl = q("#bnSub");
+  var teaserEl = null;
+
+  // Has this visitor dismissed or opened chat before?
+  var DISMISSED_KEY = STORAGE_KEY + "_teaser_dismissed";
+  function teaserDismissed() {
+    try { return localStorage.getItem(DISMISSED_KEY) === "1"; } catch (e) { return false; }
+  }
+  function rememberDismissed() {
+    try { localStorage.setItem(DISMISSED_KEY, "1"); } catch (e) {}
+  }
+
+  function showTeaser() {
+    if (teaserEl || panel.style.display === "flex") return;
+    if (teaserDismissed()) { dotEl.style.display = "block"; return; }
+    var t = document.createElement("div");
+    t.className = "bn-teaser";
+    t.setAttribute("role", "button");
+    var greeting = (botInfo.greeting && botInfo.greeting.length < 120)
+      ? botInfo.greeting
+      : "Hi! I'm here — ask me anything.";
+    t.innerHTML =
+      '<button class="bn-teaser-x" aria-label="Dismiss">×</button>' +
+      "<strong>" + escapeHtml(botInfo.bot_name || "BotNira") + "</strong>" +
+      escapeHtml(greeting);
+    t.addEventListener("click", function (e) {
+      if (e.target.classList.contains("bn-teaser-x")) {
+        e.stopPropagation();
+        removeTeaser();
+        rememberDismissed();
+        dotEl.style.display = "block";
+        return;
+      }
+      open();
+    });
+    teaserEl = t;
+    wrap.appendChild(t);
+    dotEl.style.display = "block";
+  }
+  function removeTeaser() {
+    if (teaserEl && teaserEl.parentNode) teaserEl.parentNode.removeChild(teaserEl);
+    teaserEl = null;
+  }
 
   // --- State --------------------------------------------------------------
   var convId = (function () {
@@ -180,6 +233,8 @@
     addTyping();
     fetch(API_BASE + "/chat/message", {
       method: "POST",
+      mode: "cors",
+      credentials: "omit",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         vendor_id: vendorId,
@@ -189,7 +244,10 @@
         customer_name: "Web visitor"
       })
     })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (r) {
+        if (!r.ok) return r.text().then(function (t) { throw new Error("HTTP " + r.status + ": " + t.slice(0, 120)); });
+        return r.json();
+      })
       .then(function (d) {
         removeTyping();
         convId = d.conversation_id;
@@ -198,15 +256,19 @@
       })
       .catch(function (e) {
         removeTyping();
-        addMsg("bot", "Sorry — I couldn't reach the server.");
-        console.error("[BotNira]", e);
+        var msg = (e && e.message) ? e.message : String(e);
+        console.error("[BotNira]", msg);
+        addMsg("bot", "I couldn't reach the server. Please try again in a moment.\n\n(Technical details: " + msg + ")");
       })
       .finally(function () { sendBtn.disabled = false; input.focus(); });
   }
 
   function open() {
+    removeTeaser();
+    dotEl.style.display = "none";
     panel.style.display = "flex";
     fab.style.display = "none";
+    rememberDismissed();
     setTimeout(function () { input.focus(); }, 50);
     if (rendered.length === 0) {
       loadBotInfo(function () {
@@ -232,6 +294,8 @@
     input.style.height = Math.min(100, input.scrollHeight) + "px";
   });
 
-  // preload bot info so greeting is ready
-  loadBotInfo();
+  // Preload bot info, then show the teaser after a short delay
+  loadBotInfo(function () {
+    setTimeout(showTeaser, 1800);
+  });
 })();

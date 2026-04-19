@@ -849,7 +849,10 @@ async def root():
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    # Widget is embedded on 3rd-party sites (any origin). It does NOT send
+    # cookies; our auth uses an Authorization header which is same-origin
+    # only (dashboard). With credentials=False we can legally use "*".
+    allow_credentials=False,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
