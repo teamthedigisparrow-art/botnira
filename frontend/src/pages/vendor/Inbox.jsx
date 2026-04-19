@@ -52,9 +52,9 @@ export default function Inbox() {
   };
 
   return (
-    <div className="h-screen grid grid-cols-[320px_360px_1fr]" data-testid="inbox-page">
+    <div className="h-screen grid grid-cols-[320px_360px_1fr] overflow-hidden" data-testid="inbox-page">
       {/* filters */}
-      <div className="border-r-2 border-black bg-white">
+      <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto">
         <div className="h-16 border-b-2 border-black px-5 flex items-center">
           <h2 className="font-display font-black text-xl tracking-tight">Inbox</h2>
         </div>
@@ -74,7 +74,7 @@ export default function Inbox() {
         </div>
       </div>
       {/* list */}
-      <div className="border-r-2 border-black bg-white overflow-y-auto">
+      <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto">
         <div className="h-16 border-b-2 border-black px-5 flex items-center justify-between">
           <span className="text-xs font-bold tracking-widest uppercase">Threads ({convs.length})</span>
         </div>
@@ -91,7 +91,7 @@ export default function Inbox() {
         ))}
       </div>
       {/* detail */}
-      <div className="flex flex-col">
+      <div className="flex flex-col h-full min-h-0">
         <div className="h-16 border-b-2 border-black px-6 flex items-center justify-between bg-white">
           <div>
             <div className="font-display font-black text-lg">{detail?.conversation?.customer_name || "—"}</div>
@@ -101,7 +101,7 @@ export default function Inbox() {
             <button data-testid="resolve-btn" onClick={resolve} className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-white flex items-center gap-2"><CheckCircle2 size={14}/> Mark resolved</button>
           )}
         </div>
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 bg-neutral-50" data-testid="thread-messages">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 bg-neutral-50" data-testid="thread-messages">
           {detail?.messages?.map(m => {
             const label = m.role === "bot" ? "BOTNIRA" : m.role === "agent" ? "AGENT" : "CUSTOMER";
             return (
