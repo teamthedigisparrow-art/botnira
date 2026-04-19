@@ -1,0 +1,89 @@
+{
+  "theme": "LIGHT",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "rationale": "BotNira needs to feel authoritative, reliable, and functional. Avoiding the cliché 'purple/teal AI' look, we're utilizing a Swiss Brutalism approach. Stark white backgrounds, heavy black borders for definition, and International Klein Blue for striking CTAs. This creates a dense, readable dashboard and a highly credible marketing page.",
+  "colors": {
+    "background": "#FFFFFF",
+    "foreground": "#0A0A0B",
+    "primary": "#002FA7",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#F3F4F6",
+    "secondary_foreground": "#0A0A0B",
+    "accent": "#E5E7EB",
+    "accent_foreground": "#0A0A0B",
+    "destructive": "#E53E3E",
+    "destructive_foreground": "#FFFFFF",
+    "border": "#0A0A0B",
+    "input": "#E5E7EB",
+    "ring": "#002FA7",
+    "muted": "#F9FAFB",
+    "muted_foreground": "#4B5563",
+    "surface_glass": "bg-white/90 backdrop-blur-md border-b border-black"
+  },
+  "typography": {
+    "heading_font": "Cabinet Grotesk",
+    "body_font": "Satoshi",
+    "mono_font": "Azeret Mono",
+    "h1": "text-4xl sm:text-5xl lg:text-6xl font-black tracking-tighter leading-none",
+    "h2": "text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight leading-tight",
+    "h3": "text-xl sm:text-2xl font-bold tracking-tight",
+    "body": "text-base leading-relaxed font-medium",
+    "labels": "text-xs font-bold uppercase tracking-[0.2em] text-foreground",
+    "notes": "Do not use Inter for headings. Keep typography sharp and heavy for headers, and highly legible for data."
+  },
+  "layout_and_spacing": {
+    "generous_spacing": "Use p-8 to p-12 for major marketing sections. Use tighter p-4 to p-6 for dashboard cards.",
+    "border_radius": "rounded-none or minimal rounded-sm (2px) to maintain the brutalist/swiss aesthetic.",
+    "borders": "Expose the grid. Use border-collapse patterns. 1px or 2px solid black borders for cards and inputs.",
+    "shadows": "Hard neo-brutalist shadows: shadow-[4px_4px_0px_0px_rgba(10,10,11,1)] for interactive elements instead of soft blurs.",
+    "dashboard_grid": "Grid items must be direct children. Use dense, bento-style layouts for the unified inbox."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Hovering should translate buttons slightly (-translate-x-[2px] -translate-y-[2px]) and increase hard shadow depth. ALWAYS set hover text color.",
+    "transitions": "transition-all duration-200 ease-out"
+  },
+  "component_instructions": {
+    "buttons": "Sharp edges, 2px solid black borders. Primary buttons should be International Klein Blue with white text.",
+    "cards": "Flat background (white or very light gray), 1px or 2px solid black border, hard shadow on hover.",
+    "navigation": "Sticky, solid bottom border (border-b-2 border-black). Do not use fully transparent navs.",
+    "unified_inbox": "Three-pane layout: Sidebar (Channels/Nav) > Message List (with colored badges for channels) > Active Thread (with AI transcript in a distinctive mono-font sidebar block).",
+    "bot_trainer": "Wizard format. Step-by-step forms. Input fields with hard black borders on focus.",
+    "analytics": "Use simple, high-contrast bar charts or line charts in recharts. Avoid gradient fills in charts.",
+    "testing": "All interactive elements MUST have data-testid attributes (kebab-case, role-based)."
+  },
+  "media": {
+    "hero_architecture": {
+      "url": "https://images.unsplash.com/photo-1761870065047-f2da9429db23?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwyfHxjbGVhbiUyMG1vZGVybiUyMGFic3RyYWN0JTIwYXJjaGl0ZWN0dXJlJTIwd2hpdGUlMjBibHVlfGVufDB8fHx8MTc3NjU3NjczMnww&ixlib=rb-4.1.0&q=85",
+      "description": "Clean modern architecture against blue sky, used for the marketing hero or background."
+    },
+    "geometric_abstract": {
+      "url": "https://images.pexels.com/photos/30938848/pexels-photo-30938848.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Abstract geometric swiss design, used for decorative elements on the landing page."
+    },
+    "team_meeting": {
+      "url": "https://images.pexels.com/photos/30004350/pexels-photo-30004350.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Team meeting placeholder, can be used for 'Superadmin' or 'Agency' context."
+    },
+    "user_avatar_1": {
+      "url": "https://images.unsplash.com/photo-1758874384842-7e79ce77ed1a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwzfHxzbWlsaW5nJTIwZGl2ZXJzZSUyMHByb2Zlc3Npb25hbHMlMjBoZWFkc2hvdHxlbnwwfHx8fDE3NzY1NzY3MjV8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Avatar for active user or bot preview customer."
+    },
+    "user_avatar_2": {
+      "url": "https://images.unsplash.com/photo-1758600587815-b654d1405e83?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHw0fHxzbWlsaW5nJTIwZGl2ZXJzZSUyMHByb2Zlc3Npb25hbHMlMjBoZWFkc2hvdHxlbnwwfHx8fDE3NzY1NzY3MjV8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Avatar for incoming message in unified inbox."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install and use 'lucide-react' for icons.",
+    "Add fonts via Google Fonts: <link href=\"https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@900,800,700,500,400,300&f[]=satoshi@900,700,500,400,300&display=swap\" rel=\"stylesheet\"> in index.html.",
+    "Add <link href=\"https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;700&display=swap\" rel=\"stylesheet\"> for the mono font.",
+    "For the unified inbox, use a rigorous 3-pane dashboard layout (Sidebar, Threads, Chat View).",
+    "For the Bot Trainer Wizard, use a stepper with bold typography.",
+    "Apply the Swiss High-Contrast styling: strong black borders (border-black), stark white backgrounds, and International Klein Blue (#002FA7) for primary actions.",
+    "Do NOT use soft rounded corners. Use rounded-none or max rounded-sm.",
+    "Do NOT use generic 'AI gradients' (no purple/teal blur).",
+    "Implement neo-brutalist shadows (solid colored offsets) instead of soft box-shadows.",
+    "Include recharts for the analytics view.",
+    "Include data-testid on every interactive element."
+  ]
+}
