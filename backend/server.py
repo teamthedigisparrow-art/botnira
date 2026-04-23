@@ -2623,7 +2623,18 @@ async def voice_stream(ws: WebSocket, call_id: str):
     oai_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
     oai_headers = [("Authorization", f"Bearer {OPENAI_REALTIME_API_KEY}"), ("OpenAI-Beta", "realtime=v1")]
     stream_sid = None
-    logger.info("voice_stream: connecting to OpenAI Realtime for call %s", call_id)
+    # Create ONE persistent conversation for this whole call (not per-message)
+    conv = await _ensure_conversation(
+        vendor_id, None, "voice",
+        call.get("from_number") or "Caller",
+        call.get("from_number") or "",
+    )
+    conv_id = conv["id"]
+    # Link call_record to conversation
+    await db.call_records.update_one(
+        {"id": call_id}, {"$set": {"conversation_id": conv_id}}
+    )
+    logger.info("voice_stream: connecting to OpenAI Realtime for call %s (conv %s)", call_id, conv_id)
     try:
         async with _ws.connect(oai_url, additional_headers=oai_headers, max_size=None) as oai:
             logger.info("voice_stream: OpenAI connected for call %s", call_id)
@@ -2637,6 +2648,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
                     "output_audio_format": "g711_ulaw",
                     "instructions": system_instructions,
                     "turn_detection": {"type": "server_vad"},
+                    "input_audio_transcription": {"model": "whisper-1"},
                 },
             }
             await oai.send(json.dumps(session_cfg))
@@ -2683,13 +2695,18 @@ async def voice_stream(ws: WebSocket, call_id: str):
                         elif etype == "response.audio_transcript.done":
                             text = ev.get("transcript", "")
                             if text:
-                                conv = await _ensure_conversation(vendor_id, None, "voice", call["from_number"], call["from_number"])
-                                await _push_message(conv["id"], vendor_id, "bot", text)
+                                await _push_message(conv_id, vendor_id, "bot", text)
+                                logger.info("voice_stream: bot said: %s", text[:80])
+                                # Appointment extraction attempt after each bot turn
+                                try:
+                                    await _maybe_book_appointment(vendor_id, conv_id, text)
+                                except Exception as e:
+                                    logger.warning("voice appt book failed: %s", e)
                         elif etype == "conversation.item.input_audio_transcription.completed":
                             text = ev.get("transcript", "")
                             if text:
-                                conv = await _ensure_conversation(vendor_id, None, "voice", call["from_number"], call["from_number"])
-                                await _push_message(conv["id"], vendor_id, "user", text)
+                                await _push_message(conv_id, vendor_id, "user", text)
+                                logger.info("voice_stream: user said: %s", text[:80])
                 except Exception as e:
                     logger.warning("oai_to_twilio ended: %s", e)
 
