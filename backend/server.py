@@ -710,6 +710,9 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
         data = json.loads(raw)
         if not data.get("booked"):
             return None
+        # Resolve source (channel) from the conversation
+        conv = await db.conversations.find_one({"id": conversation_id}, {"_id": 0, "channel": 1})
+        source = (conv or {}).get("channel") or "web"
         appt = {
             "id": new_id(),
             "vendor_id": vendor_id,
@@ -718,6 +721,8 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
             "scheduled_at": data.get("scheduled_at", "") or "",
             "notes": data.get("notes", "Booked via BotNira chat"),
             "status": "scheduled",
+            "source": source,
+            "attended": False,
             "conversation_id": conversation_id,
             "created_at": now_iso(),
         }
@@ -938,6 +943,12 @@ async def list_appointments(user: dict = Depends(require_vendor)):
 
 @api_router.post("/appointments")
 async def create_appointment(req: AppointmentReq, user: dict = Depends(require_vendor)):
+    # Determine source: vendor-created (manual) or inferred from linked conversation
+    source = "manual"
+    if req.conversation_id:
+        conv = await db.conversations.find_one({"id": req.conversation_id}, {"_id": 0, "channel": 1})
+        if conv:
+            source = conv.get("channel") or "manual"
     appt = {
         "id": new_id(),
         "vendor_id": user["vendor_id"],
@@ -946,11 +957,46 @@ async def create_appointment(req: AppointmentReq, user: dict = Depends(require_v
         "scheduled_at": req.scheduled_at,
         "notes": req.notes,
         "status": "scheduled",
+        "source": source,
+        "attended": False,
         "conversation_id": req.conversation_id,
         "created_at": now_iso(),
     }
     await db.appointments.insert_one(appt)
     return {k: v for k, v in appt.items() if k != "_id"}
+
+
+class AppointmentPatchReq(BaseModel):
+    attended: Optional[bool] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api_router.patch("/appointments/{appt_id}")
+async def update_appointment(appt_id: str, req: AppointmentPatchReq, user: dict = Depends(require_vendor)):
+    existing = await db.appointments.find_one(
+        {"id": appt_id, "vendor_id": user["vendor_id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    updates = {}
+    if req.attended is not None:
+        updates["attended"] = bool(req.attended)
+        updates["attended_at"] = now_iso() if req.attended else None
+    if req.status is not None:
+        updates["status"] = req.status
+    if req.notes is not None:
+        updates["notes"] = req.notes
+    if not updates:
+        return existing
+    updates["updated_at"] = now_iso()
+    await db.appointments.update_one(
+        {"id": appt_id, "vendor_id": user["vendor_id"]}, {"$set": updates}
+    )
+    updated = await db.appointments.find_one(
+        {"id": appt_id, "vendor_id": user["vendor_id"]}, {"_id": 0}
+    )
+    return updated
 
 
 # ------------------------------ Channels -------------------------------------

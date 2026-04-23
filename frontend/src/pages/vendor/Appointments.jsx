@@ -1,12 +1,33 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
-import { Plus, CalendarDays } from "lucide-react";
+import { Plus, CalendarDays, Globe, MessageCircle, Mail, MessageSquare, Phone, UserPlus, Check, X } from "lucide-react";
+
+const SOURCE_META = {
+  web: { icon: Globe, label: "Web", color: "bg-blue-100 text-blue-900" },
+  whatsapp: { icon: MessageCircle, label: "WhatsApp", color: "bg-green-100 text-green-900" },
+  email: { icon: Mail, label: "Email", color: "bg-purple-100 text-purple-900" },
+  sms: { icon: MessageSquare, label: "SMS", color: "bg-orange-100 text-orange-900" },
+  voice: { icon: Phone, label: "Phone Call", color: "bg-red-100 text-red-900" },
+  manual: { icon: UserPlus, label: "Manual", color: "bg-neutral-100 text-neutral-900" },
+};
+
+function SourceBadge({ source }) {
+  const meta = SOURCE_META[source] || SOURCE_META.manual;
+  const Icon = meta.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-1 border border-black text-[10px] font-bold uppercase tracking-widest ${meta.color}`}>
+      <Icon size={10} /> {meta.label}
+    </span>
+  );
+}
 
 export default function Appointments() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ customer_name: "", customer_contact: "", scheduled_at: "", notes: "" });
+  const [busy, setBusy] = useState("");
+
   const load = () => api.get("/appointments").then(r => setItems(r.data));
   useEffect(() => { load(); }, []);
 
@@ -20,29 +41,75 @@ export default function Appointments() {
     } catch { toast.error("Could not save"); }
   };
 
+  const toggleAttended = async (appt) => {
+    setBusy(appt.id);
+    try {
+      const next = !appt.attended;
+      await api.patch(`/appointments/${appt.id}`, { attended: next });
+      setItems(items.map(a => a.id === appt.id ? { ...a, attended: next } : a));
+      toast.success(next ? "Marked as attended" : "Marked as not attended");
+    } catch {
+      toast.error("Could not update");
+    } finally { setBusy(""); }
+  };
+
   return (
     <div className="p-8" data-testid="appointments-page">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Calendar</div>
           <h1 className="font-display text-4xl font-black tracking-tighter">Appointments</h1>
+          <p className="text-sm text-neutral-600 mt-1">Track where each booking came from and whether the customer showed up.</p>
         </div>
-        <button data-testid="new-appt-btn" onClick={() => setOpen(true)} className="bg-[#002FA7] text-white font-bold px-4 py-2 border-2 border-black shadow-brutal hover-lift flex items-center gap-2"><Plus size={16}/> New</button>
+        <button data-testid="new-appt-btn" onClick={() => setOpen(true)} className="bg-[#002FA7] text-white font-bold px-4 py-2 border-2 border-black shadow-brutal hover-lift flex items-center gap-2">
+          <Plus size={16}/> New
+        </button>
       </div>
 
-      <div className="border-2 border-black bg-white mt-6">
-        <div className="grid grid-cols-[1fr_1fr_1fr_1fr] border-b-2 border-black text-xs font-bold uppercase tracking-widest">
-          <div className="p-3">Customer</div><div className="p-3">Contact</div><div className="p-3">When</div><div className="p-3">Notes</div>
-        </div>
-        {items.length === 0 && <div className="p-6 text-sm text-neutral-500 flex items-center gap-2"><CalendarDays size={16}/> No appointments yet.</div>}
-        {items.map(a => (
-          <div key={a.id} className="grid grid-cols-[1fr_1fr_1fr_1fr] border-b border-black/10 text-sm" data-testid={`appt-${a.id}`}>
-            <div className="p-3 font-bold">{a.customer_name}</div>
-            <div className="p-3 font-mono">{a.customer_contact || "—"}</div>
-            <div className="p-3">{a.scheduled_at}</div>
-            <div className="p-3 text-neutral-700">{a.notes || "—"}</div>
-          </div>
-        ))}
+      <div className="border-2 border-black bg-white mt-6 overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
+          <thead className="bg-black text-white text-left">
+            <tr className="text-xs uppercase tracking-widest">
+              <th className="p-3">Customer</th>
+              <th className="p-3">Contact</th>
+              <th className="p-3">When</th>
+              <th className="p-3">Source</th>
+              <th className="p-3">Notes</th>
+              <th className="p-3 text-right">Attended</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 && (
+              <tr><td colSpan={6} className="p-8 text-center text-neutral-500">
+                <CalendarDays size={20} className="inline mr-2"/> No appointments yet.
+              </td></tr>
+            )}
+            {items.map(a => (
+              <tr key={a.id} className={`border-t border-black/10 ${a.attended ? "bg-green-50" : ""}`} data-testid={`appt-${a.id}`}>
+                <td className="p-3 font-bold">{a.customer_name}</td>
+                <td className="p-3 font-mono text-xs">{a.customer_contact || "—"}</td>
+                <td className="p-3 font-mono text-xs">{a.scheduled_at || "—"}</td>
+                <td className="p-3"><SourceBadge source={a.source || "manual"} /></td>
+                <td className="p-3 text-neutral-700 max-w-xs">
+                  <div className="truncate" title={a.notes || ""}>{a.notes || "—"}</div>
+                </td>
+                <td className="p-3 text-right">
+                  <button
+                    onClick={() => toggleAttended(a)}
+                    disabled={busy === a.id}
+                    data-testid={`attended-toggle-${a.id}`}
+                    className={`inline-flex items-center gap-1 px-3 py-1 border-2 border-black font-bold text-xs transition ${
+                      a.attended ? "bg-green-400 text-black" : "bg-white text-neutral-600 hover:bg-neutral-100"
+                    } disabled:opacity-50`}
+                    aria-pressed={a.attended}
+                  >
+                    {a.attended ? <><Check size={12}/> Attended</> : <><X size={12}/> Mark attended</>}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {open && (
