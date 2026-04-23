@@ -38,6 +38,15 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 PLAN_LIMITS = {"starter": 100, "growth": 500, "pro": 1500}
 EXEMPT_EMAILS = {"kamal@thedigisparrow.com"}  # internal test vendor — no cap, no cost
 
+# Meta / WhatsApp Cloud API
+META_APP_ID = os.environ.get("META_APP_ID", "")
+META_APP_SECRET = os.environ.get("META_APP_SECRET", "")
+META_SYSTEM_USER_TOKEN = os.environ.get("META_SYSTEM_USER_TOKEN", "")
+META_VERIFY_TOKEN = os.environ.get("META_VERIFY_TOKEN", "botnira_whatsapp_2026")
+META_TEST_PHONE_NUMBER_ID = os.environ.get("META_TEST_PHONE_NUMBER_ID", "")
+META_TEST_WABA_ID = os.environ.get("META_TEST_WABA_ID", "")
+GRAPH_BASE = "https://graph.facebook.com/v22.0"
+
 # Retell client (lazy singleton)
 _retell_client = None
 def get_retell():
@@ -349,6 +358,32 @@ async def seed_admin():
                 {"id": u["vendor_id"]},
                 {"$set": {"is_exempt": True, "plan": "unlimited"}},
             )
+
+    # Auto-bind the Meta test WhatsApp number to the internal test vendor so
+    # you can demo WhatsApp end-to-end before Embedded Signup / App Review is live.
+    if META_TEST_PHONE_NUMBER_ID and META_TEST_WABA_ID:
+        tu = await db.users.find_one({"email": test_email}, {"_id": 0})
+        if tu and tu.get("vendor_id"):
+            existing = await db.whatsapp_connections.find_one(
+                {"vendor_id": tu["vendor_id"]}, {"_id": 0}
+            )
+            if not existing:
+                await db.whatsapp_connections.insert_one({
+                    "id": new_id(),
+                    "vendor_id": tu["vendor_id"],
+                    "phone_number_id": META_TEST_PHONE_NUMBER_ID,
+                    "waba_id": META_TEST_WABA_ID,
+                    "display_phone_number": "(Meta test number)",
+                    "access_token": META_SYSTEM_USER_TOKEN,
+                    "status": "active",
+                    "is_meta_test": True,
+                    "created_at": now_iso(),
+                })
+                await db.channels.update_one(
+                    {"vendor_id": tu["vendor_id"], "channel": "whatsapp"},
+                    {"$set": {"status": "connected", "updated_at": now_iso()}},
+                )
+                logger.info("Bound Meta WhatsApp test number to %s", test_email)
 
     # Ensure demo vendor always has 5 default channels (idempotent)
     demo = await db.users.find_one({"email": demo_email}, {"_id": 0})
@@ -1348,6 +1383,196 @@ async def retell_webhook(request: _FastRequest):
                 logger.warning("voice auto-book failed: %s", e)
 
     return {"ok": True}
+
+
+# ============================== WhatsApp Cloud API ==========================
+import httpx
+
+
+async def _whatsapp_send(phone_number_id: str, to: str, text: str, access_token: str):
+    """Send a text message via Meta Graph API. Works only within 24h of the user's last message."""
+    url = f"{GRAPH_BASE}/{phone_number_id}/messages"
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    body = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "text",
+        "text": {"preview_url": False, "body": text[:4000]},
+    }
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(url, headers=headers, json=body)
+        if r.status_code >= 400:
+            logger.warning("whatsapp send failed %s: %s", r.status_code, r.text[:300])
+            return None
+        return r.json()
+
+
+@api_router.get("/whatsapp/status")
+async def whatsapp_status(user: dict = Depends(require_vendor)):
+    wc = await db.whatsapp_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    return {"connection": wc, "ready_to_connect": bool(META_APP_ID and META_SYSTEM_USER_TOKEN)}
+
+
+class WhatsAppConnectReq(BaseModel):
+    phone_number_id: str
+    waba_id: str
+    display_phone_number: Optional[str] = ""
+    access_token: Optional[str] = ""  # use master token if not provided
+
+
+@api_router.post("/whatsapp/connect")
+async def whatsapp_connect(req: WhatsAppConnectReq, user: dict = Depends(require_vendor)):
+    """Manually bind a WhatsApp phone_number_id + WABA to the current vendor.
+    Used by the Embedded Signup success callback (and by superadmin for the test number)."""
+    conn = {
+        "id": new_id(),
+        "vendor_id": user["vendor_id"],
+        "phone_number_id": req.phone_number_id,
+        "waba_id": req.waba_id,
+        "display_phone_number": req.display_phone_number or "",
+        "access_token": req.access_token or META_SYSTEM_USER_TOKEN,
+        "status": "active",
+        "created_at": now_iso(),
+    }
+    await db.whatsapp_connections.replace_one(
+        {"vendor_id": user["vendor_id"]}, conn, upsert=True
+    )
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "whatsapp"},
+        {"$set": {"status": "connected", "updated_at": now_iso()}},
+    )
+    # subscribe this WABA to webhooks (best-effort; requires whatsapp_business_management scope)
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.post(
+                f"{GRAPH_BASE}/{req.waba_id}/subscribed_apps",
+                headers={"Authorization": f"Bearer {META_SYSTEM_USER_TOKEN}"},
+            )
+    except Exception as e:
+        logger.warning("WABA subscription best-effort failed: %s", e)
+    return {"status": "connected", "connection": conn}
+
+
+@api_router.post("/whatsapp/disconnect")
+async def whatsapp_disconnect(user: dict = Depends(require_vendor)):
+    await db.whatsapp_connections.update_one(
+        {"vendor_id": user["vendor_id"]},
+        {"$set": {"status": "inactive", "disconnected_at": now_iso()}},
+    )
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "whatsapp"},
+        {"$set": {"status": "disconnected", "updated_at": now_iso()}},
+    )
+    return {"status": "inactive"}
+
+
+class WhatsAppTestReq(BaseModel):
+    to: str
+    message: Optional[str] = "Hi! This is a test message from BotNira."
+
+
+@api_router.post("/whatsapp/test-send")
+async def whatsapp_test_send(req: WhatsAppTestReq, user: dict = Depends(require_vendor)):
+    wc = await db.whatsapp_connections.find_one(
+        {"vendor_id": user["vendor_id"], "status": "active"}, {"_id": 0}
+    )
+    if not wc:
+        raise HTTPException(status_code=400, detail="WhatsApp not connected")
+    to = req.to.strip().lstrip("+")
+    resp = await _whatsapp_send(wc["phone_number_id"], to, req.message, wc["access_token"])
+    if not resp:
+        raise HTTPException(status_code=502, detail=(
+            "Meta rejected the send. Likely reasons: the recipient hasn't messaged you "
+            "within the last 24 hours (session window), OR (on test numbers) the recipient "
+            "is not in your allowed-recipients list (add them in WhatsApp → Getting Started)."
+        ))
+    return {"ok": True, "message_id": (resp.get("messages") or [{}])[0].get("id")}
+
+
+# --- Meta webhook: GET verifies, POST receives messages ----------------------
+from fastapi import Request as _FastAPIRequest
+from fastapi.responses import PlainTextResponse
+
+
+@api_router.get("/whatsapp/webhook")
+async def whatsapp_verify(request: _FastAPIRequest):
+    params = request.query_params
+    if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == META_VERIFY_TOKEN:
+        return PlainTextResponse(params.get("hub.challenge", ""))
+    return PlainTextResponse("forbidden", status_code=403)
+
+
+@api_router.post("/whatsapp/webhook")
+async def whatsapp_webhook(request: _FastAPIRequest):
+    payload = await request.json()
+    try:
+        entries = payload.get("entry", []) or []
+        for entry in entries:
+            for change in entry.get("changes", []) or []:
+                value = change.get("value", {}) or {}
+                md = value.get("metadata", {}) or {}
+                phone_number_id = md.get("phone_number_id")
+                if not phone_number_id:
+                    continue
+                wc = await db.whatsapp_connections.find_one(
+                    {"phone_number_id": phone_number_id, "status": "active"}, {"_id": 0}
+                )
+                if not wc:
+                    logger.warning("WhatsApp webhook for unbound phone_number_id %s", phone_number_id)
+                    continue
+                vendor_id = wc["vendor_id"]
+
+                # Inbound messages from customers
+                for msg in value.get("messages", []) or []:
+                    if msg.get("type") != "text":
+                        continue
+                    wa_from = msg.get("from", "")
+                    text = ((msg.get("text") or {}).get("body") or "").strip()
+                    if not text:
+                        continue
+                    contacts = value.get("contacts", []) or []
+                    name = ""
+                    if contacts and contacts[0].get("profile"):
+                        name = contacts[0]["profile"].get("name", "")
+
+                    # find or create conversation keyed by wa_from
+                    conv = await db.conversations.find_one(
+                        {"vendor_id": vendor_id, "channel": "whatsapp", "customer_contact": wa_from},
+                        {"_id": 0},
+                    )
+                    conv = conv or await _ensure_conversation(
+                        vendor_id, None, "whatsapp", name or wa_from, wa_from
+                    )
+                    await _push_message(conv["id"], vendor_id, "user", text)
+                    # AI reply grounded in vendor's bot
+                    reply = await get_ai_reply(vendor_id, conv["id"], text)
+                    await _push_message(conv["id"], vendor_id, "bot", reply)
+                    # Send reply back to the customer on WhatsApp
+                    try:
+                        await _whatsapp_send(phone_number_id, wa_from, reply, wc["access_token"])
+                    except Exception as e:
+                        logger.warning("send reply failed: %s", e)
+                    # auto-book appointment if confirmed
+                    try:
+                        await _maybe_book_appointment(vendor_id, conv["id"], reply)
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.exception("whatsapp webhook error: %s", e)
+    return {"ok": True}
+
+
+@api_router.get("/whatsapp/embedded-signup-config")
+async def whatsapp_embedded_signup_config(user: dict = Depends(require_vendor)):
+    """Returns the JS params the frontend needs to launch Meta's Embedded Signup popup.
+    config_id is optional until App Review is complete; without it, we fall back to
+    a manual 'paste-your-test-number' flow that superadmin can use right now."""
+    return {
+        "app_id": META_APP_ID,
+        "config_id": os.environ.get("META_EMBEDDED_SIGNUP_CONFIG_ID", ""),
+        "graph_version": "v22.0",
+    }
 
 
 # ------------------------------ App setup ------------------------------------

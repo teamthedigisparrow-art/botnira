@@ -9,10 +9,10 @@ import { useAuth } from "../../contexts/AuthContext";
 
 const META = {
   web: { icon: Globe, label: "Web Widget", note: "Embed on any website. Always live." },
-  whatsapp: { icon: MessageCircle, label: "WhatsApp", note: "Coming soon — vendor-managed." },
+  whatsapp: { icon: MessageCircle, label: "WhatsApp", note: "Fully BotNira-managed. Meta Cloud API." },
   email: { icon: Mail, label: "Email", note: "Coming soon — vendor-managed." },
   sms: { icon: MessageSquare, label: "SMS", note: "Coming soon — vendor-managed." },
-  voice: { icon: Phone, label: "Voice", note: "AI phone receptionist, fully managed." },
+  voice: { icon: Phone, label: "Voice", note: "Waitlist — Canadian inventory expanding." },
 };
 
 const AREA_CODES = [
@@ -63,6 +63,13 @@ export default function Channels() {
   const [testNumber, setTestNumber] = useState("");
   const [activating, setActivating] = useState(false);
 
+  // WhatsApp state
+  const [wa, setWa] = useState(null);
+  const [waLoading, setWaLoading] = useState(false);
+  const [waTestTo, setWaTestTo] = useState("");
+  const [waTestMsg, setWaTestMsg] = useState("Hi! Testing BotNira's WhatsApp.");
+  const [waBusy, setWaBusy] = useState(false);
+
   const loadChannels = () => api.get("/channels").then(r => setList(r.data));
   const loadVoice = async () => {
     setVoiceLoading(true);
@@ -73,7 +80,16 @@ export default function Channels() {
     finally { setVoiceLoading(false); }
   };
 
-  useEffect(() => { loadChannels(); loadVoice(); }, []);
+  const loadWa = async () => {
+    setWaLoading(true);
+    try {
+      const { data } = await api.get("/whatsapp/status");
+      setWa(data);
+    } catch (e) { /* ignore */ }
+    finally { setWaLoading(false); }
+  };
+
+  useEffect(() => { loadChannels(); loadVoice(); loadWa(); }, []);
 
   const toggle = async (ch, newStatus) => {
     if (ch === "voice") {
@@ -334,6 +350,133 @@ export default function Channels() {
               >
                 <PowerOff size={14}/> Deactivate
               </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* WhatsApp panel */}
+      <div className="border-2 border-black bg-white" data-testid="whatsapp-panel">
+        <div className="bg-[#25D366] text-black px-6 py-4 border-b-2 border-black flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <MessageCircle size={20} />
+            <div>
+              <div className="font-display font-black text-xl">WhatsApp — Meta Cloud API</div>
+              <div className="text-xs opacity-80">BotNira-managed. Vendors connect their own WhatsApp number through Meta.</div>
+            </div>
+          </div>
+          {wa?.connection?.status === "active" && (
+            <span className="badge bg-black text-[#25D366] border-black">CONNECTED</span>
+          )}
+        </div>
+
+        {waLoading ? (
+          <div className="p-6 font-mono text-sm text-neutral-600">Loading…</div>
+        ) : wa?.connection?.status === "active" ? (
+          <div className="p-6 space-y-5">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="border-2 border-black p-4 md:col-span-2">
+                <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Connected WhatsApp number</div>
+                <div className="font-display font-black text-2xl mt-2">{wa.connection.display_phone_number || "(Test number)"}</div>
+                <div className="text-xs font-mono text-neutral-600 mt-1 break-all">
+                  phone_id: {wa.connection.phone_number_id} • waba: {wa.connection.waba_id}
+                </div>
+                {wa.connection.is_meta_test && (
+                  <div className="mt-2 inline-block border border-amber-600 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">
+                    Meta test number — 5 recipient limit
+                  </div>
+                )}
+              </div>
+              <div className="border-2 border-black p-4">
+                <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Webhook status</div>
+                <div className="font-display font-black text-2xl mt-2">LIVE</div>
+                <div className="text-xs font-mono text-neutral-600 mt-1 break-all">/api/whatsapp/webhook</div>
+              </div>
+            </div>
+
+            <div className="border-2 border-black p-4 bg-neutral-50">
+              <div className="font-display font-bold mb-2">Send a test message</div>
+              <div className="text-xs text-neutral-600 mb-3 font-mono">
+                The recipient must have messaged you first within the last 24h (Meta's session-window rule),
+                OR be in your Meta app's allowed-recipients list when using the test number.
+              </div>
+              <div className="grid md:grid-cols-3 gap-2">
+                <input
+                  data-testid="wa-test-to"
+                  value={waTestTo}
+                  onChange={e => setWaTestTo(e.target.value)}
+                  placeholder="Recipient (+14165551234)"
+                  className="border-2 border-black px-3 py-2 font-mono"
+                />
+                <input
+                  data-testid="wa-test-msg"
+                  value={waTestMsg}
+                  onChange={e => setWaTestMsg(e.target.value)}
+                  className="border-2 border-black px-3 py-2 md:col-span-1"
+                />
+                <button
+                  data-testid="wa-test-send"
+                  disabled={waBusy}
+                  onClick={async () => {
+                    if (!waTestTo) return toast.error("Enter a recipient");
+                    setWaBusy(true);
+                    try {
+                      await api.post("/whatsapp/test-send", { to: waTestTo, message: waTestMsg });
+                      toast.success("Sent! Check the recipient's WhatsApp.");
+                    } catch (e) {
+                      toast.error(e?.response?.data?.detail || "Send failed", { duration: 8000 });
+                    } finally { setWaBusy(false); }
+                  }}
+                  className="bg-[#25D366] text-black font-bold px-4 py-2 border-2 border-black shadow-brutal hover-lift disabled:opacity-60"
+                >
+                  {waBusy ? "Sending…" : "Send"}
+                </button>
+              </div>
+            </div>
+
+            <div className="border-2 border-black p-4 text-sm">
+              <div className="font-display font-bold mb-1">Share your WhatsApp with customers</div>
+              <div className="text-neutral-700">
+                Publish your connected WhatsApp number on your website, Google profile, or business cards.
+                Every inbound message hits BotNira's AI brain (same training as your web chat) and lands in your <a href="/app/inbox" className="underline font-bold">Inbox</a>.
+              </div>
+            </div>
+
+            <div className="border-t-2 border-black pt-4 flex items-center justify-between">
+              <div className="text-sm text-neutral-600">Disconnecting pauses inbound/outbound WhatsApp for this vendor.</div>
+              <button
+                data-testid="wa-disconnect-btn"
+                onClick={async () => {
+                  if (!window.confirm("Disconnect WhatsApp?")) return;
+                  await api.post("/whatsapp/disconnect");
+                  toast.success("Disconnected");
+                  loadWa();
+                  loadChannels();
+                }}
+                className="text-sm font-bold border-2 border-black px-4 py-2 hover-lift"
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-6 space-y-5" data-testid="wa-signup-pending">
+            <div className="border-2 border-black p-5 bg-amber-50">
+              <div className="font-display font-black text-lg">One-click WhatsApp connection — launching soon</div>
+              <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
+                BotNira is waiting on Meta App Review (Facebook's mandatory approval for <code>whatsapp_business_management</code>
+                + <code>whatsapp_business_messaging</code>) before we can enable the <strong>Embedded Signup</strong> button here.
+                Once approved, every vendor will click <em>Connect WhatsApp</em>, authorize with Facebook, pick or add their number, and be live in ~90 seconds.
+              </p>
+            </div>
+            <div className="border-2 border-black p-5">
+              <div className="font-display font-bold mb-2">What we're waiting on Meta for (timeline)</div>
+              <ol className="text-sm list-decimal pl-6 space-y-1 text-neutral-800">
+                <li>Meta Business Verification (3–7 days)</li>
+                <li>App Review for WhatsApp permissions (5–14 days)</li>
+                <li>Embedded Signup config published (minutes — once review is approved)</li>
+              </ol>
+              <div className="mt-3 text-xs font-mono text-neutral-600">Status: <span className="text-amber-700 font-bold">WAITING_ON_META_APP_REVIEW</span></div>
             </div>
           </div>
         )}
