@@ -183,8 +183,12 @@ const Pricing = () => (
 
 const Footer = () => (
   <footer className="border-t-2 border-black">
-    <div className="max-w-7xl mx-auto px-6 py-8 flex justify-between items-center text-sm font-mono">
+    <div className="max-w-7xl mx-auto px-6 py-8 flex flex-wrap justify-between items-center text-sm font-mono gap-4">
       <span>© 2026 BotNira</span>
+      <div className="flex items-center gap-6">
+        <Link to="/privacy" className="hover:text-[#002FA7]" data-testid="footer-privacy">Privacy</Link>
+        <Link to="/terms" className="hover:text-[#002FA7]" data-testid="footer-terms">Terms</Link>
+      </div>
       <span>Built for front desks that sleep.</span>
     </div>
   </footer>

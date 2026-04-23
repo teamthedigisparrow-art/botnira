@@ -1642,6 +1642,108 @@ async def whatsapp_embedded_signup_config(user: dict = Depends(require_vendor)):
     }
 
 
+class EmbeddedSignupExchangeReq(BaseModel):
+    code: str
+
+
+@api_router.post("/whatsapp/embedded-signup/exchange")
+async def whatsapp_embedded_signup_exchange(
+    req: EmbeddedSignupExchangeReq,
+    user: dict = Depends(require_vendor),
+):
+    """Exchange the short-lived auth code from Meta's Embedded Signup popup for
+    a durable business token, discover the WABA + phone_number_id the vendor
+    just authorised, and bind them to this vendor in BotNira.
+    """
+    if not META_APP_ID or not META_APP_SECRET:
+        raise HTTPException(status_code=503, detail="Meta app not configured")
+
+    # 1) Exchange code → access token
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(
+            f"{GRAPH_BASE}/oauth/access_token",
+            params={
+                "client_id": META_APP_ID,
+                "client_secret": META_APP_SECRET,
+                "code": req.code,
+            },
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=400, detail=f"Meta token exchange failed: {r.text[:300]}")
+        token_data = r.json()
+        vendor_token = token_data.get("access_token")
+        if not vendor_token:
+            raise HTTPException(status_code=400, detail="Meta did not return an access token")
+
+        # 2) Discover the WABAs the vendor granted us access to
+        r = await c.get(
+            f"{GRAPH_BASE}/debug_token",
+            params={"input_token": vendor_token, "access_token": META_SYSTEM_USER_TOKEN or vendor_token},
+        )
+        granular = r.json().get("data", {}).get("granular_scopes", [])
+        waba_ids: list = []
+        for g in granular:
+            if g.get("scope") == "whatsapp_business_management":
+                waba_ids = g.get("target_ids", [])
+                break
+        if not waba_ids:
+            raise HTTPException(status_code=400, detail="No WhatsApp Business Account was authorised in this signup.")
+        waba_id = waba_ids[0]
+
+        # 3) Find the phone number inside that WABA
+        r = await c.get(
+            f"{GRAPH_BASE}/{waba_id}/phone_numbers",
+            headers={"Authorization": f"Bearer {vendor_token}"},
+        )
+        phones = r.json().get("data", [])
+        if not phones:
+            raise HTTPException(status_code=400, detail="The authorised WABA has no phone numbers yet.")
+        phone = phones[0]
+        phone_number_id = phone.get("id")
+        display_phone_number = phone.get("display_phone_number", "")
+
+        # 4) Subscribe our app to this WABA + override webhook on the phone
+        try:
+            await c.post(
+                f"{GRAPH_BASE}/{waba_id}/subscribed_apps",
+                headers={"Authorization": f"Bearer {vendor_token}"},
+            )
+            await c.post(
+                f"{GRAPH_BASE}/{phone_number_id}",
+                headers={"Authorization": f"Bearer {vendor_token}"},
+                params={
+                    "webhook_configuration": json.dumps({
+                        "override_callback_uri": f"{PUBLIC_BASE_URL}/api/whatsapp/webhook",
+                        "verify_token": META_VERIFY_TOKEN,
+                    })
+                },
+            )
+        except Exception as e:
+            logger.warning("Post-signup subscription best-effort failed: %s", e)
+
+    # 5) Save connection for this vendor
+    conn = {
+        "id": new_id(),
+        "vendor_id": user["vendor_id"],
+        "phone_number_id": phone_number_id,
+        "waba_id": waba_id,
+        "display_phone_number": display_phone_number,
+        "access_token": vendor_token,
+        "status": "active",
+        "is_meta_test": False,
+        "onboarded_via": "embedded_signup",
+        "created_at": now_iso(),
+    }
+    await db.whatsapp_connections.replace_one(
+        {"vendor_id": user["vendor_id"]}, conn, upsert=True
+    )
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "whatsapp"},
+        {"$set": {"status": "connected", "updated_at": now_iso()}},
+    )
+    return {"status": "connected", "connection": conn}
+
+
 # ------------------------------ App setup ------------------------------------
 app.include_router(api_router)
 app.add_middleware(

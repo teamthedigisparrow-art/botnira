@@ -6,6 +6,7 @@ import {
   Copy, ExternalLink, Check, PhoneCall, PowerOff, Sparkles, Info
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButton";
 
 const META = {
   web: { icon: Globe, label: "Web Widget", note: "Embed on any website. Always live." },
@@ -69,6 +70,7 @@ export default function Channels() {
   const [waTestTo, setWaTestTo] = useState("");
   const [waTestMsg, setWaTestMsg] = useState("Hi! Testing BotNira's WhatsApp.");
   const [waBusy, setWaBusy] = useState(false);
+  const [waSignupConfig, setWaSignupConfig] = useState(null);
 
   const loadChannels = () => api.get("/channels").then(r => setList(r.data));
   const loadVoice = async () => {
@@ -87,6 +89,27 @@ export default function Channels() {
       setWa(data);
     } catch (e) { /* ignore */ }
     finally { setWaLoading(false); }
+    try {
+      const { data } = await api.get("/whatsapp/embedded-signup-config");
+      setWaSignupConfig(data);
+    } catch { /* optional */ }
+  };
+
+  const onWaSignupSuccess = async (payload) => {
+    if (!payload?.code) return toast.error("Meta didn't return an authorisation code.");
+    setWaBusy(true);
+    try {
+      await api.post("/whatsapp/embedded-signup/exchange", { code: payload.code });
+      toast.success("WhatsApp connected!");
+      loadWa();
+      loadChannels();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not finish WhatsApp connection.", { duration: 10000 });
+    } finally { setWaBusy(false); }
+  };
+  const onWaSignupError = (e) => {
+    if (e?.cancelled) return;
+    toast.error(e?.message || "WhatsApp signup did not complete.", { duration: 10000 });
   };
 
   useEffect(() => { loadChannels(); loadVoice(); loadWa(); }, []);
@@ -462,21 +485,37 @@ export default function Channels() {
         ) : (
           <div className="p-6 space-y-5" data-testid="wa-signup-pending">
             <div className="border-2 border-black p-5 bg-amber-50">
-              <div className="font-display font-black text-lg">One-click WhatsApp connection — launching soon</div>
+              <div className="font-display font-black text-lg">Connect your WhatsApp in ~90 seconds</div>
               <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
-                BotNira is waiting on Meta App Review (Facebook's mandatory approval for <code>whatsapp_business_management</code>
-                + <code>whatsapp_business_messaging</code>) before we can enable the <strong>Embedded Signup</strong> button here.
-                Once approved, every vendor will click <em>Connect WhatsApp</em>, authorize with Facebook, pick or add their number, and be live in ~90 seconds.
+                Click below to open Meta's Embedded Signup. You'll pick the Facebook Business Manager + WhatsApp
+                Business Account that owns your phone number, and BotNira auto-wires the webhook, subscribes to
+                message events, and goes live.
               </p>
+              <div className="mt-4">
+                {waSignupConfig ? (
+                  <ConnectWhatsAppButton
+                    config={waSignupConfig}
+                    onSuccess={onWaSignupSuccess}
+                    onError={onWaSignupError}
+                  />
+                ) : (
+                  <div className="text-xs font-mono text-neutral-600">Loading Meta config…</div>
+                )}
+              </div>
+              {waSignupConfig && !waSignupConfig.config_id && (
+                <div className="mt-4 text-xs font-mono text-amber-900 bg-amber-100 border border-amber-700 px-3 py-2">
+                  ⚠ Meta App Review is still pending — the button will launch the popup as soon as approval lands.
+                  In the meantime, the BotNira superadmin can connect your WhatsApp manually.
+                </div>
+              )}
             </div>
             <div className="border-2 border-black p-5">
-              <div className="font-display font-bold mb-2">What we're waiting on Meta for (timeline)</div>
-              <ol className="text-sm list-decimal pl-6 space-y-1 text-neutral-800">
-                <li>Meta Business Verification (3–7 days)</li>
-                <li>App Review for WhatsApp permissions (5–14 days)</li>
-                <li>Embedded Signup config published (minutes — once review is approved)</li>
-              </ol>
-              <div className="mt-3 text-xs font-mono text-neutral-600">Status: <span className="text-amber-700 font-bold">WAITING_ON_META_APP_REVIEW</span></div>
+              <div className="font-display font-bold mb-2">What you'll need during signup</div>
+              <ul className="text-sm list-disc pl-6 space-y-1 text-neutral-800">
+                <li>A Facebook account that's an admin on your Meta Business Manager.</li>
+                <li>A WhatsApp Business phone number (or an unused number you can verify via SMS/call).</li>
+                <li>Your business display name (what customers see in WhatsApp).</li>
+              </ul>
             </div>
           </div>
         )}
