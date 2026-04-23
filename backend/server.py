@@ -2285,6 +2285,415 @@ async def auth_mfa_status(user: dict = Depends(require_vendor)):
     return {"mfa_enabled": bool(vendor and vendor.get("mfa_enabled"))}
 
 
+# ============================== Twilio Voice ================================
+from twilio.rest import Client as TwilioClient
+from twilio.base.exceptions import TwilioRestException
+from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
+from fastapi import WebSocket, WebSocketDisconnect
+
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+OPENAI_REALTIME_API_KEY = os.environ.get("OPENAI_REALTIME_API_KEY", "")
+
+_twilio_master: Optional[TwilioClient] = None
+
+
+def get_twilio() -> TwilioClient:
+    global _twilio_master
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    if _twilio_master is None:
+        _twilio_master = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    return _twilio_master
+
+
+def _twilio_subaccount_client(sub_sid: str, sub_token: str) -> TwilioClient:
+    return TwilioClient(sub_sid, sub_token)
+
+
+async def _get_or_create_subaccount(vendor_id: str, vendor_name: str) -> dict:
+    """Idempotent: return vendor's Twilio subaccount (creates if missing)."""
+    existing = await db.voice_subaccounts.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    if existing:
+        return existing
+    tw = get_twilio()
+    friendly = f"BotNira · {vendor_name} · {vendor_id[:8]}"[:64]
+    sub = tw.api.v2010.accounts.create(friendly_name=friendly)
+    rec = {
+        "id": new_id(),
+        "vendor_id": vendor_id,
+        "account_sid": sub.sid,
+        "auth_token": sub.auth_token,
+        "friendly_name": friendly,
+        "status": sub.status,
+        "created_at": now_iso(),
+    }
+    await db.voice_subaccounts.insert_one(rec)
+    return rec
+
+
+# ----- Request/response models -----
+class SearchNumbersReq(BaseModel):
+    country_code: str = Field(min_length=2, max_length=2)  # ISO-3166 alpha-2 (US, CA, GB, ...)
+    area_code: Optional[str] = None
+    number_type: Optional[str] = "Local"   # Local | Mobile | TollFree
+    contains: Optional[str] = None
+
+
+class BuyNumberReq(BaseModel):
+    country_code: str = Field(min_length=2, max_length=2)
+    phone_number: str  # E.164 format (e.g., +14155551212)
+
+
+# ----- Endpoints -----
+@api_router.get("/voice/countries")
+async def voice_countries(user: dict = Depends(require_vendor)):
+    """List the countries Twilio offers phone numbers in."""
+    tw = get_twilio()
+    # pricing.v1 is the cheapest way to enumerate countries
+    countries = tw.pricing.v1.voice.countries.list(limit=300)
+    return [{"iso": c.iso_country, "name": c.country} for c in countries]
+
+
+@api_router.post("/voice/search-numbers")
+async def voice_search_numbers(req: SearchNumbersReq, user: dict = Depends(require_vendor)):
+    """Search available Twilio numbers for purchase."""
+    tw = get_twilio()
+    country = req.country_code.upper()
+    ntype = (req.number_type or "Local").capitalize()
+    try:
+        ctx = tw.available_phone_numbers(country)
+        list_fn = getattr(ctx, f"{ntype.lower()}").list
+        kwargs = {"limit": 15, "voice_enabled": True}
+        if req.area_code and country in ("US", "CA"):
+            kwargs["area_code"] = int(req.area_code)
+        if req.contains:
+            kwargs["contains"] = req.contains
+        nums = list_fn(**kwargs)
+    except TwilioRestException as e:
+        raise HTTPException(status_code=400, detail=f"Twilio: {e.msg}")
+    # Fetch per-minute pricing for this country (what we pay)
+    try:
+        pricing = tw.pricing.v1.voice.countries(country).fetch()
+        inbound_rate = 0.0
+        if pricing.inbound_call_prices:
+            inbound_rate = float(pricing.inbound_call_prices[0].get("current_price", 0))
+    except Exception:
+        inbound_rate = 0.0
+    return {
+        "country": country,
+        "inbound_cost_per_min_usd": inbound_rate,
+        "numbers": [
+            {
+                "phone_number": n.phone_number,
+                "friendly_name": n.friendly_name,
+                "locality": getattr(n, "locality", None),
+                "region": getattr(n, "region", None),
+                "capabilities": n.capabilities,
+            }
+            for n in nums
+        ],
+    }
+
+
+@api_router.post("/voice/buy-number")
+async def voice_buy_number(req: BuyNumberReq, user: dict = Depends(require_vendor)):
+    """Activate voice for the vendor: create subaccount if needed, purchase the number,
+    wire voice webhook. Hard-blocked if vendor is on trial / paywalled / exempt-disabled."""
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    access = _plan_for_vendor(vendor)
+    # Voice requires either active plan or exempt
+    if not access["is_exempt"] and "voice" not in access["allowed_channels"]:
+        raise HTTPException(status_code=402, detail="Voice requires an active paid plan. Upgrade to activate voice.")
+
+    # Prevent double-purchase — one number per vendor for now
+    existing_conn = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if existing_conn:
+        raise HTTPException(status_code=400, detail="Voice is already activated for this vendor. Deactivate the current number first.")
+
+    # Create (or reuse) the vendor's Twilio subaccount
+    sub = await _get_or_create_subaccount(user["vendor_id"], vendor.get("name", "Vendor"))
+    sub_tw = _twilio_subaccount_client(sub["account_sid"], sub["auth_token"])
+
+    base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else ""
+    voice_webhook = f"{base}/api/voice/webhook"
+    status_callback = f"{base}/api/voice/status-callback"
+
+    try:
+        purchased = sub_tw.incoming_phone_numbers.create(
+            phone_number=req.phone_number,
+            voice_url=voice_webhook,
+            voice_method="POST",
+            status_callback=status_callback,
+            status_callback_method="POST",
+            friendly_name=f"BotNira · {vendor.get('name','Vendor')}",
+        )
+    except TwilioRestException as e:
+        raise HTTPException(status_code=400, detail=f"Twilio purchase failed: {e.msg}")
+
+    conn = {
+        "id": new_id(),
+        "vendor_id": user["vendor_id"],
+        "subaccount_sid": sub["account_sid"],
+        "phone_number_sid": purchased.sid,
+        "phone_number": purchased.phone_number,
+        "country": req.country_code.upper(),
+        "friendly_name": purchased.friendly_name,
+        "voice_webhook": voice_webhook,
+        "status": "active",
+        "created_at": now_iso(),
+    }
+    await db.voice_connections.insert_one(conn)
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "voice"},
+        {"$set": {"status": "connected", "config": {"phone_number": purchased.phone_number}, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return {k: v for k, v in conn.items() if k != "_id"}
+
+
+@api_router.get("/voice/status")
+async def voice_status(user: dict = Depends(require_vendor)):
+    conn = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not conn:
+        return {"active": False}
+    # current month usage
+    start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    agg = await db.call_records.aggregate([
+        {"$match": {"vendor_id": user["vendor_id"], "started_at": {"$gte": start_of_month}}},
+        {"$group": {"_id": None, "minutes": {"$sum": "$minutes"}, "calls": {"$sum": 1}}},
+    ]).to_list(1)
+    stats = agg[0] if agg else {"minutes": 0, "calls": 0}
+    return {
+        "active": True,
+        "phone_number": conn["phone_number"],
+        "country": conn["country"],
+        "subaccount_sid": conn["subaccount_sid"],
+        "stats_this_month": {
+            "minutes": round(float(stats.get("minutes", 0)), 1),
+            "calls": int(stats.get("calls", 0)),
+        },
+    }
+
+
+@api_router.post("/voice/deactivate")
+async def voice_deactivate(user: dict = Depends(require_vendor)):
+    conn = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not conn:
+        raise HTTPException(status_code=404, detail="No voice number to deactivate")
+    sub = await db.voice_subaccounts.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if sub:
+        try:
+            sub_tw = _twilio_subaccount_client(sub["account_sid"], sub["auth_token"])
+            sub_tw.incoming_phone_numbers(conn["phone_number_sid"]).delete()
+        except Exception as e:
+            logger.warning("Release number failed: %s", e)
+    await db.voice_connections.delete_one({"vendor_id": user["vendor_id"]})
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "voice"},
+        {"$set": {"status": "disconnected", "updated_at": now_iso()}},
+    )
+    return {"ok": True}
+
+
+# ----- Public TwiML webhook (Twilio → us) -----
+@api_router.post("/voice/webhook")
+async def voice_webhook(request: _StripeRequest):
+    """Twilio POSTs here on inbound calls. We return TwiML that opens a Media Stream."""
+    form = await request.form()
+    call_sid = form.get("CallSid")
+    called = form.get("Called")          # our Twilio number (E.164)
+    caller = form.get("From") or "unknown"
+    # Look up vendor by number
+    conn = await db.voice_connections.find_one({"phone_number": called}, {"_id": 0})
+    vr = VoiceResponse()
+    if not conn:
+        vr.say("Sorry, this number is not currently active. Goodbye.", voice="alice")
+        vr.hangup()
+        return Response(content=str(vr), media_type="application/xml")
+    vendor_id = conn["vendor_id"]
+
+    # Balance + plan gate
+    ok, reason = await _vendor_can_use_channel(vendor_id, "voice")
+    if not ok:
+        vr.say(
+            "We're sorry, this business is temporarily unable to take calls. Please try again later.",
+            voice="alice",
+        )
+        vr.hangup()
+        return Response(content=str(vr), media_type="application/xml")
+
+    # Create/track call record
+    call_id = new_id()
+    await db.call_records.insert_one({
+        "id": call_id,
+        "vendor_id": vendor_id,
+        "call_sid": call_sid,
+        "from_number": caller,
+        "to_number": called,
+        "started_at": now_iso(),
+        "minutes": 0.0,
+        "status": "in-progress",
+    })
+    # Open the media stream to our WS bridge
+    base_ws = PUBLIC_BASE_URL.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
+    ws_url = f"{base_ws}/api/voice/stream/{call_id}"
+    connect = Connect()
+    stream = Stream(url=ws_url)
+    stream.parameter(name="vendor_id", value=vendor_id)
+    stream.parameter(name="call_id", value=call_id)
+    connect.append(stream)
+    vr.append(connect)
+    return Response(content=str(vr), media_type="application/xml")
+
+
+@api_router.post("/voice/status-callback")
+async def voice_status_callback(request: _StripeRequest):
+    """Twilio reports call-completed status and duration here."""
+    form = await request.form()
+    call_sid = form.get("CallSid")
+    duration = form.get("CallDuration")  # seconds
+    status = form.get("CallStatus")
+    if call_sid:
+        updates = {"status": status or "completed", "ended_at": now_iso()}
+        if duration:
+            mins = round(float(duration) / 60.0, 2)
+            updates["minutes"] = mins
+            # Deduct minutes from vendor balance (unless exempt)
+            rec = await db.call_records.find_one({"call_sid": call_sid}, {"_id": 0})
+            if rec:
+                v = await db.vendors.find_one({"id": rec["vendor_id"]}, {"_id": 0, "is_exempt": 1})
+                if v and not v.get("is_exempt"):
+                    await db.vendors.update_one(
+                        {"id": rec["vendor_id"]},
+                        {"$inc": {"minutes_balance": -mins, "minutes_used_total": mins}},
+                    )
+        await db.call_records.update_one({"call_sid": call_sid}, {"$set": updates})
+    return {"ok": True}
+
+
+# ----- WebSocket bridge: Twilio Media Streams ⇄ OpenAI Realtime -----
+@app.websocket("/api/voice/stream/{call_id}")
+async def voice_stream(ws: WebSocket, call_id: str):
+    """Bridges Twilio <Stream> WS (μ-law 8kHz base64) to OpenAI Realtime (g711_ulaw)."""
+    await ws.accept(subprotocol="audio")
+    call = await db.call_records.find_one({"id": call_id}, {"_id": 0})
+    if not call:
+        await ws.close(code=1008)
+        return
+    vendor_id = call["vendor_id"]
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    bot = await db.bots.find_one({"vendor_id": vendor_id}, {"_id": 0})
+
+    if not OPENAI_REALTIME_API_KEY:
+        logger.warning("OPENAI_REALTIME_API_KEY missing — voice bridge cannot connect to OpenAI")
+        # Consume Twilio messages silently until they hang up
+        try:
+            while True:
+                msg = await ws.receive_text()
+                data = json.loads(msg)
+                if data.get("event") == "stop":
+                    break
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await ws.close()
+        return
+
+    # Build a system prompt grounded in vendor's bot
+    biz = (bot or {}).get("business_description") or (vendor or {}).get("business_description") or ""
+    greeting = (bot or {}).get("greeting") or f"Hi, welcome to {vendor.get('name','our business')}. How can I help?"
+    tone = (bot or {}).get("tone") or "friendly and professional"
+    faqs = (bot or {}).get("faqs") or []
+    faq_txt = "\n".join([f"- {f.get('q','')} → {f.get('a','')}" for f in faqs[:30]]) if faqs else ""
+    system_instructions = (
+        f"You are BotNira, a voice AI receptionist for {vendor.get('name','this business')}. "
+        f"Speak in a {tone} tone. Keep replies short (1-3 sentences).\n\n"
+        f"BUSINESS INFO (strict source of truth — do NOT invent anything beyond this):\n{biz}\n\n"
+        f"FAQs:\n{faq_txt}\n\n"
+        f"If you don't know an answer, say 'Let me have someone from our team follow up with you — what's the best callback number?'. "
+        f"If the caller wants to book an appointment, collect name, phone and preferred date/time, then confirm it back."
+    )
+
+    import websockets as _ws
+    oai_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
+    oai_headers = [("Authorization", f"Bearer {OPENAI_REALTIME_API_KEY}"), ("OpenAI-Beta", "realtime=v1")]
+    stream_sid = None
+    try:
+        async with _ws.connect(oai_url, additional_headers=oai_headers, max_size=None) as oai:
+            # Configure OpenAI session for Twilio audio format + our prompt
+            session_cfg = {
+                "type": "session.update",
+                "session": {
+                    "modalities": ["audio", "text"],
+                    "voice": "alloy",
+                    "input_audio_format": "g711_ulaw",
+                    "output_audio_format": "g711_ulaw",
+                    "instructions": system_instructions,
+                    "turn_detection": {"type": "server_vad"},
+                },
+            }
+            await oai.send(json.dumps(session_cfg))
+            # Proactive greeting
+            await oai.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["audio", "text"], "instructions": f"Greet the caller: {greeting}"},
+            }))
+
+            async def twilio_to_oai():
+                nonlocal stream_sid
+                try:
+                    while True:
+                        raw = await ws.receive_text()
+                        ev = json.loads(raw)
+                        etype = ev.get("event")
+                        if etype == "start":
+                            stream_sid = ev["start"]["streamSid"]
+                        elif etype == "media":
+                            payload = ev["media"]["payload"]
+                            await oai.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
+                        elif etype == "stop":
+                            break
+                except WebSocketDisconnect:
+                    pass
+
+            async def oai_to_twilio():
+                try:
+                    async for msg in oai:
+                        ev = json.loads(msg)
+                        etype = ev.get("type")
+                        if etype == "response.audio.delta" and stream_sid:
+                            await ws.send_text(json.dumps({
+                                "event": "media",
+                                "streamSid": stream_sid,
+                                "media": {"payload": ev["delta"]},
+                            }))
+                        elif etype == "response.audio_transcript.done":
+                            # Save BotNira's spoken text to transcripts
+                            text = ev.get("transcript", "")
+                            if text:
+                                conv = await _ensure_conversation(vendor_id, None, "voice", call["from_number"], call["from_number"])
+                                await _push_message(conv["id"], vendor_id, "bot", text)
+                        elif etype == "conversation.item.input_audio_transcription.completed":
+                            text = ev.get("transcript", "")
+                            if text:
+                                conv = await _ensure_conversation(vendor_id, None, "voice", call["from_number"], call["from_number"])
+                                await _push_message(conv["id"], vendor_id, "user", text)
+                except Exception as e:
+                    logger.warning("oai_to_twilio ended: %s", e)
+
+            await asyncio.gather(twilio_to_oai(), oai_to_twilio())
+    except Exception as e:
+        logger.exception("Voice bridge error: %s", e)
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
 # ------------------------------ App setup ------------------------------------
 app.include_router(api_router)
 app.add_middleware(

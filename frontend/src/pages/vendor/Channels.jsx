@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButton";
+import ConnectVoicePanel from "../../components/botnira/ConnectVoicePanel";
 
 const META = {
   web: { icon: Globe, label: "Web Widget", note: "Embed on any website. Always live." },
@@ -135,7 +136,7 @@ export default function Channels() {
               )}
               {!locked && c.channel === "voice" && (
                 <div className="mt-4 text-xs font-mono text-neutral-600 border border-dashed border-black/40 p-2">
-                  Voice backend (Twilio + OpenAI Realtime) is rolling out. You'll be able to activate a phone number here.
+                  See the Voice activation panel below to buy a phone number.
                 </div>
               )}
             </div>
@@ -285,6 +286,11 @@ export default function Channels() {
           </div>
         )}
       </div>
+
+      {/* Voice panel (Twilio + OpenAI Realtime) */}
+      {allowedChannels.has("voice") && (
+        <ConnectVoicePanel onChange={loadChannels} />
+      )}
 
       {/* Web widget installer */}
       <div className="border-2 border-black bg-white p-6" data-testid="web-install">
