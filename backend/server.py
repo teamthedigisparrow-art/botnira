@@ -889,7 +889,7 @@ async def simulate_inbound(
     req: SimulateInboundReq,
     user: dict = Depends(require_vendor),
 ):
-    if channel not in {"whatsapp", "email", "sms"}:
+    if channel not in {"whatsapp", "email", "sms", "voice"}:
         raise HTTPException(status_code=400, detail="Invalid channel")
     ok, reason = await _vendor_can_use_channel(user["vendor_id"], channel)
     if not ok:

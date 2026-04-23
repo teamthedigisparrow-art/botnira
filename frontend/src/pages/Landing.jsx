@@ -91,6 +91,7 @@ const Hero = () => (
 );
 
 const CHANNELS = [
+  { icon: Phone, label: "Voice Calls", sub: "Prepaid minutes" },
   { icon: MessageCircle, label: "WhatsApp", sub: "Inbox + replies" },
   { icon: Mail, label: "Email", sub: "Auto-reply" },
   { icon: MessageSquare, label: "SMS & Chat", sub: "Web widget" },
