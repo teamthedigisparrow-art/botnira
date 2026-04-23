@@ -80,7 +80,7 @@ export default function Terms() {
         <Section n="4" title="Channels & third-party services">
           <p>
             Some channels require you to authorise BotNira with a third-party provider
-            (Meta WhatsApp, Retell AI, Twilio, Stripe, etc.). You agree to also abide by those providers'
+            (Meta WhatsApp, Stripe, etc.). You agree to also abide by those providers'
             terms when using them through BotNira. If Meta or another provider suspends your access
             for policy violations, BotNira's ability to deliver that channel will pause until reinstated.
           </p>

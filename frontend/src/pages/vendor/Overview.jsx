@@ -53,7 +53,7 @@ export default function Overview() {
           <div className="text-xs font-bold tracking-[0.2em] uppercase opacity-80">Next steps</div>
           <ul className="mt-4 space-y-3 text-sm font-medium">
             <li>→ <Link to="/app/bot" data-testid="overview-link-bot" className="underline">Paste your business description and FAQs</Link></li>
-            <li>→ <Link to="/app/channels" data-testid="overview-link-channels" className="underline">Connect WhatsApp, email and voice channels</Link></li>
+            <li>→ <Link to="/app/channels" data-testid="overview-link-channels" className="underline">Connect WhatsApp, email and SMS channels</Link></li>
             <li>→ <Link to="/app/inbox" data-testid="overview-link-inbox" className="underline">Watch conversations land in the unified inbox</Link></li>
           </ul>
         </div>

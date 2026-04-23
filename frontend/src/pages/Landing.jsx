@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles } from "lucide-react";
+import { ArrowRight, MessageSquare, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles } from "lucide-react";
 
 const Nav = () => (
   <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
@@ -31,14 +31,14 @@ const Hero = () => (
     <div className="max-w-7xl mx-auto px-6 py-20 md:py-28 grid md:grid-cols-12 gap-10 items-center">
       <div className="md:col-span-7">
         <div className="inline-flex items-center gap-2 border-2 border-black px-3 py-1 mb-6 bg-white" data-testid="hero-badge">
-          <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">Powered by GPT-5.2 + Retell AI</span>
+          <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">Powered by GPT-5.2</span>
         </div>
         <h1 className="font-display text-5xl md:text-7xl font-black leading-[0.95] tracking-tighter">
           The AI front desk<br/>that never<br/>
           <span className="bg-[#002FA7] text-white px-3 inline-block">clocks out.</span>
         </h1>
         <p className="mt-6 text-lg md:text-xl max-w-xl text-neutral-700 font-medium">
-          BotNira answers calls, WhatsApp, email and chat for your business — 24/7.
+          BotNira answers WhatsApp, email and chat for your business — 24/7.
           Trained only on your own information. Multi-tenant, vendor-ready.
         </p>
         <div className="mt-8 flex flex-wrap gap-4">
@@ -91,7 +91,6 @@ const Hero = () => (
 );
 
 const CHANNELS = [
-  { icon: Phone, label: "Voice Calls", sub: "Retell AI" },
   { icon: MessageCircle, label: "WhatsApp", sub: "Inbox + replies" },
   { icon: Mail, label: "Email", sub: "Auto-reply" },
   { icon: MessageSquare, label: "SMS & Chat", sub: "Web widget" },
@@ -105,9 +104,9 @@ const Channels = () => (
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Omnichannel</div>
           <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">One bot. Every channel.</h2>
         </div>
-        <p className="max-w-lg text-neutral-700">Unified inbox that handles every conversation — phone, WhatsApp, email, SMS, web chat — with the same trained brain.</p>
+        <p className="max-w-lg text-neutral-700">Unified inbox that handles every conversation — WhatsApp, email, SMS, web chat — with the same trained brain.</p>
       </div>
-      <div className="grid md:grid-cols-4 gap-0 border-2 border-black">
+      <div className="grid md:grid-cols-3 gap-0 border-2 border-black">
         {CHANNELS.map((c, i) => (
           <div key={c.label} className={`p-8 ${i < CHANNELS.length - 1 ? "md:border-r-2 border-black" : ""} hover:bg-[#002FA7] hover:text-white transition-colors group`} data-testid={`channel-${c.label.toLowerCase()}`}>
             <c.icon size={32} />
@@ -152,7 +151,7 @@ const How = () => (
         {[
           { n: "01", title: "Sign up your business", body: "Create a vendor account. Each vendor is a fully isolated workspace." },
           { n: "02", title: "Train BotNira", body: "Paste your business description + FAQs. Pick a tone. Done." },
-          { n: "03", title: "Plug in channels", body: "Embed the web widget, connect WhatsApp, email, and voice via Retell AI." },
+          { n: "03", title: "Plug in channels", body: "Embed the web widget and connect WhatsApp via Meta Cloud API. Email & SMS coming soon." },
         ].map((s) => (
           <div key={s.n} className="border-2 border-black p-6 bg-white shadow-brutal">
             <div className="font-mono text-sm text-[#002FA7] font-bold">{s.n}</div>

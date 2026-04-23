@@ -30,7 +30,7 @@ export default function Privacy() {
           <p>
             BotNira ("we", "our", "us", operated by <strong>The Digi Sparrow</strong>) provides an AI-powered
             receptionist platform that lets businesses ("Vendors") answer customer inquiries and book
-            appointments across multiple channels including web chat, WhatsApp, SMS, email and voice calls.
+            appointments across multiple channels including web chat, WhatsApp, SMS and email.
             This Privacy Policy explains what information we collect, how we use it, and the choices you have.
           </p>
         </section>
@@ -55,8 +55,7 @@ export default function Privacy() {
           <ul>
             <li>Their name and phone number / email when provided (including WhatsApp profile name)</li>
             <li>The text of each message they exchange with BotNira</li>
-            <li>Voice-call audio recordings and transcripts (only if voice is enabled by the Vendor)</li>
-            <li>Basic metadata: channel, timestamps, call duration, message delivery status</li>
+            <li>Basic metadata: channel, timestamps, message delivery status</li>
           </ul>
           <p><strong>Automatically</strong></p>
           <ul>
@@ -80,7 +79,6 @@ export default function Privacy() {
           <ul>
             <li><strong>Meta Platforms Inc.</strong> — for WhatsApp Business Cloud API (receiving + sending messages).</li>
             <li><strong>OpenAI / Anthropic / Google</strong> — to generate the AI replies (we send the Vendor's business info + the current conversation, never a customer's private data outside of what they themselves typed).</li>
-            <li><strong>Retell AI / Twilio</strong> — for voice-call infrastructure, when voice is enabled.</li>
             <li><strong>MongoDB Atlas</strong> — as our primary database.</li>
             <li><strong>Stripe</strong> — payment processing (we never see full card numbers).</li>
           </ul>
@@ -104,7 +102,6 @@ export default function Privacy() {
         <Section n="6" title="How long we retain data">
           <ul>
             <li><strong>Conversations & transcripts</strong>: retained for as long as the Vendor's workspace is active. Vendors can delete individual conversations at any time.</li>
-            <li><strong>Voice recordings</strong>: 30 days by default, then auto-deleted.</li>
             <li><strong>Billing records</strong>: 7 years (legal requirement).</li>
             <li>When a Vendor deletes their workspace, all associated conversations, messages, appointments and integration tokens are permanently deleted within 30 days.</li>
           </ul>
