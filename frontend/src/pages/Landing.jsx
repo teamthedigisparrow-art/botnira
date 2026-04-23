@@ -15,6 +15,7 @@ const Nav = () => (
         <a href="#channels" className="hover:text-[#002FA7]" data-testid="nav-channels">Channels</a>
         <a href="#how" className="hover:text-[#002FA7]" data-testid="nav-how">How it works</a>
         <a href="#pricing" className="hover:text-[#002FA7]" data-testid="nav-pricing">Pricing</a>
+        <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
       </div>
       <div className="flex items-center gap-3">
         <Link to="/login" className="text-sm font-bold hover:underline" data-testid="nav-login">Log in</Link>
@@ -38,7 +39,7 @@ const Hero = () => (
           <span className="bg-[#002FA7] text-white px-3 inline-block">clocks out.</span>
         </h1>
         <p className="mt-6 text-lg md:text-xl max-w-xl text-neutral-700 font-medium">
-          BotNira answers WhatsApp, email and chat for your business — 24/7.
+          BotNira answers phone calls, SMS &amp; WhatsApp conversations, email and chat for your business — 24/7.
           Trained only on your own information. Multi-tenant, vendor-ready.
         </p>
         <div className="mt-8 flex flex-wrap gap-4">
@@ -222,6 +223,74 @@ const Pricing = () => (
   </section>
 );
 
+const FAQS = [
+  {
+    q: "What is an AI receptionist and how does it work?",
+    a: "An AI receptionist is a virtual front-desk agent powered by large language models (like GPT-5.2) that answers customer phone calls, WhatsApp messages, SMS, emails and website chats on your behalf, 24/7. BotNira is trained on your business description and FAQs, so it answers only with your information — no hallucinations. It can book appointments, capture leads, and hand off to a human when needed.",
+  },
+  {
+    q: "Can BotNira answer phone calls instead of a real receptionist?",
+    a: "Yes. BotNira connects to a business phone number and answers inbound calls in natural voice, handles customer inquiries, and books appointments. Voice calling uses prepaid minutes included in every plan, with auto-pause when you hit your limit so you never get a surprise bill.",
+  },
+  {
+    q: "How does BotNira integrate with WhatsApp Business?",
+    a: "We use the official Meta WhatsApp Cloud API via Embedded Signup. In about 90 seconds you connect your WhatsApp Business number, and BotNira auto-wires the webhook, subscribes to message events, and goes live. Your conversations appear in a unified Inbox alongside web chat and SMS.",
+  },
+  {
+    q: "How much does BotNira cost per month?",
+    a: "BotNira offers three monthly plans in USD: Starter $49 (100 voice min + 2,000 AI messages), Growth $149 (500 min + 8,000 messages), and Pro $399 (1,500 min + 25,000 messages). All plans include every channel — phone, WhatsApp, email, SMS, and web chat. Top-up packs are available from $125 and never expire. Every new vendor gets a 5-day free trial with no credit card required.",
+  },
+  {
+    q: "Is my customer data safe with BotNira?",
+    a: "Yes. BotNira is built for multi-tenant isolation — each vendor has a separate workspace, and customer data never crosses between vendors. Messages are encrypted in transit (TLS 1.3), stored in MongoDB Atlas with role-based access, and we only share the minimum data with our AI providers (OpenAI, Anthropic, Google) to generate replies. See our Privacy Policy for full details.",
+  },
+  {
+    q: "Can I try BotNira for free before I pay?",
+    a: "Absolutely. Every new signup gets a 5-day free trial on the Web Widget and WhatsApp channel — up to 100 AI messages, no credit card required. Voice, Email and SMS unlock automatically when you subscribe to any paid plan.",
+  },
+  {
+    q: "How does BotNira compare to traditional call center software?",
+    a: "Traditional call centers charge per-agent ($200–$500/seat/month) and only cover phone calls. BotNira is a single unified AI that covers phone, WhatsApp, email, SMS, and web chat at a flat monthly rate starting at $49, with no per-seat pricing. It scales instantly — answer 1 call or 1,000 concurrent conversations without hiring more staff.",
+  },
+  {
+    q: "Does BotNira work for multi-location businesses and agencies?",
+    a: "Yes. BotNira is multi-tenant by design: a single superadmin can onboard and manage dozens of businesses (vendors), each with their own isolated workspace, bot training, phone number, and analytics. Agencies use BotNira to resell AI receptionist services to their own clients under their own brand.",
+  },
+  {
+    q: "What languages does BotNira support?",
+    a: "BotNira speaks every major world language out of the box — English, Spanish, French, German, Portuguese, Italian, Hindi, Arabic, Chinese, Japanese and 90+ others — because it runs on GPT-5.2, Claude Sonnet 4.5 and Gemini. You train it once in your own language and it responds in whatever language your customer writes in.",
+  },
+  {
+    q: "Can a human take over a conversation if the AI can't help?",
+    a: "Yes. Every conversation across every channel lands in a unified Inbox. Your team can jump in at any time, type a reply directly, and it goes back to the customer through the same channel (WhatsApp, web chat, etc.). You get full human-in-the-loop control without abandoning the AI's speed.",
+  },
+];
+
+const FAQ = () => (
+  <section id="faq" className="border-b-2 border-black bg-neutral-50">
+    <div className="max-w-4xl mx-auto px-6 py-20">
+      <div className="mb-10">
+        <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">FAQ</div>
+        <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Frequently asked questions.</h2>
+        <p className="mt-3 text-neutral-700 max-w-2xl">
+          Everything you need to know about AI receptionists, pricing, data safety and multi-channel support.
+        </p>
+      </div>
+      <div className="border-2 border-black bg-white divide-y-2 divide-black" data-testid="faq-list">
+        {FAQS.map((f, i) => (
+          <details key={i} className="group" data-testid={`faq-item-${i}`}>
+            <summary className="cursor-pointer list-none p-5 flex items-start justify-between gap-4 hover:bg-neutral-50">
+              <span className="font-display font-bold text-lg">{f.q}</span>
+              <span className="font-mono text-xl transition-transform group-open:rotate-45 shrink-0">+</span>
+            </summary>
+            <div className="px-5 pb-5 text-neutral-700 leading-relaxed">{f.a}</div>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+);
+
 const Footer = () => (
   <footer className="border-t-2 border-black">
     <div className="max-w-7xl mx-auto px-6 py-8 flex flex-wrap justify-between items-center text-sm font-mono gap-4">
@@ -238,7 +307,7 @@ const Footer = () => (
 export default function Landing() {
   return (
     <div data-testid="landing-page">
-      <Nav /><Hero /><Channels /><Features /><How /><Pricing /><Footer />
+      <Nav /><Hero /><Channels /><Features /><How /><Pricing /><FAQ /><Footer />
     </div>
   );
 }

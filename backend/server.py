@@ -449,11 +449,12 @@ async def signup(req: SignupReq):
     await db.users.insert_one(
         {
             "id": uid,
-            "email": req.email,
+            "email": req.email.lower(),
             "password_hash": hash_password(req.password),
             "full_name": req.full_name,
             "role": "vendor",
             "vendor_id": vid,
+            "email_verified": False,
             "created_at": now_iso(),
         }
     )
@@ -485,18 +486,36 @@ async def signup(req: SignupReq):
             }
         )
     token = create_token(uid, "vendor")
-    return {"token": token, "role": "vendor", "vendor_id": vid}
+    # Fire verification OTP (non-blocking)
+    try:
+        otp = await _generate_and_store_otp_async(req.email.lower(), "signup")
+        _send_otp_email(req.email.lower(), otp, "signup")
+    except Exception as e:
+        logger.warning("signup OTP send failed: %s", e)
+    return {"token": token, "role": "vendor", "vendor_id": vid, "email_verified": False}
 
 
 @api_router.post("/auth/login")
 async def login(req: LoginReq):
-    user = await db.users.find_one({"email": req.email})
+    user = await db.users.find_one({"email": req.email.lower()})
     if not user or not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if user["role"] == "vendor":
         vendor = await db.vendors.find_one({"id": user["vendor_id"]})
         if vendor and vendor.get("status") == "suspended":
             raise HTTPException(status_code=403, detail="Account suspended")
+        if vendor and vendor.get("mfa_enabled"):
+            # Issue a short-lived MFA session; require OTP verification before real JWT.
+            mfa_session = new_id()
+            await db.mfa_sessions.insert_one({
+                "id": mfa_session,
+                "user_id": user["id"],
+                "created_at": now_iso(),
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            })
+            otp = await _generate_and_store_otp_async(user["email"], "login")
+            _send_otp_email(user["email"], otp, "login")
+            return {"mfa_required": True, "mfa_session": mfa_session, "email": user["email"]}
     token = create_token(user["id"], user["role"])
     return {"token": token, "role": user["role"], "vendor_id": user.get("vendor_id")}
 
@@ -519,6 +538,9 @@ async def me(user: dict = Depends(get_current_user)):
                 "minutes_balance": a.get("minutes_balance", 0.0),
                 "messages_balance": a.get("messages_balance", 0),
             }
+    # Make sure email_verified + mfa_enabled are surfaced to frontend
+    if user.get("vendor_id"):
+        user = {**user, "email_verified": user.get("email_verified", True)}
     return {"user": user, "vendor": vendor, "access": access}
 
 
@@ -1981,6 +2003,286 @@ async def admin_billing_detail(vendor_id: str, user: dict = Depends(require_admi
         {"vendor_id": vendor_id}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
     return {"vendor": vendor, "transactions": txns}
+
+
+# ============================== OTP / Email / MFA ===========================
+import smtplib
+import secrets
+from email.message import EmailMessage
+
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "BotNira")
+OTP_EXPIRY_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
+
+
+def _generate_otp() -> str:
+    """6-digit numeric OTP."""
+    return f"{secrets.randbelow(1000000):06d}"
+
+
+def _generate_and_store_otp(email: str, purpose: str) -> str:
+    """Invalidates prior OTPs for same (email, purpose), stores a new one, returns the code."""
+    email = email.lower()
+    code = _generate_otp()
+    # Remove any outstanding OTPs for same purpose → only newest is valid
+    import asyncio as _a
+    loop = _a.get_event_loop()
+    async def _save():
+        await db.otp_codes.delete_many({"email": email, "purpose": purpose})
+        await db.otp_codes.insert_one({
+            "id": new_id(),
+            "email": email,
+            "purpose": purpose,   # signup | login | password_reset
+            "code_hash": hash_password(code),
+            "attempts": 0,
+            "created_at": now_iso(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat(),
+        })
+    if loop.is_running():
+        # called from inside async — schedule and await elsewhere
+        # (we provide both sync and async helpers below)
+        raise RuntimeError("Use _generate_and_store_otp_async inside coroutines")
+    loop.run_until_complete(_save())
+    return code
+
+
+async def _generate_and_store_otp_async(email: str, purpose: str) -> str:
+    email = email.lower()
+    code = _generate_otp()
+    await db.otp_codes.delete_many({"email": email, "purpose": purpose})
+    await db.otp_codes.insert_one({
+        "id": new_id(),
+        "email": email,
+        "purpose": purpose,
+        "code_hash": hash_password(code),
+        "attempts": 0,
+        "created_at": now_iso(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat(),
+    })
+    return code
+
+
+async def _verify_otp_async(email: str, purpose: str, code: str) -> bool:
+    email = email.lower()
+    rec = await db.otp_codes.find_one({"email": email, "purpose": purpose}, {"_id": 0})
+    if not rec:
+        return False
+    # expired?
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) > exp:
+            await db.otp_codes.delete_one({"email": email, "purpose": purpose})
+            return False
+    except Exception:
+        return False
+    if rec.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
+        await db.otp_codes.delete_one({"email": email, "purpose": purpose})
+        return False
+    if not verify_password(code, rec["code_hash"]):
+        await db.otp_codes.update_one(
+            {"email": email, "purpose": purpose},
+            {"$inc": {"attempts": 1}},
+        )
+        return False
+    # success → consume
+    await db.otp_codes.delete_one({"email": email, "purpose": purpose})
+    return True
+
+
+def _send_otp_email(to_email: str, code: str, purpose: str):
+    """Sends the OTP via Gmail SMTP. Non-fatal on failure — caller logs."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("SMTP not configured — OTP for %s is %s (DEV ONLY)", to_email, code)
+        return
+    subject_map = {
+        "signup": "Verify your BotNira account",
+        "login": "Your BotNira login code",
+        "password_reset": "Reset your BotNira password",
+    }
+    heading_map = {
+        "signup": "Welcome to BotNira",
+        "login": "Sign-in verification",
+        "password_reset": "Password reset request",
+    }
+    subject = subject_map.get(purpose, "Your BotNira code")
+    heading = heading_map.get(purpose, "Verification")
+    body_text = (
+        f"{heading}\n\n"
+        f"Your 6-digit code is: {code}\n\n"
+        f"This code expires in {OTP_EXPIRY_MINUTES} minutes. "
+        f"If you did not request this, you can safely ignore this email.\n\n"
+        f"— The BotNira team"
+    )
+    body_html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
+    <div style="background:#002FA7;color:#fff;padding:18px 24px;border-bottom:2px solid #000;">
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.8;">BotNira</div>
+      <div style="font-size:22px;font-weight:900;margin-top:4px;">{heading}</div>
+    </div>
+    <div style="padding:28px 24px;">
+      <p style="margin:0 0 16px;color:#333;line-height:1.5;">Your 6-digit verification code is:</p>
+      <div style="font-family:monospace;font-size:38px;font-weight:900;letter-spacing:10px;color:#002FA7;background:#f0f3ff;border:2px solid #000;padding:18px;text-align:center;">
+        {code}
+      </div>
+      <p style="margin:20px 0 0;color:#666;font-size:13px;line-height:1.5;">
+        This code expires in <strong>{OTP_EXPIRY_MINUTES} minutes</strong>. If you didn't request this,
+        you can safely ignore this email — your account is still secure.
+      </p>
+    </div>
+    <div style="background:#000;color:#999;padding:12px 24px;font-size:11px;font-family:monospace;">
+      © 2026 BotNira · AI receptionist for every business
+    </div>
+  </div>
+</body>
+</html>"""
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+    msg["To"] = to_email
+    msg.set_content(body_text)
+    msg.add_alternative(body_html, subtype="html")
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.send_message(msg)
+        logger.info("OTP email sent to %s (purpose=%s)", to_email, purpose)
+    except Exception as e:
+        logger.warning("OTP email send failed for %s: %s", to_email, e)
+
+
+# ----- Request/response models -----
+class OTPVerifyReq(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class ResendOTPReq(BaseModel):
+    email: EmailStr
+    purpose: str  # signup | password_reset
+
+
+class PasswordResetRequestReq(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmReq(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str = Field(min_length=6)
+
+
+class MFALoginVerifyReq(BaseModel):
+    email: EmailStr
+    code: str
+    mfa_session: str
+
+
+class MFAToggleReq(BaseModel):
+    enabled: bool
+    password: str  # re-auth to toggle MFA
+
+
+# ----- Endpoints -----
+@api_router.post("/auth/verify-email")
+async def auth_verify_email(req: OTPVerifyReq):
+    ok = await _verify_otp_async(req.email, "signup", req.code)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+    await db.users.update_one(
+        {"email": req.email.lower()},
+        {"$set": {"email_verified": True, "email_verified_at": now_iso()}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/auth/resend-otp")
+async def auth_resend_otp(req: ResendOTPReq):
+    if req.purpose not in ("signup", "password_reset"):
+        raise HTTPException(status_code=400, detail="Invalid purpose")
+    user = await db.users.find_one({"email": req.email.lower()})
+    if not user:
+        # Don't leak existence — just 200 for password_reset, fail for signup
+        if req.purpose == "password_reset":
+            return {"ok": True}
+        raise HTTPException(status_code=404, detail="Account not found")
+    code = await _generate_and_store_otp_async(req.email, req.purpose)
+    _send_otp_email(req.email, code, req.purpose)
+    return {"ok": True}
+
+
+@api_router.post("/auth/password/reset/request")
+async def password_reset_request(req: PasswordResetRequestReq):
+    # Don't reveal whether the email exists
+    user = await db.users.find_one({"email": req.email.lower()})
+    if user:
+        code = await _generate_and_store_otp_async(req.email, "password_reset")
+        _send_otp_email(req.email, code, "password_reset")
+    return {"ok": True}
+
+
+@api_router.post("/auth/password/reset/confirm")
+async def password_reset_confirm(req: PasswordResetConfirmReq):
+    ok = await _verify_otp_async(req.email, "password_reset", req.code)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+    user = await db.users.find_one({"email": req.email.lower()})
+    if not user:
+        raise HTTPException(status_code=404, detail="Account not found")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": hash_password(req.new_password), "password_reset_at": now_iso()}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/auth/login/mfa-verify")
+async def login_mfa_verify(req: MFALoginVerifyReq):
+    sess = await db.mfa_sessions.find_one({"id": req.mfa_session}, {"_id": 0})
+    if not sess:
+        raise HTTPException(status_code=400, detail="Invalid MFA session")
+    try:
+        exp = datetime.fromisoformat(sess["expires_at"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) > exp:
+            await db.mfa_sessions.delete_one({"id": req.mfa_session})
+            raise HTTPException(status_code=400, detail="MFA session expired")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid MFA session")
+    ok = await _verify_otp_async(req.email, "login", req.code)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+    user = await db.users.find_one({"id": sess["user_id"]})
+    if not user or user["email"].lower() != req.email.lower():
+        raise HTTPException(status_code=400, detail="MFA session mismatch")
+    await db.mfa_sessions.delete_one({"id": req.mfa_session})
+    token = create_token(user["id"], user["role"])
+    return {"token": token, "role": user["role"], "vendor_id": user.get("vendor_id")}
+
+
+@api_router.put("/auth/mfa")
+async def auth_toggle_mfa(req: MFAToggleReq, user: dict = Depends(require_vendor)):
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(req.password, full["password_hash"]):
+        raise HTTPException(status_code=401, detail="Password incorrect")
+    await db.vendors.update_one(
+        {"id": user["vendor_id"]},
+        {"$set": {"mfa_enabled": bool(req.enabled), "mfa_updated_at": now_iso()}},
+    )
+    return {"mfa_enabled": bool(req.enabled)}
+
+
+@api_router.get("/auth/mfa-status")
+async def auth_mfa_status(user: dict = Depends(require_vendor)):
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0, "mfa_enabled": 1})
+    return {"mfa_enabled": bool(vendor and vendor.get("mfa_enabled"))}
 
 
 # ------------------------------ App setup ------------------------------------
