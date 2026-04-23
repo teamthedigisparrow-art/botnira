@@ -2578,12 +2578,14 @@ async def voice_status_callback(request: _StripeRequest):
 @app.websocket("/api/voice/stream/{call_id}")
 async def voice_stream(ws: WebSocket, call_id: str):
     """Bridges Twilio <Stream> WS (μ-law 8kHz base64) to OpenAI Realtime (g711_ulaw)."""
-    await ws.accept(subprotocol="audio")
+    await ws.accept()
     call = await db.call_records.find_one({"id": call_id}, {"_id": 0})
     if not call:
+        logger.warning("voice_stream: no call record for %s", call_id)
         await ws.close(code=1008)
         return
     vendor_id = call["vendor_id"]
+    logger.info("voice_stream: start call_id=%s vendor_id=%s", call_id, vendor_id)
     vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
     bot = await db.bots.find_one({"vendor_id": vendor_id}, {"_id": 0})
 
@@ -2621,8 +2623,10 @@ async def voice_stream(ws: WebSocket, call_id: str):
     oai_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
     oai_headers = [("Authorization", f"Bearer {OPENAI_REALTIME_API_KEY}"), ("OpenAI-Beta", "realtime=v1")]
     stream_sid = None
+    logger.info("voice_stream: connecting to OpenAI Realtime for call %s", call_id)
     try:
         async with _ws.connect(oai_url, additional_headers=oai_headers, max_size=None) as oai:
+            logger.info("voice_stream: OpenAI connected for call %s", call_id)
             # Configure OpenAI session for Twilio audio format + our prompt
             session_cfg = {
                 "type": "session.update",
@@ -2651,27 +2655,32 @@ async def voice_stream(ws: WebSocket, call_id: str):
                         etype = ev.get("event")
                         if etype == "start":
                             stream_sid = ev["start"]["streamSid"]
+                            logger.info("voice_stream: twilio 'start' streamSid=%s", stream_sid)
                         elif etype == "media":
                             payload = ev["media"]["payload"]
                             await oai.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
                         elif etype == "stop":
+                            logger.info("voice_stream: twilio 'stop' for %s", call_id)
                             break
                 except WebSocketDisconnect:
-                    pass
+                    logger.info("voice_stream: twilio disconnected for %s", call_id)
+                except Exception as e:
+                    logger.exception("twilio_to_oai error: %s", e)
 
             async def oai_to_twilio():
                 try:
                     async for msg in oai:
                         ev = json.loads(msg)
                         etype = ev.get("type")
-                        if etype == "response.audio.delta" and stream_sid:
+                        if etype == "error":
+                            logger.warning("openai realtime error: %s", ev)
+                        elif etype == "response.audio.delta" and stream_sid:
                             await ws.send_text(json.dumps({
                                 "event": "media",
                                 "streamSid": stream_sid,
                                 "media": {"payload": ev["delta"]},
                             }))
                         elif etype == "response.audio_transcript.done":
-                            # Save BotNira's spoken text to transcripts
                             text = ev.get("transcript", "")
                             if text:
                                 conv = await _ensure_conversation(vendor_id, None, "voice", call["from_number"], call["from_number"])
