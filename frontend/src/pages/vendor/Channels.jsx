@@ -235,53 +235,16 @@ export default function Channels() {
         {voiceLoading ? (
           <div className="p-6 font-mono text-sm text-neutral-600">Loading…</div>
         ) : !isActive ? (
-          <div className="p-6 space-y-6">
-            {/* Procedure — always visible before activation */}
-            <div className="border-2 border-black p-5 bg-neutral-50" data-testid="voice-procedure">
-              <div className="font-display font-black text-lg">How to get your number (3 steps)</div>
-              <ol className="mt-3 space-y-2 text-sm">
-                <li><span className="font-bold">1.</span> Finish training your bot in <a href="/app/bot" className="underline font-bold">Bot Studio</a> (business description + FAQs). The phone agent uses that info verbatim.</li>
-                <li><span className="font-bold">2.</span> Pick a plan and Canadian area code below.</li>
-                <li><span className="font-bold">3.</span> Click <em>Activate voice</em>. In ~3 seconds you'll have a real Canadian number. Test it with the <em>Call me now</em> button. Share that number on your website & business cards.</li>
-              </ol>
-              <div className="mt-3 text-xs font-mono text-neutral-600">Every call is auto-transcribed into your Inbox. Booked appointments appear in Appointments. Voice auto-pauses when monthly minutes are used up — zero overage risk.</div>
-            </div>
-
-            <div className="grid md:grid-cols-3 gap-3">
-              {PLANS.map(p => (
-                <label key={p.id} className={`border-2 border-black p-4 cursor-pointer ${plan === p.id ? "bg-[#002FA7] text-white shadow-brutal" : "bg-white hover-lift"}`} data-testid={`plan-${p.id}`}>
-                  <input type="radio" checked={plan === p.id} onChange={() => setPlan(p.id)} className="sr-only" />
-                  <div className="flex items-center justify-between">
-                    <div className="font-display font-black text-lg">{p.label}</div>
-                    <div className="font-display font-black">{p.price}</div>
-                  </div>
-                  <div className="text-xs mt-2 opacity-80">{p.mins}</div>
-                  <div className="text-xs opacity-70">{p.over}</div>
-                </label>
-              ))}
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4 items-end">
-              <div>
-                <label className="text-xs font-bold tracking-[0.2em] uppercase mb-1 block">Pick a Canadian area code</label>
-                <select
-                  data-testid="area-code-select"
-                  value={areaCode}
-                  onChange={e => setAreaCode(Number(e.target.value))}
-                  className="w-full border-2 border-black px-3 py-2 font-bold"
-                >
-                  {AREA_CODES.map(a => <option key={a.code} value={a.code}>{a.label}</option>)}
-                </select>
-              </div>
-              <button
-                data-testid="activate-voice-btn"
-                onClick={activateVoice}
-                disabled={activating}
-                className="bg-[#002FA7] text-white font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift disabled:opacity-60 flex items-center justify-center gap-2"
-              >
-                <Sparkles size={16} />
-                {activating ? "Activating…" : `Activate voice — ${PLANS.find(p => p.id === plan)?.price}`}
-              </button>
+          <div className="p-6 space-y-4" data-testid="voice-waitlist">
+            <div className="border-2 border-black p-5 bg-amber-50">
+              <div className="font-display font-black text-lg">Voice is in waitlist 🎙️</div>
+              <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
+                We're waiting for our voice partner to enable Canadian phone-number inventory on our account.
+                Your bot is already trained and ready — the moment numbers come online we'll flip the switch and email you.
+              </p>
+              <p className="mt-2 text-xs font-mono text-neutral-600">
+                ETA: 1–3 business days. In the meantime, WhatsApp, Web chat and Email channels remain fully available.
+              </p>
             </div>
           </div>
         ) : (
