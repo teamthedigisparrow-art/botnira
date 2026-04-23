@@ -1,0 +1,276 @@
+import { useEffect, useState } from "react";
+import { api } from "../../lib/api";
+import { toast } from "sonner";
+import { useAuth } from "../../contexts/AuthContext";
+import { Rocket, Zap, Phone, MessageCircle, Mail, MessageSquare, Globe, Check, Clock, CreditCard } from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+
+const PLAN_ICONS = { starter: Zap, growth: Rocket, pro: Rocket };
+const PACK_THEMES = {
+  spark:  { emoji: "✦", color: "bg-yellow-100 border-yellow-700" },
+  boost:  { emoji: "⚡", color: "bg-orange-100 border-orange-700" },
+  rocket: { emoji: "🚀", color: "bg-red-100 border-red-700" },
+  jet:    { emoji: "✈", color: "bg-blue-100 border-blue-700" },
+  fleet:  { emoji: "⛵", color: "bg-green-100 border-green-700" },
+  armada: { emoji: "⚓", color: "bg-purple-100 border-purple-700" },
+};
+
+export default function Billing() {
+  const { reload } = useAuth();
+  const [me, setMe] = useState(null);
+  const [plans, setPlans] = useState([]);
+  const [topups, setTopups] = useState([]);
+  const [busy, setBusy] = useState("");
+  const [params] = useSearchParams();
+  const nav = useNavigate();
+
+  const load = async () => {
+    try {
+      const [a, b] = await Promise.all([
+        api.get("/billing/me"),
+        api.get("/billing/plans"),
+      ]);
+      setMe(a.data);
+      setPlans(b.data.plans);
+      setTopups(b.data.topups);
+    } catch (e) {
+      toast.error("Failed to load billing");
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // Handle Stripe redirect back with session_id
+  useEffect(() => {
+    const sid = params.get("session_id");
+    const cancelled = params.get("cancelled");
+    if (cancelled) {
+      toast.info("Checkout cancelled");
+      nav("/app/billing", { replace: true });
+      return;
+    }
+    if (!sid) return;
+    let tries = 0;
+    const poll = async () => {
+      tries++;
+      try {
+        const { data } = await api.get(`/billing/checkout/status/${sid}`);
+        if (data.payment_status === "paid") {
+          toast.success("Payment successful — balance updated!", { duration: 6000 });
+          await load();
+          await reload();
+          nav("/app/billing", { replace: true });
+          return;
+        }
+        if (data.status === "expired") {
+          toast.error("Session expired");
+          nav("/app/billing", { replace: true });
+          return;
+        }
+        if (tries < 8) setTimeout(poll, 1500);
+      } catch (e) {
+        if (tries < 6) setTimeout(poll, 1500);
+      }
+    };
+    poll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const subscribe = async (planId) => {
+    setBusy("plan-" + planId);
+    try {
+      const { data } = await api.post("/billing/checkout/subscription", {
+        plan: planId,
+        origin_url: window.location.origin,
+      });
+      window.location.href = data.url;
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not start checkout");
+      setBusy("");
+    }
+  };
+
+  const buyTopup = async (packId) => {
+    setBusy("pack-" + packId);
+    try {
+      const { data } = await api.post("/billing/checkout/topup", {
+        pack: packId,
+        origin_url: window.location.origin,
+      });
+      window.location.href = data.url;
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not start checkout");
+      setBusy("");
+    }
+  };
+
+  const openPortal = async () => {
+    try {
+      const { data } = await api.post("/billing/portal", { origin_url: window.location.origin });
+      window.location.href = data.url;
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Customer portal unavailable — subscribe first");
+    }
+  };
+
+  if (!me) return <div className="p-10 font-mono text-sm">Loading billing…</div>;
+
+  const isExempt = me.is_exempt;
+  const onTrial = me.access?.trial;
+  const paywall = me.access?.paywall;
+  const planLabel = (me.plan || "trial").toUpperCase();
+  const trialDays = me.access?.trial_days_left || 0;
+
+  return (
+    <div className="p-8 space-y-8" data-testid="billing-page">
+      <div>
+        <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Billing</div>
+        <h1 className="font-display text-4xl font-black tracking-tighter">Plans, balance &amp; recharge.</h1>
+      </div>
+
+      {/* Current status */}
+      <div className="border-2 border-black bg-white shadow-brutal" data-testid="billing-status">
+        <div className="bg-black text-white px-6 py-4 flex items-center justify-between flex-wrap gap-2">
+          <div className="font-display font-black text-xl">Your account</div>
+          <div className="flex items-center gap-2">
+            {isExempt && <span className="badge bg-amber-300 text-black border-amber-300">⚡ EXEMPT — FREE FOREVER</span>}
+            {onTrial && !isExempt && <span className="badge bg-yellow-300 text-black border-yellow-300" data-testid="trial-badge"><Clock size={12} className="inline mr-1"/>TRIAL · {trialDays}d LEFT</span>}
+            {!onTrial && !isExempt && !paywall && <span className="badge bg-green-400 text-black border-green-400">ACTIVE</span>}
+            {paywall && <span className="badge bg-red-500 text-white border-red-500">PAYWALL</span>}
+          </div>
+        </div>
+        <div className="p-6 grid md:grid-cols-4 gap-4">
+          <div className="border-2 border-black p-4">
+            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Plan</div>
+            <div className="font-display font-black text-2xl mt-2">{planLabel}</div>
+          </div>
+          <div className="border-2 border-black p-4" data-testid="voice-balance">
+            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Voice minutes</div>
+            <div className="font-display font-black text-3xl mt-2">{isExempt ? "∞" : Math.round(me.minutes_balance)}</div>
+            <div className="text-xs font-mono text-neutral-500 mt-1">remaining</div>
+          </div>
+          <div className="border-2 border-black p-4" data-testid="msg-balance">
+            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">AI messages</div>
+            <div className="font-display font-black text-3xl mt-2">{isExempt ? "∞" : me.messages_balance}</div>
+            <div className="text-xs font-mono text-neutral-500 mt-1">remaining</div>
+          </div>
+          <div className="border-2 border-black p-4">
+            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Next renewal</div>
+            <div className="font-display font-black text-lg mt-2 break-words">
+              {me.current_period_end ? new Date(me.current_period_end).toLocaleDateString() :
+                onTrial && me.trial_ends_at ? `Trial ends ${new Date(me.trial_ends_at).toLocaleDateString()}` :
+                "—"}
+            </div>
+          </div>
+        </div>
+        <div className="border-t-2 border-black px-6 py-3 flex justify-end gap-2">
+          {me.stripe_customer_id && (
+            <button data-testid="open-portal-btn" onClick={openPortal} className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift flex items-center gap-2">
+              <CreditCard size={14}/> Manage card / cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Channel access */}
+      <div className="border-2 border-black bg-white p-6" data-testid="channel-access">
+        <div className="font-display font-black text-xl mb-4">Channel access</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            { ch: "web", icon: Globe, label: "Web" },
+            { ch: "whatsapp", icon: MessageCircle, label: "WhatsApp" },
+            { ch: "email", icon: Mail, label: "Email" },
+            { ch: "sms", icon: MessageSquare, label: "SMS" },
+            { ch: "voice", icon: Phone, label: "Voice" },
+          ].map(({ ch, icon: Icon, label }) => {
+            const allowed = (me.access?.allowed_channels || []).includes(ch);
+            return (
+              <div key={ch} className={`border-2 border-black p-3 ${allowed ? "bg-green-50" : "bg-neutral-100 opacity-60"}`} data-testid={`acc-${ch}`}>
+                <div className="flex items-center gap-2">
+                  <Icon size={18}/>
+                  <span className="font-display font-bold">{label}</span>
+                </div>
+                <div className="mt-1 text-[10px] font-mono uppercase tracking-wider">
+                  {allowed ? <span className="text-green-700">✓ Unlocked</span> : <span>🔒 Locked</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Plans */}
+      {!isExempt && (
+        <div data-testid="plans-section">
+          <div className="font-display font-black text-2xl mb-1">Monthly plans</div>
+          <p className="text-sm text-neutral-600 mb-5">Pick a base plan — auto-renews monthly, cancel anytime.</p>
+          <div className="grid md:grid-cols-3 gap-5">
+            {plans.map(p => {
+              const Icon = PLAN_ICONS[p.id] || Rocket;
+              const isCurrent = me.plan === p.id && me.subscription_status === "active";
+              return (
+                <div key={p.id} className={`border-2 border-black p-6 bg-white shadow-brutal ${isCurrent ? "ring-4 ring-[#002FA7]" : ""}`} data-testid={`plan-${p.id}`}>
+                  <div className="flex items-center justify-between">
+                    <Icon size={28} />
+                    {isCurrent && <span className="badge bg-[#002FA7] text-white border-[#002FA7]">CURRENT</span>}
+                  </div>
+                  <div className="font-display font-black text-3xl mt-4">{p.name}</div>
+                  <div className="mt-2 flex items-baseline gap-1">
+                    <span className="font-display font-black text-5xl tracking-tighter">${p.price_usd}</span>
+                    <span className="text-xs font-mono text-neutral-500">/mo USD</span>
+                  </div>
+                  <ul className="mt-5 space-y-2 text-sm">
+                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.voice_min}</strong> voice minutes</li>
+                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.messages.toLocaleString()}</strong> AI messages</li>
+                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> All channels unlocked</li>
+                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Live agent override</li>
+                  </ul>
+                  <button
+                    data-testid={`subscribe-${p.id}`}
+                    disabled={isCurrent || busy === `plan-${p.id}`}
+                    onClick={() => subscribe(p.id)}
+                    className="mt-6 w-full bg-[#002FA7] text-white font-bold py-3 border-2 border-black shadow-brutal hover-lift disabled:opacity-60"
+                  >
+                    {isCurrent ? "Current plan" : busy === `plan-${p.id}` ? "Loading…" : `Subscribe to ${p.name}`}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Top-up packs */}
+      {!isExempt && (
+        <div data-testid="topups-section">
+          <div className="font-display font-black text-2xl mb-1">Top-up packs</div>
+          <p className="text-sm text-neutral-600 mb-5">One-time recharge. Never expires. Stacks on top of your plan.</p>
+          <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {topups.map(t => {
+              const theme = PACK_THEMES[t.id] || { emoji: "★", color: "bg-neutral-100 border-neutral-700" };
+              return (
+                <div key={t.id} className={`border-2 p-5 shadow-brutal ${theme.color}`} data-testid={`topup-${t.id}`}>
+                  <div className="text-4xl">{theme.emoji}</div>
+                  <div className="font-display font-black text-xl mt-2">{t.name}</div>
+                  <div className="mt-2 font-display font-black text-3xl tracking-tighter">${t.price_usd}</div>
+                  <ul className="mt-3 space-y-1 text-xs font-mono">
+                    <li><strong>{t.voice_min}</strong> voice min</li>
+                    <li><strong>{t.messages.toLocaleString()}</strong> AI msgs</li>
+                  </ul>
+                  <button
+                    data-testid={`buy-${t.id}`}
+                    disabled={busy === `pack-${t.id}`}
+                    onClick={() => buyTopup(t.id)}
+                    className="mt-4 w-full bg-black text-white font-bold text-sm py-2 border-2 border-black hover-lift disabled:opacity-60"
+                  >
+                    {busy === `pack-${t.id}` ? "…" : "Buy"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

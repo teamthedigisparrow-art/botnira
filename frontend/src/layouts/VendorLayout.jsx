@@ -1,6 +1,7 @@
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
-import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard } from "lucide-react";
+import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import PaywallGuard from "../components/PaywallGuard";
 
 const links = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, end: true, tid: "nav-overview" },
@@ -9,11 +10,12 @@ const links = [
   { to: "/app/channels", label: "Channels", icon: Cable, tid: "nav-channels" },
   { to: "/app/appointments", label: "Appointments", icon: CalendarDays, tid: "nav-appointments" },
   { to: "/app/analytics", label: "Analytics", icon: BarChart3, tid: "nav-analytics" },
+  { to: "/app/billing", label: "Billing", icon: CreditCard, tid: "nav-billing" },
   { to: "/app/settings", label: "Settings", icon: SettingsIcon, tid: "nav-settings" },
 ];
 
 export default function VendorLayout() {
-  const { vendor, user, logout } = useAuth();
+  const { vendor, user, access, logout } = useAuth();
   const nav = useNavigate();
   return (
     <div className="min-h-screen grid md:grid-cols-[260px_1fr]">
@@ -27,6 +29,14 @@ export default function VendorLayout() {
         <div className="px-5 py-4 border-b-2 border-black">
           <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-neutral-500">Workspace</div>
           <div className="font-display font-bold truncate" data-testid="vendor-name-display">{vendor?.name || "—"}</div>
+          {access?.trial && !access?.is_exempt && (
+            <Link to="/app/billing" data-testid="sidebar-trial-pill" className="mt-2 inline-block text-[10px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-2 py-0.5">
+              Trial · {access.trial_days_left}d left
+            </Link>
+          )}
+          {access?.is_exempt && (
+            <span className="mt-2 inline-block text-[10px] font-bold uppercase tracking-widest bg-amber-300 border border-black px-2 py-0.5">⚡ Exempt</span>
+          )}
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {links.map(l => (
@@ -43,7 +53,11 @@ export default function VendorLayout() {
           </button>
         </div>
       </aside>
-      <main className="bg-neutral-50 min-h-screen" data-testid="vendor-main"><Outlet /></main>
+      <main className="bg-neutral-50 min-h-screen" data-testid="vendor-main">
+        <PaywallGuard>
+          <Outlet />
+        </PaywallGuard>
+      </main>
     </div>
   );
 }

@@ -6,6 +6,7 @@ const AuthCtx = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [vendor, setVendor] = useState(null);
+  const [access, setAccess] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const loadMe = async () => {
@@ -15,6 +16,7 @@ export function AuthProvider({ children }) {
       const { data } = await api.get("/auth/me");
       setUser(data.user);
       setVendor(data.vendor);
+      setAccess(data.access);
     } catch {
       localStorage.removeItem("botnira_token");
     } finally {
@@ -40,11 +42,11 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     localStorage.removeItem("botnira_token");
-    setUser(null); setVendor(null);
+    setUser(null); setVendor(null); setAccess(null);
   };
 
   return (
-    <AuthCtx.Provider value={{ user, vendor, loading, login, signup, logout, reload: loadMe }}>
+    <AuthCtx.Provider value={{ user, vendor, access, loading, login, signup, logout, reload: loadMe }}>
       {children}
     </AuthCtx.Provider>
   );

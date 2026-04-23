@@ -15,9 +15,11 @@ import BotStudio from "./pages/vendor/BotStudio";
 import Channels from "./pages/vendor/Channels";
 import Appointments from "./pages/vendor/Appointments";
 import Analytics from "./pages/vendor/Analytics";
+import Billing from "./pages/vendor/Billing";
 import Settings from "./pages/vendor/Settings";
 import AdminOverview from "./pages/admin/AdminOverview";
 import AdminVendors from "./pages/admin/AdminVendors";
+import AdminBilling from "./pages/admin/AdminBilling";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
 
 function Protected({ role, children }) {
@@ -48,12 +50,14 @@ function App() {
               <Route path="channels" element={<Channels />} />
               <Route path="appointments" element={<Appointments />} />
               <Route path="analytics" element={<Analytics />} />
+              <Route path="billing" element={<Billing />} />
               <Route path="settings" element={<Settings />} />
             </Route>
 
             <Route path="/admin" element={<Protected role="superadmin"><AdminLayout /></Protected>}>
               <Route index element={<AdminOverview />} />
               <Route path="vendors" element={<AdminVendors />} />
+              <Route path="billing" element={<AdminBilling />} />
               <Route path="analytics" element={<AdminAnalytics />} />
             </Route>
 

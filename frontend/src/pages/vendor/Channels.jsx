@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
 import {
-  Globe, MessageCircle, Mail, MessageSquare, PlayCircle,
-  Copy, Check,
+  Globe, MessageCircle, Mail, MessageSquare, Phone, PlayCircle,
+  Copy, Check, Lock,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButton";
@@ -11,13 +12,15 @@ import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButto
 const META = {
   web: { icon: Globe, label: "Web Widget", note: "Embed on any website. Always live." },
   whatsapp: { icon: MessageCircle, label: "WhatsApp", note: "Fully BotNira-managed. Meta Cloud API." },
-  email: { icon: Mail, label: "Email", note: "Coming soon — vendor-managed." },
-  sms: { icon: MessageSquare, label: "SMS", note: "Coming soon — vendor-managed." },
+  email: { icon: Mail, label: "Email", note: "Unlocks on any paid plan. Vendor-managed." },
+  sms: { icon: MessageSquare, label: "SMS", note: "Unlocks on any paid plan. Vendor-managed." },
+  voice: { icon: Phone, label: "Voice", note: "Unlocks on any paid plan. Prepaid minutes." },
 };
 
 export default function Channels() {
   const [list, setList] = useState([]);
-  const { vendor } = useAuth();
+  const { vendor, access } = useAuth();
+  const allowedChannels = new Set(access?.allowed_channels || []);
   const [simCh, setSimCh] = useState("whatsapp");
   const [simName, setSimName] = useState("Alex Customer");
   const [simMsg, setSimMsg] = useState("What are your hours?");
@@ -103,20 +106,37 @@ export default function Channels() {
         {list.map(c => {
           const m = META[c.channel] || { icon: Globe, label: c.channel, note: "" };
           const connected = c.status === "connected";
+          const locked = !allowedChannels.has(c.channel);
           return (
-            <div key={c.channel} className="border-2 border-black bg-white p-5" data-testid={`ch-card-${c.channel}`}>
+            <div key={c.channel} className={`border-2 border-black bg-white p-5 ${locked ? "opacity-70" : ""}`} data-testid={`ch-card-${c.channel}`}>
               <div className="flex items-center justify-between">
                 <m.icon size={22} />
-                <span className={`badge ${connected ? "bg-[#002FA7] text-white border-black" : ""}`}>
-                  {c.status}
-                </span>
+                {locked ? (
+                  <span className="badge bg-neutral-200 text-black border-black flex items-center gap-1" data-testid={`lock-${c.channel}`}>
+                    <Lock size={10}/> LOCKED
+                  </span>
+                ) : (
+                  <span className={`badge ${connected ? "bg-[#002FA7] text-white border-black" : ""}`}>
+                    {c.status}
+                  </span>
+                )}
               </div>
               <div className="font-display font-black text-xl mt-4">{m.label}</div>
               <div className="text-sm text-neutral-600 mt-1">{m.note}</div>
-              {c.channel !== "web" && (
+              {locked && (
+                <Link to="/app/billing" data-testid={`upgrade-${c.channel}`} className="mt-4 inline-block text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-amber-100">
+                  Upgrade to unlock
+                </Link>
+              )}
+              {!locked && c.channel !== "web" && c.channel !== "voice" && (
                 <button data-testid={`ch-toggle-${c.channel}`} onClick={() => toggle(c.channel, connected ? "disconnected" : "connected")} className="mt-4 w-full text-sm font-bold border-2 border-black px-3 py-2 hover-lift">
                   {connected ? "Disconnect" : "Mark as connected"}
                 </button>
+              )}
+              {!locked && c.channel === "voice" && (
+                <div className="mt-4 text-xs font-mono text-neutral-600 border border-dashed border-black/40 p-2">
+                  Voice backend (Twilio + OpenAI Realtime) is rolling out. You'll be able to activate a phone number here.
+                </div>
               )}
             </div>
           );

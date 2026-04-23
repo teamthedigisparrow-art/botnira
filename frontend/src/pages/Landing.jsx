@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, MessageSquare, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles } from "lucide-react";
+import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check } from "lucide-react";
 
 const Nav = () => (
   <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
@@ -104,9 +104,9 @@ const Channels = () => (
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Omnichannel</div>
           <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">One bot. Every channel.</h2>
         </div>
-        <p className="max-w-lg text-neutral-700">Unified inbox that handles every conversation — WhatsApp, email, SMS, web chat — with the same trained brain.</p>
+        <p className="max-w-lg text-neutral-700">Unified inbox that handles every conversation — phone, WhatsApp, email, SMS, web chat — with the same trained brain.</p>
       </div>
-      <div className="grid md:grid-cols-3 gap-0 border-2 border-black">
+      <div className="grid md:grid-cols-4 gap-0 border-2 border-black">
         {CHANNELS.map((c, i) => (
           <div key={c.label} className={`p-8 ${i < CHANNELS.length - 1 ? "md:border-r-2 border-black" : ""} hover:bg-[#002FA7] hover:text-white transition-colors group`} data-testid={`channel-${c.label.toLowerCase()}`}>
             <c.icon size={32} />
@@ -164,18 +164,59 @@ const How = () => (
   </section>
 );
 
+const PLAN_DATA = [
+  { id: "starter", name: "Starter", price: 49, min: 100, msg: 2000, tagline: "Solo & side-hustle receptionists" },
+  { id: "growth", name: "Growth", price: 149, min: 500, msg: 8000, tagline: "Most businesses pick this", featured: true },
+  { id: "pro", name: "Pro", price: 399, min: 1500, msg: 25000, tagline: "Clinics, agencies, multi-location" },
+];
+
 const Pricing = () => (
-  <section id="pricing" className="border-b-2 border-black bg-[#002FA7] text-white">
-    <div className="max-w-7xl mx-auto px-6 py-20 grid md:grid-cols-2 gap-10 items-center">
-      <div>
-        <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter">Free while in preview.</h2>
-        <p className="mt-4 text-lg opacity-90 max-w-md">Sign your vendors up today. Billing plans roll out next quarter — existing vendors get grandfathered pricing.</p>
+  <section id="pricing" className="border-b-2 border-black bg-white">
+    <div className="max-w-7xl mx-auto px-6 py-20">
+      <div className="flex items-end justify-between flex-wrap gap-6 mb-10">
+        <div>
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Pricing</div>
+          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Simple monthly plans.</h2>
+        </div>
+        <p className="max-w-md text-neutral-700">
+          Every plan auto-renews monthly. <strong>5-day free trial</strong> — no card required to start. Cancel anytime.
+        </p>
       </div>
-      <div className="justify-self-end">
-        <Link to="/signup" data-testid="pricing-cta" className="inline-flex items-center gap-2 bg-white text-[#002FA7] font-bold px-6 py-4 border-2 border-black shadow-brutal-lg hover-lift">
-          Create your workspace <ArrowRight size={18}/>
-        </Link>
+      <div className="grid md:grid-cols-3 gap-6">
+        {PLAN_DATA.map(p => (
+          <div
+            key={p.id}
+            data-testid={`landing-plan-${p.id}`}
+            className={`border-2 border-black p-7 shadow-brutal bg-white ${p.featured ? "ring-4 ring-[#002FA7]" : ""}`}
+          >
+            {p.featured && <div className="inline-block bg-[#002FA7] text-white text-[10px] font-bold uppercase tracking-widest px-2 py-1 border border-black mb-3">Most popular</div>}
+            <div className="font-display font-black text-3xl">{p.name}</div>
+            <div className="text-sm text-neutral-600 mt-1">{p.tagline}</div>
+            <div className="mt-5 flex items-baseline gap-1">
+              <span className="font-display font-black text-6xl tracking-tighter">${p.price}</span>
+              <span className="text-xs font-mono text-neutral-500">/mo USD</span>
+            </div>
+            <ul className="mt-6 space-y-2 text-sm">
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.min}</strong> voice minutes/mo</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.msg.toLocaleString()}</strong> AI messages/mo</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Voice · WhatsApp · Web · Email · SMS</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Live agent override (inbox)</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Hard-stop at zero — no bill shocks</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Top-up packs never expire</li>
+            </ul>
+            <Link
+              to="/signup"
+              data-testid={`landing-plan-cta-${p.id}`}
+              className={`mt-7 block text-center font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift ${p.featured ? "bg-[#002FA7] text-white" : "bg-white"}`}
+            >
+              Start 5-day free trial
+            </Link>
+          </div>
+        ))}
       </div>
+      <p className="mt-10 text-center text-sm font-mono text-neutral-600">
+        Need more minutes? Grab a <strong>one-time top-up</strong> (Spark → Armada, $125 to $5,499) from your billing page. Never expires.
+      </p>
     </div>
   </section>
 );

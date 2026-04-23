@@ -1,0 +1,63 @@
+{
+  "summary": "End-to-end test of BotNira Stripe billing Phase 1 (plans, checkout, trial paywall, balance enforcement, exempt bypass, admin billing dashboard, landing pricing, vendor/admin UIs). 21/22 backend tests passed; all critical frontend flows verified. Two bugs found (1 backend, 1 frontend) — both line up against explicit review-request items.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/simulate/voice",
+        "issue": "Returns 400 'Invalid channel' instead of 402 'locked during trial' for a trial vendor (demo). server.py:892 whitelist is {whatsapp, email, sms} and does NOT include 'voice', so the paywall/trial gate is never reached. The review request explicitly requires: 'POST /api/simulate/voice as demo vendor returns 402'. Fix: add 'voice' to the whitelist set and let _vendor_can_use_channel do the 402 rejection (trial vendor has voice locked).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Landing channels strip (Landing.jsx CHANNELS const, ~line 93-97)",
+        "issue": "'Voice Calls' tile is missing from the landing marketing channels strip. CHANNELS array contains only WhatsApp / Email / SMS & Chat. Review request explicitly calls for: 'Voice Calls tile present in channels strip' and 'restored Voice tile on landing marketing page'. Voice is referenced only in the Pricing card bullets, not as a standalone tile. Add { icon: Phone, label: 'Voice Calls', sub: '...' } to the CHANNELS array.",
+        "selector": "data-testid=\"channel-voice calls\" (would-be)",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_billing.py",
+    "/app/test_reports/pytest/billing_results.xml"
+  ],
+  "action_items": [
+    "Add 'voice' to allowed simulate channels whitelist in server.py line 892 so that POST /api/simulate/voice returns 402 (trial-locked) instead of 400 (invalid channel). The downstream _vendor_can_use_channel() already rejects voice for trial vendors.",
+    "Restore the Voice Calls tile in Landing.jsx CHANNELS array so the landing page channels strip shows all 4 (Voice / WhatsApp / Email / SMS & Chat), matching the product copy which says 'phone, WhatsApp, email, SMS, web chat'."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2004 lines — well past the 700-line threshold. Recommend splitting into modules: billing.py, simulate.py, admin.py, auth.py, conversations.py. Current monolith makes bug isolation painful (e.g., the simulate-voice bug would be obvious in a dedicated module).",
+    "The /api/simulate/{channel} handler duplicates whitelist logic that _vendor_can_use_channel() is already authoritative on. Delete the inner whitelist so channel policy lives in one place.",
+    "Webhook dev-mode bypass (empty STRIPE_WEBHOOK_SECRET → accepts any JSON) is fine for local, but hard-fail (500) in prod if secret missing. Add a runtime guard.",
+    "payment_transactions collection: make sure _id is excluded on any future read endpoint (current /billing/checkout/status and /admin/billing/{id} already project _id:0 — good)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_billing.py (new, 22 test cases, reusable for regression)"
+  ],
+  "success_rate": {
+    "backend": "95% (21/22 — only /simulate/voice wrong status code)",
+    "frontend": "95% (all critical flows pass; only Voice tile missing on landing)"
+  },
+  "test_credentials": "admin@botnira.com/admin123, demo@botnira.com/demo123, kamal@thedigisparrow.com/kamal123 — all present in /app/memory/test_credentials.md and confirmed working.",
+  "seed_data_creation": "Reset demo vendor's messages_balance to 100 via MongoDB at session start, and reset/decrement-test at 3→2 and hard-stop at 0 → restored to 100 at end. Signup test created a TEST_bill_<uuid>@botnira.com vendor — left in DB (prefixed TEST_ for easy cleanup).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_billing.py -v. The only failing test is TestTrialEnforcement::test_locked_channels_402[voice] (see action_items #1). Frontend Landing.jsx is missing Voice tile in CHANNELS array (action_items #2). All other flows — Stripe Checkout redirect, paywall 402, balance decrement, hard-stop at 0, kamal exempt bypass (balance never decrements, all channels unlocked), admin /admin/billing dashboard, signup trial defaults, webhook dev-mode — are passing. Stripe Checkout redirect was verified live (URL https://checkout.stripe.com/c/pay/cs_test_...) without completing payment. Admin dashboard shows MRR/ARR/Active subs/Trialing/Total vendors cards and 6 vendor rows including kamal with infinity-balance badge.",
+  "rca of the issue": {
+    "simulate_voice_400": {
+      "root_cause": "server.py line 892 hardcodes channel whitelist to {'whatsapp','email','sms'}, preceding the paywall check. Voice is never forwarded to _vendor_can_use_channel, so trial vendor gets a 400 instead of the expected 402.",
+      "repro": "Login as demo@botnira.com → POST /api/simulate/voice with any message → returns 400 'Invalid channel'.",
+      "fix": "Change `if channel not in {'whatsapp','email','sms'}:` to `if channel not in {'whatsapp','email','sms','voice'}:`. _vendor_can_use_channel already returns (False, 'The voice channel is locked during trial. Upgrade to unlock.') for trial vendor, which raises HTTPException 402."
+    },
+    "landing_missing_voice_tile": {
+      "root_cause": "Landing.jsx CHANNELS const (line 93) only defines 3 entries: WhatsApp, Email, SMS & Chat. Voice Calls tile was not added during the marketing page restore.",
+      "repro": "Open / (landing page) → scroll to channels strip under 'One bot. Every channel.' → only 3 tiles rendered.",
+      "fix": "Add `{ icon: Phone, label: 'Voice Calls', sub: 'Twilio-ready' }` (Phone already imported on line 2) as the first entry of CHANNELS. Update grid-cols if needed (currently md:border-r-2 based on index)."
+    }
+  }
+}

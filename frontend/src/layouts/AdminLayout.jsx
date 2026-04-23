@@ -1,10 +1,11 @@
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
-import { Building2, BarChart3, LogOut, LayoutDashboard } from "lucide-react";
+import { Building2, BarChart3, LogOut, LayoutDashboard, CreditCard } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 
 const links = [
   { to: "/admin", label: "Overview", icon: LayoutDashboard, end: true, tid: "admin-nav-overview" },
   { to: "/admin/vendors", label: "Vendors", icon: Building2, tid: "admin-nav-vendors" },
+  { to: "/admin/billing", label: "Billing", icon: CreditCard, tid: "admin-nav-billing" },
   { to: "/admin/analytics", label: "Analytics", icon: BarChart3, tid: "admin-nav-analytics" },
 ];
 

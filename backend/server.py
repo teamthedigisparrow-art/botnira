@@ -32,6 +32,35 @@ JWT_EXP_HOURS = 24 * 7
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 
+# Stripe billing
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+import stripe as _stripe
+if STRIPE_SECRET_KEY:
+    _stripe.api_key = STRIPE_SECRET_KEY
+
+# Plans (recurring monthly subscriptions)
+PLANS = {
+    "starter": {"name": "Starter", "price_usd": 49.0,  "voice_min": 100,  "messages": 2000},
+    "growth":  {"name": "Growth",  "price_usd": 149.0, "voice_min": 500,  "messages": 8000},
+    "pro":     {"name": "Pro",     "price_usd": 399.0, "voice_min": 1500, "messages": 25000},
+}
+# Prepaid top-up packs (one-time purchase, never expire)
+TOPUPS = {
+    "spark":   {"name": "Spark",   "price_usd": 125.0,  "voice_min": 100,  "messages": 1000},
+    "boost":   {"name": "Boost",   "price_usd": 249.0,  "voice_min": 200,  "messages": 2000},
+    "rocket":  {"name": "Rocket",  "price_usd": 599.0,  "voice_min": 500,  "messages": 5000},
+    "jet":     {"name": "Jet",     "price_usd": 1199.0, "voice_min": 1000, "messages": 10000},
+    "fleet":   {"name": "Fleet",   "price_usd": 2899.0, "voice_min": 2500, "messages": 25000},
+    "armada":  {"name": "Armada",  "price_usd": 5499.0, "voice_min": 5000, "messages": 50000},
+}
+TRIAL_DAYS = 5
+TRIAL_ALLOWED_CHANNELS = {"web", "whatsapp"}
+TRIAL_MESSAGE_CAP = 100  # hard cap on AI msgs during trial
+EXEMPT_EMAILS = {"kamal@thedigisparrow.com"}  # always free, never hit paywall
+# Stripe Price ID cache, populated on startup
+STRIPE_PRICE_IDS = {"plans": {}, "topups": {}}
+
 # Meta / WhatsApp Cloud API
 META_APP_ID = os.environ.get("META_APP_ID", "")
 META_APP_SECRET = os.environ.get("META_APP_SECRET", "")
@@ -326,7 +355,7 @@ async def seed_admin():
             "is_active": True,
             "updated_at": now_iso(),
         })
-        for ch in ["web", "whatsapp", "email", "sms"]:
+        for ch in ["web", "whatsapp", "email", "sms", "voice"]:
             await db.channels.insert_one({
                 "id": new_id(), "vendor_id": tv, "channel": ch,
                 "status": "connected" if ch == "web" else "disconnected",
@@ -368,10 +397,10 @@ async def seed_admin():
                 )
                 logger.info("Bound Meta WhatsApp test number to %s", test_email)
 
-    # Ensure demo vendor always has 4 default channels (idempotent)
+    # Ensure demo vendor always has 5 default channels (idempotent)
     demo = await db.users.find_one({"email": demo_email}, {"_id": 0})
     if demo and demo.get("vendor_id"):
-        for ch in ["web", "whatsapp", "email", "sms"]:
+        for ch in ["web", "whatsapp", "email", "sms", "voice"]:
             existing_ch = await db.channels.find_one(
                 {"vendor_id": demo["vendor_id"], "channel": ch}
             )
@@ -394,6 +423,7 @@ async def signup(req: SignupReq):
     if await db.users.find_one({"email": req.email}):
         raise HTTPException(status_code=400, detail="Email already registered")
     vid = new_id()
+    trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
     await db.vendors.insert_one(
         {
             "id": vid,
@@ -401,7 +431,17 @@ async def signup(req: SignupReq):
             "slug": slugify(req.business_name) + "-" + vid[:4],
             "business_description": "",
             "status": "active",
-            "plan": "free",
+            "plan": "trial",
+            "subscription_status": "trialing",
+            "trial_ends_at": trial_ends,
+            "stripe_customer_id": None,
+            "stripe_subscription_id": None,
+            "current_period_end": None,
+            "minutes_balance": 0.0,
+            "messages_balance": TRIAL_MESSAGE_CAP,
+            "plan_minutes_monthly": 0,
+            "plan_messages_monthly": 0,
+            "is_exempt": False,
             "created_at": now_iso(),
         }
     )
@@ -433,7 +473,7 @@ async def signup(req: SignupReq):
         }
     )
     # default channel statuses
-    for ch in ["web", "whatsapp", "email", "sms"]:
+    for ch in ["web", "whatsapp", "email", "sms", "voice"]:
         await db.channels.insert_one(
             {
                 "id": new_id(),
@@ -464,9 +504,22 @@ async def login(req: LoginReq):
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     vendor = None
+    access = None
     if user.get("vendor_id"):
         vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
-    return {"user": user, "vendor": vendor}
+        if vendor:
+            a = _plan_for_vendor(vendor)
+            access = {
+                "paywall": a["paywall"],
+                "trial": a["trial"],
+                "trial_days_left": a["trial_days_left"],
+                "allowed_channels": sorted(list(a["allowed_channels"])),
+                "plan_label": a["plan_label"],
+                "is_exempt": a["is_exempt"],
+                "minutes_balance": a.get("minutes_balance", 0.0),
+                "messages_balance": a.get("messages_balance", 0),
+            }
+    return {"user": user, "vendor": vendor, "access": access}
 
 
 # ------------------------------ Vendor profile -------------------------------
@@ -705,16 +758,21 @@ async def chat_message(req: ChatMessageReq):
     vendor = await db.vendors.find_one({"id": req.vendor_id}, {"_id": 0})
     if not vendor or vendor.get("status") == "suspended":
         raise HTTPException(status_code=404, detail="Vendor unavailable")
+    channel = req.channel or "web"
+    ok, reason = await _vendor_can_use_channel(req.vendor_id, channel)
+    if not ok:
+        raise HTTPException(status_code=402, detail=reason)
     conv = await _ensure_conversation(
         req.vendor_id,
         req.conversation_id,
-        req.channel or "web",
+        channel,
         req.customer_name or "Guest",
         req.customer_contact or "",
     )
     await _push_message(conv["id"], req.vendor_id, "user", req.message)
     reply = await get_ai_reply(req.vendor_id, conv["id"], req.message)
     bot_msg = await _push_message(conv["id"], req.vendor_id, "bot", reply)
+    await _decrement_message_balance(req.vendor_id)
     await _maybe_book_appointment(req.vendor_id, conv["id"], reply)
     return {"conversation_id": conv["id"], "reply": reply, "message": bot_msg}
 
@@ -833,12 +891,16 @@ async def simulate_inbound(
 ):
     if channel not in {"whatsapp", "email", "sms"}:
         raise HTTPException(status_code=400, detail="Invalid channel")
+    ok, reason = await _vendor_can_use_channel(user["vendor_id"], channel)
+    if not ok:
+        raise HTTPException(status_code=402, detail=reason)
     conv = await _ensure_conversation(
         user["vendor_id"], None, channel, req.customer_name, req.customer_contact
     )
     await _push_message(conv["id"], user["vendor_id"], "user", req.message)
     reply = await get_ai_reply(user["vendor_id"], conv["id"], req.message)
     await _push_message(conv["id"], user["vendor_id"], "bot", reply)
+    await _decrement_message_balance(user["vendor_id"])
     await _maybe_book_appointment(user["vendor_id"], conv["id"], reply)
     return {"conversation_id": conv["id"], "reply": reply}
 
@@ -1171,9 +1233,18 @@ async def whatsapp_webhook(request: _FastAPIRequest):
                         vendor_id, None, "whatsapp", name or wa_from, wa_from
                     )
                     await _push_message(conv["id"], vendor_id, "user", text)
+                    # Gate: vendor must have active plan + messages balance
+                    ok, reason = await _vendor_can_use_channel(vendor_id, "whatsapp")
+                    if not ok:
+                        try:
+                            await _whatsapp_send(phone_number_id, wa_from, reason, wc["access_token"])
+                        except Exception as e:
+                            logger.warning("paywall notice send failed: %s", e)
+                        continue
                     # AI reply grounded in vendor's bot
                     reply = await get_ai_reply(vendor_id, conv["id"], text)
                     await _push_message(conv["id"], vendor_id, "bot", reply)
+                    await _decrement_message_balance(vendor_id)
                     # Send reply back to the customer on WhatsApp
                     try:
                         await _whatsapp_send(phone_number_id, wa_from, reply, wc["access_token"])
@@ -1301,6 +1372,615 @@ async def whatsapp_embedded_signup_exchange(
         {"$set": {"status": "connected", "updated_at": now_iso()}},
     )
     return {"status": "connected", "connection": conn}
+
+
+# ============================== Billing / Stripe ============================
+from fastapi import Request as _StripeRequest
+
+
+def _plan_for_vendor(vendor: dict) -> dict:
+    """Computes the effective access profile for a vendor.
+    Returns {trial, trial_days_left, paywall, allowed_channels, plan_label, ...}.
+    Exempt vendors bypass everything."""
+    if not vendor:
+        return {"paywall": True, "trial": False, "allowed_channels": set(), "plan_label": "none", "is_exempt": False}
+    if vendor.get("is_exempt"):
+        return {
+            "paywall": False, "trial": False, "trial_days_left": 0,
+            "allowed_channels": {"web", "whatsapp", "email", "sms", "voice"},
+            "plan_label": "exempt", "is_exempt": True,
+            "minutes_balance": 999999.0, "messages_balance": 999999,
+        }
+    sub_status = vendor.get("subscription_status", "trialing")
+    now = datetime.now(timezone.utc)
+    trial_ends_iso = vendor.get("trial_ends_at")
+    in_trial = False
+    trial_days_left = 0
+    if sub_status == "trialing" and trial_ends_iso:
+        try:
+            trial_ends = datetime.fromisoformat(trial_ends_iso.replace("Z", "+00:00"))
+            if trial_ends > now:
+                in_trial = True
+                trial_days_left = max(0, (trial_ends - now).days + (1 if (trial_ends - now).seconds > 0 else 0))
+        except Exception:
+            pass
+    if in_trial:
+        return {
+            "paywall": False, "trial": True, "trial_days_left": trial_days_left,
+            "allowed_channels": set(TRIAL_ALLOWED_CHANNELS),
+            "plan_label": "trial", "is_exempt": False,
+            "minutes_balance": float(vendor.get("minutes_balance", 0.0)),
+            "messages_balance": int(vendor.get("messages_balance", 0)),
+        }
+    # Active paying subscription
+    if sub_status == "active":
+        return {
+            "paywall": False, "trial": False, "trial_days_left": 0,
+            "allowed_channels": {"web", "whatsapp", "email", "sms", "voice"},
+            "plan_label": vendor.get("plan", "starter"), "is_exempt": False,
+            "minutes_balance": float(vendor.get("minutes_balance", 0.0)),
+            "messages_balance": int(vendor.get("messages_balance", 0)),
+        }
+    # Trial ended, or past_due / canceled / none → paywall
+    return {
+        "paywall": True, "trial": False, "trial_days_left": 0,
+        "allowed_channels": set(),
+        "plan_label": "none", "is_exempt": False,
+        "minutes_balance": float(vendor.get("minutes_balance", 0.0)),
+        "messages_balance": int(vendor.get("messages_balance", 0)),
+    }
+
+
+async def _vendor_can_use_channel(vendor_id: str, channel: str) -> tuple[bool, str]:
+    """Gate check before AI reply / channel send. Returns (ok, reason)."""
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    access = _plan_for_vendor(vendor)
+    if access["is_exempt"]:
+        return True, ""
+    if access["paywall"]:
+        return False, "Your free trial has ended. Please subscribe to a plan to continue."
+    if channel not in access["allowed_channels"]:
+        if access["trial"]:
+            return False, f"The {channel} channel is locked during trial. Upgrade to unlock."
+        return False, f"The {channel} channel requires an active plan."
+    # balance check
+    if channel == "voice":
+        if access["minutes_balance"] <= 0:
+            return False, "Voice minutes exhausted. Please recharge to continue."
+    else:
+        if access["messages_balance"] <= 0:
+            return False, "AI messages exhausted. Please recharge or upgrade your plan."
+    return True, ""
+
+
+async def _decrement_message_balance(vendor_id: str):
+    """Consumes 1 AI message from the vendor's balance. Exempt vendors skip."""
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0, "is_exempt": 1, "messages_balance": 1})
+    if not vendor or vendor.get("is_exempt"):
+        return
+    await db.vendors.update_one(
+        {"id": vendor_id},
+        {"$inc": {"messages_balance": -1, "messages_used_total": 1}},
+    )
+
+
+async def _ensure_stripe_prices():
+    """Create Stripe Products + Prices for plans and topups if missing.
+    Idempotent: looks up by metadata.botnira_key."""
+    if not STRIPE_SECRET_KEY:
+        logger.warning("Stripe not configured — skipping price provisioning")
+        return
+    try:
+        # Fetch all products with botnira metadata
+        existing = {}
+        starting_after = None
+        while True:
+            kwargs = {"limit": 100, "active": True}
+            if starting_after:
+                kwargs["starting_after"] = starting_after
+            resp = _stripe.Product.list(**kwargs)
+            for p in resp.data:
+                try:
+                    md = p.to_dict().get("metadata") or {}
+                except Exception:
+                    md = {}
+                k = md.get("botnira_key")
+                if k:
+                    existing[k] = p
+            if not resp.has_more:
+                break
+            starting_after = resp.data[-1].id
+
+        # Plans → recurring monthly prices
+        for key, cfg in PLANS.items():
+            bk = f"plan_{key}"
+            product = existing.get(bk)
+            if not product:
+                product = _stripe.Product.create(
+                    name=f"BotNira {cfg['name']} Plan",
+                    metadata={"botnira_key": bk, "type": "plan", "plan_id": key},
+                )
+                logger.info("Created Stripe product %s -> %s", bk, product.id)
+            # Find a recurring price on this product
+            prices = _stripe.Price.list(product=product.id, active=True, limit=10)
+            match = None
+            for pr in prices.data:
+                if pr.type == "recurring" and pr.unit_amount == int(cfg["price_usd"] * 100) and pr.currency == "usd":
+                    match = pr
+                    break
+            if not match:
+                match = _stripe.Price.create(
+                    product=product.id,
+                    unit_amount=int(cfg["price_usd"] * 100),
+                    currency="usd",
+                    recurring={"interval": "month"},
+                    metadata={"botnira_key": bk, "plan_id": key},
+                )
+                logger.info("Created recurring price %s -> %s", bk, match.id)
+            STRIPE_PRICE_IDS["plans"][key] = match.id
+
+        # Topups → one-time prices
+        for key, cfg in TOPUPS.items():
+            bk = f"topup_{key}"
+            product = existing.get(bk)
+            if not product:
+                product = _stripe.Product.create(
+                    name=f"BotNira {cfg['name']} Top-up ({cfg['voice_min']} min + {cfg['messages']} msgs)",
+                    metadata={"botnira_key": bk, "type": "topup", "pack_id": key},
+                )
+                logger.info("Created Stripe product %s -> %s", bk, product.id)
+            prices = _stripe.Price.list(product=product.id, active=True, limit=10)
+            match = None
+            for pr in prices.data:
+                if pr.type == "one_time" and pr.unit_amount == int(cfg["price_usd"] * 100) and pr.currency == "usd":
+                    match = pr
+                    break
+            if not match:
+                match = _stripe.Price.create(
+                    product=product.id,
+                    unit_amount=int(cfg["price_usd"] * 100),
+                    currency="usd",
+                    metadata={"botnira_key": bk, "pack_id": key},
+                )
+                logger.info("Created one-time price %s -> %s", bk, match.id)
+            STRIPE_PRICE_IDS["topups"][key] = match.id
+        logger.info("Stripe price provisioning complete: %s", STRIPE_PRICE_IDS)
+    except Exception as e:
+        logger.exception("Stripe price provisioning failed: %s", e)
+
+
+@app.on_event("startup")
+async def startup_stripe():
+    # Backfill billing fields on existing vendors (idempotent migration)
+    try:
+        async for v in db.vendors.find({}, {"_id": 0, "id": 1, "plan": 1, "created_at": 1, "is_exempt": 1}):
+            updates = {}
+            if "subscription_status" not in v:
+                # Pre-existing vendors → treat as fresh trial from today
+                updates["subscription_status"] = "trialing"
+                updates["trial_ends_at"] = (
+                    datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)
+                ).isoformat()
+                updates["minutes_balance"] = 0.0
+                updates["messages_balance"] = TRIAL_MESSAGE_CAP
+                updates["plan_minutes_monthly"] = 0
+                updates["plan_messages_monthly"] = 0
+                updates["plan"] = "trial"
+            if updates:
+                await db.vendors.update_one({"id": v["id"]}, {"$set": updates})
+        # Ensure kamal (test vendor) is exempt and has messages_balance high
+        kamal_user = await db.users.find_one({"email": "kamal@thedigisparrow.com"}, {"_id": 0})
+        if kamal_user and kamal_user.get("vendor_id"):
+            await db.vendors.update_one(
+                {"id": kamal_user["vendor_id"]},
+                {"$set": {
+                    "is_exempt": True,
+                    "plan": "exempt",
+                    "subscription_status": "exempt",
+                    "minutes_balance": 999999.0,
+                    "messages_balance": 999999,
+                }},
+            )
+    except Exception as e:
+        logger.warning("Vendor billing migration failed: %s", e)
+    # Provision Stripe products/prices
+    await _ensure_stripe_prices()
+
+
+@api_router.get("/billing/plans")
+async def billing_plans():
+    """Public — list plans + topups for pricing page."""
+    return {
+        "plans": [
+            {"id": k, **v, "stripe_price_id": STRIPE_PRICE_IDS["plans"].get(k)}
+            for k, v in PLANS.items()
+        ],
+        "topups": [
+            {"id": k, **v, "stripe_price_id": STRIPE_PRICE_IDS["topups"].get(k)}
+            for k, v in TOPUPS.items()
+        ],
+        "trial_days": TRIAL_DAYS,
+    }
+
+
+@api_router.get("/billing/me")
+async def billing_me(user: dict = Depends(require_vendor)):
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    access = _plan_for_vendor(vendor)
+    return {
+        "vendor_id": vendor["id"],
+        "plan": vendor.get("plan", "trial"),
+        "subscription_status": vendor.get("subscription_status", "trialing"),
+        "trial_ends_at": vendor.get("trial_ends_at"),
+        "current_period_end": vendor.get("current_period_end"),
+        "minutes_balance": float(vendor.get("minutes_balance", 0.0)),
+        "messages_balance": int(vendor.get("messages_balance", 0)),
+        "plan_minutes_monthly": int(vendor.get("plan_minutes_monthly", 0)),
+        "plan_messages_monthly": int(vendor.get("plan_messages_monthly", 0)),
+        "is_exempt": bool(vendor.get("is_exempt")),
+        "access": {
+            "paywall": access["paywall"],
+            "trial": access["trial"],
+            "trial_days_left": access["trial_days_left"],
+            "allowed_channels": sorted(list(access["allowed_channels"])),
+            "plan_label": access["plan_label"],
+        },
+        "stripe_customer_id": vendor.get("stripe_customer_id"),
+    }
+
+
+async def _get_or_create_stripe_customer(vendor: dict, email: str) -> str:
+    cid = vendor.get("stripe_customer_id")
+    if cid:
+        return cid
+    c = _stripe.Customer.create(
+        email=email,
+        name=vendor.get("name"),
+        metadata={"vendor_id": vendor["id"]},
+    )
+    await db.vendors.update_one({"id": vendor["id"]}, {"$set": {"stripe_customer_id": c.id}})
+    return c.id
+
+
+class CheckoutReq(BaseModel):
+    plan: Optional[str] = None
+    pack: Optional[str] = None
+    origin_url: str
+
+
+@api_router.post("/billing/checkout/subscription")
+async def checkout_subscription(req: CheckoutReq, user: dict = Depends(require_vendor)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Billing not configured")
+    if req.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    price_id = STRIPE_PRICE_IDS["plans"].get(req.plan)
+    if not price_id:
+        raise HTTPException(status_code=503, detail="Plan price not provisioned yet")
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    if vendor.get("is_exempt"):
+        raise HTTPException(status_code=400, detail="Exempt account — billing disabled")
+    cust_id = await _get_or_create_stripe_customer(vendor, user["email"])
+    origin = req.origin_url.rstrip("/")
+    session = _stripe.checkout.Session.create(
+        mode="subscription",
+        customer=cust_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{origin}/app/billing?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{origin}/app/billing?cancelled=1",
+        metadata={
+            "vendor_id": vendor["id"],
+            "type": "subscription",
+            "plan": req.plan,
+        },
+        subscription_data={
+            "metadata": {"vendor_id": vendor["id"], "plan": req.plan},
+        },
+    )
+    await db.payment_transactions.insert_one({
+        "id": new_id(),
+        "vendor_id": vendor["id"],
+        "session_id": session.id,
+        "type": "subscription",
+        "plan": req.plan,
+        "amount": PLANS[req.plan]["price_usd"],
+        "currency": "usd",
+        "status": "initiated",
+        "created_at": now_iso(),
+    })
+    return {"url": session.url, "session_id": session.id}
+
+
+@api_router.post("/billing/checkout/topup")
+async def checkout_topup(req: CheckoutReq, user: dict = Depends(require_vendor)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Billing not configured")
+    if req.pack not in TOPUPS:
+        raise HTTPException(status_code=400, detail="Invalid top-up pack")
+    price_id = STRIPE_PRICE_IDS["topups"].get(req.pack)
+    if not price_id:
+        raise HTTPException(status_code=503, detail="Top-up price not provisioned yet")
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    if vendor.get("is_exempt"):
+        raise HTTPException(status_code=400, detail="Exempt account — billing disabled")
+    cust_id = await _get_or_create_stripe_customer(vendor, user["email"])
+    origin = req.origin_url.rstrip("/")
+    session = _stripe.checkout.Session.create(
+        mode="payment",
+        customer=cust_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{origin}/app/billing?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{origin}/app/billing?cancelled=1",
+        metadata={
+            "vendor_id": vendor["id"],
+            "type": "topup",
+            "pack": req.pack,
+        },
+    )
+    await db.payment_transactions.insert_one({
+        "id": new_id(),
+        "vendor_id": vendor["id"],
+        "session_id": session.id,
+        "type": "topup",
+        "pack": req.pack,
+        "amount": TOPUPS[req.pack]["price_usd"],
+        "currency": "usd",
+        "status": "initiated",
+        "created_at": now_iso(),
+    })
+    return {"url": session.url, "session_id": session.id}
+
+
+async def _apply_successful_payment(session_id: str, vendor_id: str, txn_type: str, plan_or_pack: str):
+    """Idempotently apply successful payment: grant balance or activate sub.
+    Guards against double-apply via payment_transactions.status='completed'."""
+    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not txn:
+        return
+    if txn.get("status") == "completed":
+        return  # already applied
+    if txn_type == "topup":
+        pack = TOPUPS.get(plan_or_pack)
+        if pack:
+            await db.vendors.update_one(
+                {"id": vendor_id},
+                {"$inc": {"minutes_balance": pack["voice_min"], "messages_balance": pack["messages"]}},
+            )
+    elif txn_type == "subscription":
+        plan = PLANS.get(plan_or_pack)
+        if plan:
+            await db.vendors.update_one(
+                {"id": vendor_id},
+                {"$set": {
+                    "plan": plan_or_pack,
+                    "subscription_status": "active",
+                    "plan_minutes_monthly": plan["voice_min"],
+                    "plan_messages_monthly": plan["messages"],
+                    # On activation: set balance to plan allotment (overrides trial leftover)
+                    "minutes_balance": float(plan["voice_min"]),
+                    "messages_balance": int(plan["messages"]),
+                    "activated_at": now_iso(),
+                }},
+            )
+    await db.payment_transactions.update_one(
+        {"session_id": session_id},
+        {"$set": {"status": "completed", "completed_at": now_iso()}},
+    )
+
+
+@api_router.get("/billing/checkout/status/{session_id}")
+async def checkout_status(session_id: str, user: dict = Depends(require_vendor)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Billing not configured")
+    session = _stripe.checkout.Session.retrieve(session_id)
+    md = session.metadata or {}
+    if md.get("vendor_id") != user["vendor_id"]:
+        raise HTTPException(status_code=403, detail="Session not for this vendor")
+    if session.payment_status == "paid":
+        txn_type = md.get("type")
+        key = md.get("plan") or md.get("pack")
+        if txn_type and key:
+            sub_id = session.subscription
+            if sub_id and txn_type == "subscription":
+                # store sub id + period end
+                try:
+                    sub = _stripe.Subscription.retrieve(sub_id)
+                    await db.vendors.update_one(
+                        {"id": user["vendor_id"]},
+                        {"$set": {
+                            "stripe_subscription_id": sub_id,
+                            "current_period_end": datetime.fromtimestamp(
+                                sub.current_period_end, tz=timezone.utc
+                            ).isoformat() if getattr(sub, "current_period_end", None) else None,
+                        }},
+                    )
+                except Exception as e:
+                    logger.warning("subscription retrieve failed: %s", e)
+            await _apply_successful_payment(session_id, user["vendor_id"], txn_type, key)
+    return {
+        "status": session.status,
+        "payment_status": session.payment_status,
+        "amount_total": session.amount_total,
+        "currency": session.currency,
+        "metadata": dict(md),
+    }
+
+
+@api_router.post("/billing/portal")
+async def billing_portal(payload: Dict[str, str], user: dict = Depends(require_vendor)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Billing not configured")
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    cid = vendor.get("stripe_customer_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No Stripe customer on file yet")
+    origin = (payload.get("origin_url") or "").rstrip("/") or "https://botnira.com"
+    session = _stripe.billing_portal.Session.create(
+        customer=cid,
+        return_url=f"{origin}/app/billing",
+    )
+    return {"url": session.url}
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: _StripeRequest):
+    if not STRIPE_SECRET_KEY:
+        return {"ok": False}
+    raw = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    event = None
+    if STRIPE_WEBHOOK_SECRET:
+        try:
+            event = _stripe.Webhook.construct_event(raw, sig, STRIPE_WEBHOOK_SECRET)
+        except Exception as e:
+            logger.warning("Stripe webhook signature invalid: %s", e)
+            raise HTTPException(status_code=400, detail="Bad signature")
+    else:
+        # Dev mode — accept without verification
+        try:
+            event = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {"ok": False}
+    etype = event["type"] if isinstance(event, dict) else event.type
+    data_obj = (event["data"]["object"] if isinstance(event, dict) else event.data.object)
+
+    if etype == "checkout.session.completed":
+        md = data_obj.get("metadata") if isinstance(data_obj, dict) else (data_obj.metadata or {})
+        vendor_id = md.get("vendor_id")
+        txn_type = md.get("type")
+        key = md.get("plan") or md.get("pack")
+        session_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        if vendor_id and txn_type and key and session_id:
+            if txn_type == "subscription":
+                sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
+                if sub_id:
+                    try:
+                        sub = _stripe.Subscription.retrieve(sub_id)
+                        await db.vendors.update_one(
+                            {"id": vendor_id},
+                            {"$set": {
+                                "stripe_subscription_id": sub_id,
+                                "current_period_end": datetime.fromtimestamp(
+                                    sub.current_period_end, tz=timezone.utc
+                                ).isoformat() if getattr(sub, "current_period_end", None) else None,
+                            }},
+                        )
+                    except Exception as e:
+                        logger.warning("sub retrieve failed in webhook: %s", e)
+            await _apply_successful_payment(session_id, vendor_id, txn_type, key)
+
+    elif etype == "invoice.paid":
+        # Subscription renewal — reset balance to plan allotment
+        sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
+        if sub_id:
+            vendor = await db.vendors.find_one({"stripe_subscription_id": sub_id}, {"_id": 0})
+            if vendor:
+                plan = PLANS.get(vendor.get("plan"))
+                if plan:
+                    await db.vendors.update_one(
+                        {"id": vendor["id"]},
+                        {"$set": {
+                            "subscription_status": "active",
+                            "minutes_balance": float(plan["voice_min"]),
+                            "messages_balance": int(plan["messages"]),
+                            "last_invoice_at": now_iso(),
+                        }},
+                    )
+
+    elif etype == "invoice.payment_failed":
+        sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
+        if sub_id:
+            await db.vendors.update_one(
+                {"stripe_subscription_id": sub_id},
+                {"$set": {"subscription_status": "past_due"}},
+            )
+
+    elif etype == "customer.subscription.updated":
+        sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        status = data_obj.get("status") if isinstance(data_obj, dict) else data_obj.status
+        cpe = data_obj.get("current_period_end") if isinstance(data_obj, dict) else data_obj.current_period_end
+        set_doc = {"subscription_status": status}
+        if cpe:
+            set_doc["current_period_end"] = datetime.fromtimestamp(cpe, tz=timezone.utc).isoformat()
+        await db.vendors.update_one({"stripe_subscription_id": sub_id}, {"$set": set_doc})
+
+    elif etype == "customer.subscription.deleted":
+        sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        await db.vendors.update_one(
+            {"stripe_subscription_id": sub_id},
+            {"$set": {"subscription_status": "canceled"}},
+        )
+
+    return {"ok": True}
+
+
+# ----- Admin billing dashboard -----------------------------------------------
+@api_router.get("/admin/billing")
+async def admin_billing_list(user: dict = Depends(require_admin)):
+    vendors = await db.vendors.find({}, {"_id": 0}).to_list(1000)
+    users_by_vid = {}
+    async for u in db.users.find({"role": "vendor"}, {"_id": 0, "email": 1, "vendor_id": 1, "full_name": 1}):
+        users_by_vid[u["vendor_id"]] = u
+    rows = []
+    mrr = 0.0
+    active_count = 0
+    trial_count = 0
+    for v in vendors:
+        plan = v.get("plan", "trial")
+        sub_status = v.get("subscription_status", "trialing")
+        plan_price = 0.0
+        if plan in PLANS and sub_status == "active":
+            plan_price = PLANS[plan]["price_usd"]
+            mrr += plan_price
+            active_count += 1
+        if sub_status == "trialing":
+            trial_count += 1
+        u = users_by_vid.get(v["id"]) or {}
+        # aggregate topup spend
+        agg = await db.payment_transactions.aggregate([
+            {"$match": {"vendor_id": v["id"], "status": "completed"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+        ]).to_list(1)
+        total_spent = (agg[0]["total"] if agg else 0.0) if agg else 0.0
+        rows.append({
+            "vendor_id": v["id"],
+            "name": v.get("name"),
+            "email": u.get("email"),
+            "owner": u.get("full_name"),
+            "plan": plan,
+            "subscription_status": sub_status,
+            "plan_price_usd": plan_price,
+            "trial_ends_at": v.get("trial_ends_at"),
+            "current_period_end": v.get("current_period_end"),
+            "minutes_balance": float(v.get("minutes_balance", 0.0)),
+            "messages_balance": int(v.get("messages_balance", 0)),
+            "is_exempt": bool(v.get("is_exempt")),
+            "stripe_customer_id": v.get("stripe_customer_id"),
+            "stripe_subscription_id": v.get("stripe_subscription_id"),
+            "total_spent_usd": round(float(total_spent), 2),
+            "created_at": v.get("created_at"),
+        })
+    return {
+        "summary": {
+            "mrr_usd": round(mrr, 2),
+            "arr_usd": round(mrr * 12, 2),
+            "active_subscriptions": active_count,
+            "trialing": trial_count,
+            "total_vendors": len(vendors),
+        },
+        "vendors": rows,
+    }
+
+
+@api_router.get("/admin/billing/{vendor_id}")
+async def admin_billing_detail(vendor_id: str, user: dict = Depends(require_admin)):
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    txns = await db.payment_transactions.find(
+        {"vendor_id": vendor_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return {"vendor": vendor, "transactions": txns}
 
 
 # ------------------------------ App setup ------------------------------------
