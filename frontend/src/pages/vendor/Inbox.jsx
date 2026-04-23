@@ -38,10 +38,19 @@ export default function Inbox() {
 
   const sendReply = async () => {
     if (!reply.trim() || !active) return;
-    await api.post(`/conversations/${active}/reply`, { content: reply });
-    setReply("");
-    await loadDetail(active);
-    await load();
+    try {
+      await api.post(`/conversations/${active}/reply`, { content: reply });
+      setReply("");
+      await loadDetail(active);
+      await load();
+      toast.success("Sent");
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Message saved, but delivery failed";
+      toast.error(msg, { duration: 10000 });
+      // still refresh — the message is saved in our DB
+      await loadDetail(active);
+      await load();
+    }
   };
 
   const resolve = async () => {

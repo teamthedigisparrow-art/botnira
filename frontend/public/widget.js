@@ -191,6 +191,35 @@
     try { return localStorage.getItem(STORAGE_KEY) || null; } catch (e) { return null; }
   })();
   var rendered = [];
+  var lastSeenTs = null;   // timestamp of the newest agent/bot message already rendered
+  var pollTimer = null;
+
+  function startPolling() {
+    stopPolling();
+    if (!convId) return;
+    pollTimer = setInterval(pollOnce, 3500);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  function pollOnce() {
+    if (!convId) return;
+    var url = API_BASE + "/chat/poll/" + encodeURIComponent(vendorId) + "/" + encodeURIComponent(convId);
+    if (lastSeenTs) url += "?since=" + encodeURIComponent(lastSeenTs);
+    fetch(url, { method: "GET", mode: "cors", credentials: "omit" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.messages || !d.messages.length) return;
+        d.messages.forEach(function (m) {
+          // Don't duplicate the reply we just rendered from send()
+          if (lastSeenTs && m.created_at <= lastSeenTs) return;
+          var label = m.role === "agent" ? "Live agent" : (botInfo.bot_name || "BotNira");
+          addMsgRaw("bot", m.content, label);
+          lastSeenTs = m.created_at;
+        });
+      })
+      .catch(function () { /* silent */ });
+  }
 
   function escapeHtml(s) {
     return String(s || "").replace(/[&<>"']/g, function (c) {
@@ -210,10 +239,13 @@
     }).join("");
   }
   function addMsg(role, content) {
+    addMsgRaw(role, content, role === "user" ? "You" : (botInfo.bot_name || "BotNira"));
+  }
+  function addMsgRaw(role, content, label) {
     var div = document.createElement("div");
     div.className = "bn-bubble " + (role === "user" ? "bn-user" : "bn-bot");
     div.innerHTML =
-      '<span class="bn-label">' + (role === "user" ? "You" : (botInfo.bot_name || "BotNira")) + "</span>" +
+      '<span class="bn-label">' + escapeHtml(label) + "</span>" +
       richText(content);
     msgsEl.appendChild(div);
     msgsEl.scrollTop = msgsEl.scrollHeight;
@@ -261,6 +293,8 @@
         convId = d.conversation_id;
         try { localStorage.setItem(STORAGE_KEY, convId); } catch (e) {}
         addMsg("bot", d.reply);
+        if (d.message && d.message.created_at) lastSeenTs = d.message.created_at;
+        startPolling();  // ensure polling is running for agent replies
       })
       .catch(function (e) {
         removeTyping();
@@ -295,10 +329,12 @@
         addMsg("bot", botInfo.greeting || "Hi! How can I help you today?");
       });
     }
+    startPolling();
   }
   function close() {
     panel.style.display = "none";
     fab.style.display = "flex";
+    stopPolling();
   }
 
   fab.addEventListener("click", open);

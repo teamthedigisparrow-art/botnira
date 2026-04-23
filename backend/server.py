@@ -741,6 +741,24 @@ async def chat_message(req: ChatMessageReq):
     return {"conversation_id": conv["id"], "reply": reply, "message": bot_msg}
 
 
+@api_router.get("/chat/poll/{vendor_id}/{conversation_id}")
+async def chat_poll(vendor_id: str, conversation_id: str, since: Optional[str] = None):
+    """Public: the web widget polls this every few seconds to pick up agent/bot
+    messages that arrive between the visitor's own turns (e.g., a human
+    operator jumping in from the Inbox)."""
+    # validate vendor match so you can't poll some other vendor's conversation
+    conv = await db.conversations.find_one(
+        {"id": conversation_id, "vendor_id": vendor_id}, {"_id": 0}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Not found")
+    query: Dict[str, Any] = {"conversation_id": conversation_id, "role": {"$in": ["bot", "agent"]}}
+    if since:
+        query["created_at"] = {"$gt": since}
+    msgs = await db.messages.find(query, {"_id": 0}).sort("created_at", 1).to_list(50)
+    return {"messages": msgs, "server_time": now_iso()}
+
+
 # ------------------------------ Conversations (inbox) ------------------------
 @api_router.get("/conversations")
 async def list_conversations(
@@ -793,8 +811,44 @@ async def agent_reply(cid: str, payload: Dict[str, str], user: dict = Depends(re
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Not found")
-    msg = await _push_message(cid, user["vendor_id"], "agent", payload.get("content", ""))
-    return msg
+    content = (payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    # Save the outbound agent message first (so we always have a record,
+    # even if delivery to the customer fails for some reason).
+    msg = await _push_message(cid, user["vendor_id"], "agent", content)
+
+    channel = conv.get("channel")
+    delivery = {"channel": channel, "ok": True}
+    if channel == "whatsapp":
+        wa_to = conv.get("customer_contact", "")
+        wc = await db.whatsapp_connections.find_one(
+            {"vendor_id": user["vendor_id"], "status": "active"}, {"_id": 0}
+        )
+        if not wc:
+            delivery = {"channel": channel, "ok": False, "error": "WhatsApp not connected for this vendor"}
+        elif not wa_to:
+            delivery = {"channel": channel, "ok": False, "error": "No customer WhatsApp number on this conversation"}
+        else:
+            resp = await _whatsapp_send(wc["phone_number_id"], wa_to.lstrip("+"), content, wc["access_token"])
+            if not resp:
+                delivery = {
+                    "channel": channel,
+                    "ok": False,
+                    "error": (
+                        "Meta rejected the send. Most likely: the customer's last message "
+                        "was more than 24 hours ago (WhatsApp session window) — you can only "
+                        "free-reply within 24h. Approved templates are needed to message outside that."
+                    ),
+                }
+    # For web/sms/email/voice channels the message is saved; widget will poll and
+    # deliver it to the visitor in ~3 seconds (see /api/chat/poll).
+
+    if not delivery["ok"]:
+        # Surface the delivery error so the UI can show a toast.
+        raise HTTPException(status_code=502, detail=delivery["error"])
+    return {"message": msg, "delivery": delivery}
 
 
 # ------------------------------ Inbound simulators ---------------------------
