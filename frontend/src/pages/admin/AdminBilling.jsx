@@ -121,7 +121,7 @@ export default function AdminBilling() {
                 <td className="px-3 py-2">
                   {v.stripe_customer_id ? (
                     <a
-                      href={`https://dashboard.stripe.com/test/customers/${v.stripe_customer_id}`}
+                      href={`https://dashboard.stripe.com/customers/${v.stripe_customer_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline inline-flex items-center gap-1"
