@@ -1442,15 +1442,27 @@ async def whatsapp_connect(req: WhatsAppConnectReq, user: dict = Depends(require
         {"vendor_id": user["vendor_id"], "channel": "whatsapp"},
         {"$set": {"status": "connected", "updated_at": now_iso()}},
     )
-    # subscribe this WABA to webhooks (best-effort; requires whatsapp_business_management scope)
+    # Subscribe WABA to our app's webhook + override per-phone webhook so inbound
+    # messages land at BotNira even if the WABA is also shared with another app.
+    base_webhook = f"{PUBLIC_BASE_URL}/api/whatsapp/webhook"
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             await c.post(
                 f"{GRAPH_BASE}/{req.waba_id}/subscribed_apps",
                 headers={"Authorization": f"Bearer {META_SYSTEM_USER_TOKEN}"},
             )
+            await c.post(
+                f"{GRAPH_BASE}/{req.phone_number_id}",
+                headers={"Authorization": f"Bearer {META_SYSTEM_USER_TOKEN}"},
+                params={
+                    "webhook_configuration": json.dumps({
+                        "override_callback_uri": base_webhook,
+                        "verify_token": META_VERIFY_TOKEN,
+                    })
+                },
+            )
     except Exception as e:
-        logger.warning("WABA subscription best-effort failed: %s", e)
+        logger.warning("WhatsApp connect subscription/override best-effort failed: %s", e)
     return {"status": "connected", "connection": conn}
 
 
@@ -1506,6 +1518,7 @@ async def whatsapp_verify(request: _FastAPIRequest):
 @api_router.post("/whatsapp/webhook")
 async def whatsapp_webhook(request: _FastAPIRequest):
     payload = await request.json()
+    logger.info("[wa webhook] %s", json.dumps(payload)[:600])
     try:
         entries = payload.get("entry", []) or []
         for entry in entries:
