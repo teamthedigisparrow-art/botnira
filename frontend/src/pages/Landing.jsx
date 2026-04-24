@@ -148,7 +148,7 @@ const Features = () => (
 
 const USE_CASES = [
   { icon: Calendar, title: "Books appointments", body: "Collects name, phone and preferred time across chat, WhatsApp and voice calls — appointment lands in your calendar, confirmation goes back to the customer instantly." },
-  { icon: HeadphonesIcon, title: "Handles customer support", body: "Answers FAQs, troubleshoots common issues, escalates to a human only when it actually needs one." },
+  { icon: Headphones, title: "Handles customer support", body: "Answers FAQs, troubleshoots common issues, escalates to a human only when it actually needs one." },
   { icon: Users, title: "Works as a customer support executive", body: "Takes the ticket, captures the issue, classifies it, and keeps the customer informed — 24/7 without a shift roster." },
   { icon: ShoppingBag, title: "Tells website visitors what you offer", body: "Embedded as a web widget, it pitches your services, shares pricing, links to bookings — turning browsers into leads while you sleep." },
   { icon: Stethoscope, title: "Runs a clinic front desk", body: "Patient intake, appointment scheduling, insurance questions, prescription refill requests — all captured and logged." },
