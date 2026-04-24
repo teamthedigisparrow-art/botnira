@@ -14,6 +14,7 @@ const Nav = () => (
         <a href="#features" className="hover:text-[#002FA7]" data-testid="nav-features">Features</a>
         <a href="#channels" className="hover:text-[#002FA7]" data-testid="nav-channels">Channels</a>
         <a href="#how" className="hover:text-[#002FA7]" data-testid="nav-how">How it works</a>
+        <a href="#usecases" className="hover:text-[#002FA7]" data-testid="nav-usecases">Use cases</a>
         <a href="#pricing" className="hover:text-[#002FA7]" data-testid="nav-pricing">Pricing</a>
         <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
       </div>
@@ -40,7 +41,7 @@ const Hero = () => (
         </h1>
         <p className="mt-6 text-lg md:text-xl max-w-xl text-neutral-700 font-medium">
           BotNira answers phone calls, SMS &amp; WhatsApp conversations, email and chat for your business — 24/7.
-          Trained only on your own information. Multi-tenant, vendor-ready.
+          Trained only on your own information. Multi-language, vendor-ready.
         </p>
         <div className="mt-8 flex flex-wrap gap-4">
           <Link to="/signup" data-testid="hero-cta-start" className="inline-flex items-center gap-2 bg-[#002FA7] text-white font-bold px-6 py-3 border-2 border-black shadow-brutal-lg hover-lift">
@@ -55,7 +56,7 @@ const Hero = () => (
           <span>•</span>
           <span>24/7 COVERAGE</span>
           <span>•</span>
-          <span>MULTI-TENANT</span>
+          <span>MULTI-LANGUAGE</span>
         </div>
       </div>
       <div className="md:col-span-5">
@@ -129,7 +130,7 @@ const Features = () => (
         {[
           { icon: Bot, title: "Trained on your info only", body: "Feed it your business description and FAQs. BotNira strictly stays within your info — no hallucinations." },
           { icon: BarChart3, title: "Analytics that matter", body: "Conversations, resolution rate, channel mix, hourly activity. See what customers actually ask." },
-          { icon: Building2, title: "Multi-tenant by design", body: "Every vendor is isolated. Onboard clients with one link. Superadmin sees everything." },
+          { icon: Languages, title: "Speaks every language", body: "BotNira auto-detects the customer's language and replies fluently in 95+ languages — English, Spanish, French, Hindi, Arabic, Chinese, and more. Train once, serve globally." },
           { icon: ShieldCheck, title: "Human-in-the-loop", body: "Jump into any conversation and take over when the bot needs a hand." },
           { icon: Zap, title: "Ships in minutes", body: "Paste your business info, pick a tone, and your assistant is live." },
           { icon: Sparkles, title: "GPT-5.2 brain", body: "Latest OpenAI model, tuned with a strict grounding prompt for on-brand answers." },
@@ -140,6 +141,109 @@ const Features = () => (
             <div className="mt-2 text-sm text-neutral-700">{f.body}</div>
           </div>
         ))}
+      </div>
+    </div>
+  </section>
+);
+
+const USE_CASES = [
+  { icon: Calendar, title: "Books appointments", body: "Collects name, phone and preferred time across chat, WhatsApp and voice calls — appointment lands in your calendar, confirmation goes back to the customer instantly." },
+  { icon: HeadphonesIcon, title: "Handles customer support", body: "Answers FAQs, troubleshoots common issues, escalates to a human only when it actually needs one." },
+  { icon: Users, title: "Works as a customer support executive", body: "Takes the ticket, captures the issue, classifies it, and keeps the customer informed — 24/7 without a shift roster." },
+  { icon: ShoppingBag, title: "Tells website visitors what you offer", body: "Embedded as a web widget, it pitches your services, shares pricing, links to bookings — turning browsers into leads while you sleep." },
+  { icon: Stethoscope, title: "Runs a clinic front desk", body: "Patient intake, appointment scheduling, insurance questions, prescription refill requests — all captured and logged." },
+  { icon: Scissors, title: "Powers salons, spas & beauty bars", body: "Books haircuts, facials and waxing slots. Remembers stylist preferences, handles reschedules, sends reminders." },
+  { icon: Wrench, title: "Dispatches service & trade businesses", body: "For plumbers, electricians, HVAC: captures job details, address, urgency; auto-assigns to the right technician." },
+  { icon: Briefcase, title: "Qualifies leads for sales teams", body: "Asks the right discovery questions, scores leads, pushes hot ones to your team — cold ones get a nurture drip." },
+  { icon: GraduationCap, title: "Answers queries for schools & coaching centers", body: "Course details, fees, admission process, class timings — translated to every parent's language automatically." },
+  { icon: PackageCheck, title: "Runs order tracking & e-commerce support", body: "Where's-my-order queries, returns, sizing questions — resolved instantly so your support team handles only the tricky stuff." },
+];
+
+const UseCases = () => (
+  <section id="usecases" className="border-b-2 border-black bg-white">
+    <div className="max-w-7xl mx-auto px-6 py-20">
+      <div className="flex items-end justify-between flex-wrap gap-6 mb-10">
+        <div>
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Use cases</div>
+          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Where BotNira shows up for you.</h2>
+        </div>
+        <p className="max-w-md text-neutral-700">
+          From dental clinics to plumbing crews to online stores — wherever a customer expects a reply, BotNira is already replying.
+        </p>
+      </div>
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+        {USE_CASES.map((u, i) => (
+          <div key={u.title} className="border-2 border-black bg-white p-6 hover-lift shadow-brutal" data-testid={`usecase-${i}`}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 bg-[#002FA7] text-white border-2 border-black grid place-items-center shrink-0">
+                <u.icon size={18}/>
+              </div>
+              <div>
+                <div className="font-display font-black text-lg leading-tight">{u.title}</div>
+              </div>
+            </div>
+            <div className="mt-3 text-sm text-neutral-700 leading-relaxed">{u.body}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+);
+
+const LANGUAGE_GRID = [
+  "English", "Español", "Français", "Deutsch", "Italiano", "Português", "हिन्दी", "العربية", "中文", "日本語",
+  "한국어", "Русский", "Türkçe", "Nederlands", "Svenska", "Polski", "فارسی", "ไทย", "Tiếng Việt", "Bahasa",
+];
+
+const MultiLanguage = () => (
+  <section id="language" className="border-b-2 border-black bg-[#002FA7] text-white relative overflow-hidden">
+    <div className="absolute inset-0 opacity-10 pointer-events-none select-none" aria-hidden="true" style={{
+      backgroundImage: "radial-gradient(rgba(255,255,255,0.4) 1px, transparent 1px)",
+      backgroundSize: "22px 22px",
+    }}/>
+    <div className="max-w-7xl mx-auto px-6 py-24 relative">
+      <div className="grid md:grid-cols-[1.2fr_1fr] gap-12 items-center">
+        <div>
+          <div className="inline-flex items-center gap-2 bg-white text-[#002FA7] border-2 border-black px-3 py-1 font-bold text-xs tracking-[0.2em] uppercase shadow-brutal" data-testid="language-badge">
+            <Languages size={14}/> Multi-language, built in
+          </div>
+          <h2 className="font-display text-5xl md:text-6xl lg:text-7xl font-black tracking-tighter mt-5 leading-[0.95]">
+            One BotNira.<br/>
+            <span className="italic" style={{color:"#ffdd00"}}>Every language.</span>
+          </h2>
+          <p className="mt-6 text-lg opacity-90 max-w-xl leading-relaxed">
+            Train your bot once in your own language. BotNira auto-detects what the customer is writing or speaking —
+            English, Spanish, Hindi, Arabic, Chinese, French, 90+ others — and replies fluently in the same language.
+            No translation plugins, no per-language retraining, no extra fees.
+          </p>
+          <div className="mt-8 grid grid-cols-2 md:grid-cols-3 gap-3 max-w-xl">
+            {[
+              { t: "Auto-detect", s: "Per-message language switch" },
+              { t: "Voice too", s: "Calls in caller's language" },
+              { t: "No retrain", s: "Train in one language, serve all" },
+            ].map(b => (
+              <div key={b.t} className="border-2 border-black bg-black/20 backdrop-blur px-3 py-2">
+                <div className="font-display font-black">{b.t}</div>
+                <div className="text-xs font-mono opacity-80">{b.s}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-2 border-black bg-white text-black p-6 shadow-brutal-lg" data-testid="language-grid">
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-500 mb-4">A few of the 95+ languages</div>
+          <div className="flex flex-wrap gap-2">
+            {LANGUAGE_GRID.map(l => (
+              <span key={l} className="px-3 py-1 border-2 border-black font-display font-bold text-sm hover:bg-[#002FA7] hover:text-white transition-colors cursor-default">
+                {l}
+              </span>
+            ))}
+            <span className="px-3 py-1 border-2 border-black font-mono text-xs bg-neutral-100">+ 75 more</span>
+          </div>
+          <div className="mt-5 border-2 border-dashed border-black/40 p-3 font-mono text-xs text-neutral-700">
+            <strong>Example:</strong> Your bot is trained in English. A customer messages in हिन्दी — BotNira replies in हिन्दी.
+            Next message arrives in Español — BotNira switches to Español mid-conversation. Zero config.
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -242,7 +346,7 @@ const FAQS = [
   },
   {
     q: "Is my customer data safe with BotNira?",
-    a: "Yes. BotNira is built for multi-tenant isolation — each vendor has a separate workspace, and customer data never crosses between vendors. Messages are encrypted in transit (TLS 1.3), stored in MongoDB Atlas with role-based access, and we only share the minimum data with our AI providers (OpenAI, Anthropic, Google) to generate replies. See our Privacy Policy for full details.",
+    a: "Yes. BotNira keeps each business in a separate workspace, and customer data never crosses between vendors. Messages are encrypted in transit (TLS 1.3), stored in MongoDB Atlas with role-based access, and we only share the minimum data with our AI providers (OpenAI, Anthropic, Google) to generate replies. See our Privacy Policy for full details.",
   },
   {
     q: "Can I try BotNira for free before I pay?",
@@ -254,7 +358,7 @@ const FAQS = [
   },
   {
     q: "Does BotNira work for multi-location businesses and agencies?",
-    a: "Yes. BotNira is multi-tenant by design: a single superadmin can onboard and manage dozens of businesses (vendors), each with their own isolated workspace, bot training, phone number, and analytics. Agencies use BotNira to resell AI receptionist services to their own clients under their own brand.",
+    a: "Yes. BotNira is built for agencies and multi-location businesses: a single superadmin can onboard and manage dozens of businesses (vendors), each with their own isolated workspace, bot training, phone number, and analytics. Agencies use BotNira to resell AI receptionist services to their own clients under their own brand.",
   },
   {
     q: "What languages does BotNira support?",
@@ -307,7 +411,7 @@ const Footer = () => (
 export default function Landing() {
   return (
     <div data-testid="landing-page">
-      <Nav /><Hero /><Channels /><Features /><How /><Pricing /><FAQ /><Footer />
+      <Nav /><Hero /><Channels /><Features /><UseCases /><MultiLanguage /><How /><Pricing /><FAQ /><Footer />
     </div>
   );
 }

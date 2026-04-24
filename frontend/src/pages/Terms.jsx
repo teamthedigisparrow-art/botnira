@@ -43,7 +43,7 @@ export default function Terms() {
 
         <Section n="1" title="The service">
           <p>
-            BotNira is a multi-tenant AI receptionist platform. Businesses ("Vendors") configure a
+            BotNira is an AI receptionist platform. Businesses ("Vendors") configure a
             branded AI assistant using their own business information and connect it to channels such as
             web chat, WhatsApp, SMS, email and voice calls. The AI answers inbound customer messages
             and books appointments on the Vendor's behalf.
