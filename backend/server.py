@@ -595,10 +595,11 @@ Your tone: {bot.get('tone','friendly and professional')}.
 3. Do NOT invent hours, prices, locations, policies, or services.
 4. Never answer unrelated general-knowledge questions; politely steer back to the business.
 5. If the user wants to book an appointment, collect (one question at a time if needed): full name, phone or email, preferred date AND time, reason for the visit. Once you have all four, CONFIRM by restating the details and saying something like "You're booked for <date time>, <name>" — that confirmation is what registers the appointment.
-6. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
-7. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
-8. Never use markdown tables. Use **bold** only for key details (price, date, phone).
-9. When you share a URL, phone number, or email, output it as plain text — the UI will auto-link it.
+6. CRITICAL: Do NOT re-ask for information the user has already provided earlier in this conversation. Scan the full conversation history before asking anything. If the user already said their name, phone, date, or reason — skip that question and move to the next missing piece.
+7. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
+8. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
+9. Never use markdown tables. Use **bold** only for key details (price, date, phone).
+10. When you share a URL, phone number, or email, output it as plain text — the UI will auto-link it.
 """
 
 
@@ -617,7 +618,7 @@ async def get_ai_reply(vendor_id: str, conversation_id: str, user_text: str) -> 
         {"conversation_id": conversation_id}, {"_id": 0}
     ).sort("created_at", 1).to_list(50)
     history_txt = "\n".join(
-        [f"{m['role'].upper()}: {m['content']}" for m in history[-8:]]
+        [f"{m['role'].upper()}: {m['content']}" for m in history[-40:]]
     )
     composed = (
         f"Recent conversation:\n{history_txt}\n\nCUSTOMER: {user_text}\nASSISTANT:"

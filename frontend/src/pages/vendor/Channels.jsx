@@ -83,7 +83,7 @@ export default function Channels() {
   };
 
   const widgetOrigin = process.env.REACT_APP_BACKEND_URL || window.location.origin;
-  const WIDGET_VERSION = "1.2";
+  const WIDGET_VERSION = "1.3";
   const embed = `<script src="${widgetOrigin}/widget.js?v=${WIDGET_VERSION}" data-botnira-vendor="${vendor?.id || ""}" defer></script>`;
   const copy = async () => {
     try {

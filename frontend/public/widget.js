@@ -193,6 +193,7 @@
   var rendered = [];
   var lastSeenTs = null;   // timestamp of the newest agent/bot message already rendered
   var pollTimer = null;
+  var renderedIds = {};  // { msgId: true } — prevents double-rendering from poll/POST race
 
   function startPolling() {
     stopPolling();
@@ -211,10 +212,12 @@
       .then(function (d) {
         if (!d || !d.messages || !d.messages.length) return;
         d.messages.forEach(function (m) {
-          // Don't duplicate the reply we just rendered from send()
-          if (lastSeenTs && m.created_at <= lastSeenTs) return;
+          // Dedup by message id — blocks the poll ↔ POST race that caused
+          // duplicate bot bubbles on the visitor side.
+          if (m.id && renderedIds[m.id]) return;
+          if (lastSeenTs && m.created_at <= lastSeenTs && !(m.role === "agent")) return;
           var label = m.role === "agent" ? "Live agent" : (botInfo.bot_name || "BotNira");
-          addMsgRaw("bot", m.content, label);
+          addMsgRaw("bot", m.content, label, m.id);
           lastSeenTs = m.created_at;
         });
       })
@@ -241,7 +244,9 @@
   function addMsg(role, content) {
     addMsgRaw(role, content, role === "user" ? "You" : (botInfo.bot_name || "BotNira"));
   }
-  function addMsgRaw(role, content, label) {
+  function addMsgRaw(role, content, label, msgId) {
+    if (msgId && renderedIds[msgId]) return;  // dedup guard
+    if (msgId) renderedIds[msgId] = true;
     var div = document.createElement("div");
     div.className = "bn-bubble " + (role === "user" ? "bn-user" : "bn-bot");
     div.innerHTML =
@@ -292,7 +297,9 @@
         removeTyping();
         convId = d.conversation_id;
         try { localStorage.setItem(STORAGE_KEY, convId); } catch (e) {}
-        addMsg("bot", d.reply);
+        // Render the reply and mark it as seen by id — poll will skip it
+        var botId = d.message && d.message.id;
+        addMsgRaw("bot", d.reply, botInfo.bot_name || "BotNira", botId);
         if (d.message && d.message.created_at) lastSeenTs = d.message.created_at;
         startPolling();  // ensure polling is running for agent replies
       })
