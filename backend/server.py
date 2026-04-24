@@ -2682,9 +2682,16 @@ async def voice_stream(ws: WebSocket, call_id: str):
     )
     logger.info("voice_stream: connecting to OpenAI Realtime for call %s (conv %s)", call_id, conv_id)
     try:
-        async with _ws.connect(oai_url, additional_headers=oai_headers, max_size=None) as oai:
+        async with _ws.connect(
+            oai_url, additional_headers=oai_headers, max_size=None,
+            ping_interval=20, ping_timeout=20,
+        ) as oai:
             logger.info("voice_stream: OpenAI connected for call %s", call_id)
-            # Configure OpenAI session for Twilio audio format + our prompt
+            # Configure OpenAI session. CRITICAL settings:
+            # - VAD threshold 0.6 (less sensitive → stops false triggers from background noise)
+            # - silence_duration_ms 600 (wait 0.6s of silence before ending user's turn)
+            # - prefix_padding_ms 300 (keep 0.3s of audio before detected speech)
+            # - temperature 0.7 (natural but on-topic)
             session_cfg = {
                 "type": "session.update",
                 "session": {
@@ -2693,16 +2700,76 @@ async def voice_stream(ws: WebSocket, call_id: str):
                     "input_audio_format": "g711_ulaw",
                     "output_audio_format": "g711_ulaw",
                     "instructions": system_instructions,
-                    "turn_detection": {"type": "server_vad"},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.6,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 600,
+                        "create_response": True,
+                    },
                     "input_audio_transcription": {"model": "whisper-1"},
+                    "temperature": 0.7,
                 },
             }
             await oai.send(json.dumps(session_cfg))
             # Proactive greeting
             await oai.send(json.dumps({
                 "type": "response.create",
-                "response": {"modalities": ["audio", "text"], "instructions": f"Greet the caller: {greeting}"},
+                "response": {"modalities": ["audio", "text"], "instructions": f"Greet the caller warmly in one short sentence: {greeting}"},
             }))
+
+            # Barge-in bookkeeping
+            state = {
+                "latest_response_id": None,
+                "latest_assistant_item_id": None,
+                "response_start_timestamp": None,
+                "latest_media_timestamp": 0,   # ms from Twilio (from media events)
+                "bot_speaking": False,
+            }
+
+            async def send_mark_to_twilio():
+                """After each audio chunk we send to Twilio, emit a mark event.
+                When Twilio replays it back, we know audio was flushed to the caller."""
+                if stream_sid:
+                    await ws.send_text(json.dumps({
+                        "event": "mark",
+                        "streamSid": stream_sid,
+                        "mark": {"name": "botnira-audio"},
+                    }))
+
+            async def handle_user_interruption():
+                """User started talking while bot was talking → cancel bot's current response
+                and tell Twilio to throw away any queued bot audio so call feels snappy."""
+                if not state["bot_speaking"]:
+                    return
+                logger.info("voice_stream: user barge-in — cancelling bot response")
+                # 1) Tell Twilio to clear its outbound audio queue
+                if stream_sid:
+                    try:
+                        await ws.send_text(json.dumps({"event": "clear", "streamSid": stream_sid}))
+                    except Exception:
+                        pass
+                # 2) Tell OpenAI to truncate the in-progress assistant message
+                if state["latest_assistant_item_id"] and state["response_start_timestamp"] is not None:
+                    elapsed = state["latest_media_timestamp"] - state["response_start_timestamp"]
+                    if elapsed > 0:
+                        try:
+                            await oai.send(json.dumps({
+                                "type": "conversation.item.truncate",
+                                "item_id": state["latest_assistant_item_id"],
+                                "content_index": 0,
+                                "audio_end_ms": int(elapsed),
+                            }))
+                        except Exception as e:
+                            logger.warning("truncate failed: %s", e)
+                # 3) Cancel the response so no more audio deltas come in
+                try:
+                    await oai.send(json.dumps({"type": "response.cancel"}))
+                except Exception:
+                    pass
+                state["bot_speaking"] = False
+                state["latest_assistant_item_id"] = None
+                state["response_start_timestamp"] = None
 
             async def twilio_to_oai():
                 nonlocal stream_sid
@@ -2715,8 +2782,18 @@ async def voice_stream(ws: WebSocket, call_id: str):
                             stream_sid = ev["start"]["streamSid"]
                             logger.info("voice_stream: twilio 'start' streamSid=%s", stream_sid)
                         elif etype == "media":
+                            ts = int(ev["media"].get("timestamp", 0))
+                            if ts:
+                                state["latest_media_timestamp"] = ts
                             payload = ev["media"]["payload"]
-                            await oai.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
+                            try:
+                                await oai.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
+                            except Exception as e:
+                                logger.warning("oai send failed (connection dropped?): %s", e)
+                                break
+                        elif etype == "mark":
+                            # Twilio just flushed one of our audio chunks to the caller — useful bookkeeping
+                            pass
                         elif etype == "stop":
                             logger.info("voice_stream: twilio 'stop' for %s", call_id)
                             break
@@ -2731,19 +2808,34 @@ async def voice_stream(ws: WebSocket, call_id: str):
                         ev = json.loads(msg)
                         etype = ev.get("type")
                         if etype == "error":
-                            logger.warning("openai realtime error: %s", ev)
+                            logger.warning("openai realtime error: %s", ev.get("error"))
+                        elif etype == "input_audio_buffer.speech_started":
+                            # User just started speaking → if bot was talking, barge in
+                            await handle_user_interruption()
+                        elif etype == "response.created":
+                            state["latest_response_id"] = ev["response"]["id"]
+                            state["bot_speaking"] = True
+                            state["response_start_timestamp"] = state["latest_media_timestamp"]
+                        elif etype == "response.output_item.added":
+                            item = ev.get("item") or {}
+                            if item.get("type") == "message":
+                                state["latest_assistant_item_id"] = item.get("id")
                         elif etype == "response.audio.delta" and stream_sid:
                             await ws.send_text(json.dumps({
                                 "event": "media",
                                 "streamSid": stream_sid,
                                 "media": {"payload": ev["delta"]},
                             }))
+                            await send_mark_to_twilio()
+                        elif etype == "response.done":
+                            state["bot_speaking"] = False
+                            state["latest_assistant_item_id"] = None
+                            state["response_start_timestamp"] = None
                         elif etype == "response.audio_transcript.done":
                             text = ev.get("transcript", "")
                             if text:
                                 await _push_message(conv_id, vendor_id, "bot", text)
                                 logger.info("voice_stream: bot said: %s", text[:80])
-                                # Appointment extraction attempt after each bot turn
                                 try:
                                     await _maybe_book_appointment(vendor_id, conv_id, text)
                                 except Exception as e:
@@ -2756,7 +2848,8 @@ async def voice_stream(ws: WebSocket, call_id: str):
                 except Exception as e:
                     logger.warning("oai_to_twilio ended: %s", e)
 
-            await asyncio.gather(twilio_to_oai(), oai_to_twilio())
+            # return_exceptions so one pump dying doesn't silently cancel the other
+            await asyncio.gather(twilio_to_oai(), oai_to_twilio(), return_exceptions=True)
     except Exception as e:
         logger.exception("Voice bridge error: %s", e)
     finally:
