@@ -728,6 +728,11 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
         }
         await db.appointments.insert_one(appt)
         logger.info("Auto-booked appointment for vendor=%s conv=%s", vendor_id, conversation_id)
+        # Notify vendor by email (non-blocking)
+        try:
+            await _send_appointment_email(vendor_id, appt)
+        except Exception as e:
+            logger.warning("appt email failed: %s", e)
         return {k: v for k, v in appt.items() if k != "_id"}
     except Exception as e:
         logger.warning("booking extraction failed: %s", str(e)[:120])
@@ -963,6 +968,10 @@ async def create_appointment(req: AppointmentReq, user: dict = Depends(require_v
         "created_at": now_iso(),
     }
     await db.appointments.insert_one(appt)
+    try:
+        await _send_appointment_email(user["vendor_id"], appt)
+    except Exception as e:
+        logger.warning("appt email failed: %s", e)
     return {k: v for k, v in appt.items() if k != "_id"}
 
 
@@ -2137,6 +2146,98 @@ async def _verify_otp_async(email: str, purpose: str, code: str) -> bool:
     # success → consume
     await db.otp_codes.delete_one({"email": email, "purpose": purpose})
     return True
+
+
+SOURCE_LABELS = {
+    "web": "Web chat",
+    "whatsapp": "WhatsApp",
+    "voice": "Phone call",
+    "email": "Email",
+    "sms": "SMS",
+    "manual": "Manual entry",
+}
+
+
+async def _send_appointment_email(vendor_id: str, appt: dict):
+    """Email the vendor (owner) that a new appointment was booked."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("SMTP not configured — skipping appointment email for vendor=%s", vendor_id)
+        return
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    if not vendor:
+        return
+    owner = await db.users.find_one(
+        {"vendor_id": vendor_id, "role": "vendor"}, {"_id": 0, "email": 1, "full_name": 1}
+    )
+    if not owner or not owner.get("email"):
+        logger.warning("no owner email for vendor=%s — skipping appointment email", vendor_id)
+        return
+    to_email = owner["email"]
+    biz_name = vendor.get("name") or "your business"
+    source_label = SOURCE_LABELS.get(appt.get("source", "manual"), (appt.get("source") or "unknown").title())
+    scheduled = appt.get("scheduled_at") or "Not specified (please confirm with customer)"
+    customer = appt.get("customer_name") or "Guest"
+    contact = appt.get("customer_contact") or "(not provided)"
+    notes = appt.get("notes") or "—"
+
+    subject = f"New appointment — {customer} · {biz_name}"
+    body_text = (
+        f"New appointment booked for {biz_name} via BotNira\n\n"
+        f"Customer: {customer}\n"
+        f"Contact: {contact}\n"
+        f"Scheduled: {scheduled}\n"
+        f"Source: {source_label}\n"
+        f"Notes: {notes}\n\n"
+        f"Manage this booking: https://botnira.com/app/appointments\n\n"
+        f"— BotNira"
+    )
+    body_html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
+    <div style="background:#002FA7;color:#fff;padding:18px 24px;border-bottom:2px solid #000;">
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.8;">BotNira · New booking</div>
+      <div style="font-size:22px;font-weight:900;margin-top:4px;">A new appointment for {biz_name}</div>
+    </div>
+    <div style="padding:24px;">
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;width:140px;color:#666;">Customer</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{customer}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;color:#666;">Contact</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;font-family:monospace;">{contact}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;color:#666;">Scheduled</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{scheduled}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;color:#666;">Source</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;"><span style="display:inline-block;padding:2px 8px;background:#002FA7;color:#fff;font-size:11px;font-weight:bold;letter-spacing:.1em;text-transform:uppercase;">{source_label}</span></td></tr>
+        <tr><td style="padding:10px 0;color:#666;">Notes</td><td style="padding:10px 0;">{notes}</td></tr>
+      </table>
+      <div style="margin-top:20px;">
+        <a href="https://botnira.com/app/appointments" style="display:inline-block;background:#002FA7;color:#fff;text-decoration:none;padding:12px 20px;border:2px solid #000;font-weight:bold;box-shadow:4px 4px 0 #000;">
+          Open in BotNira →
+        </a>
+      </div>
+    </div>
+    <div style="background:#000;color:#999;padding:12px 24px;font-size:11px;font-family:monospace;">
+      © 2026 BotNira · Appointment captured automatically by your AI receptionist
+    </div>
+  </div>
+</body>
+</html>"""
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+    msg["To"] = to_email
+    msg.set_content(body_text)
+    msg.add_alternative(body_html, subtype="html")
+
+    def _send_sync():
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.send_message(msg)
+    try:
+        await asyncio.to_thread(_send_sync)
+        logger.info("Appointment email sent to %s (vendor=%s)", to_email, vendor_id)
+    except Exception as e:
+        logger.warning("Appointment email send failed for %s: %s", to_email, e)
+
 
 
 def _send_otp_email(to_email: str, code: str, purpose: str):
