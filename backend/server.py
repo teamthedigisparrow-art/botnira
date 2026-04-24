@@ -2961,6 +2961,74 @@ async def voice_stream(ws: WebSocket, call_id: str):
             pass
 
 
+@api_router.post("/admin/voice/migrate-webhooks")
+async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
+    """Re-wire every purchased Twilio number to the current PUBLIC_BASE_URL.
+    Safe to run anytime. Idempotent — numbers already pointing at the right URL are skipped."""
+    if not PUBLIC_BASE_URL:
+        raise HTTPException(status_code=500, detail="PUBLIC_BASE_URL not set in backend .env")
+    target_voice = f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/webhook"
+    target_status = f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/status-callback"
+    updated, skipped, failed = [], [], []
+    async for conn in db.voice_connections.find({}, {"_id": 0}):
+        sub = await db.voice_subaccounts.find_one(
+            {"vendor_id": conn["vendor_id"]}, {"_id": 0}
+        )
+        if not sub:
+            failed.append({"number": conn.get("phone_number"), "reason": "no subaccount"})
+            continue
+        try:
+            sub_tw = _twilio_subaccount_client(sub["account_sid"], sub["auth_token"])
+            num = sub_tw.incoming_phone_numbers(conn["phone_number_sid"]).fetch()
+            if num.voice_url == target_voice and num.status_callback == target_status:
+                skipped.append(conn.get("phone_number"))
+                continue
+            sub_tw.incoming_phone_numbers(conn["phone_number_sid"]).update(
+                voice_url=target_voice,
+                voice_method="POST",
+                status_callback=target_status,
+                status_callback_method="POST",
+            )
+            await db.voice_connections.update_one(
+                {"id": conn["id"]},
+                {"$set": {"voice_webhook": target_voice, "migrated_at": now_iso()}},
+            )
+            updated.append(conn.get("phone_number"))
+        except Exception as e:
+            failed.append({"number": conn.get("phone_number"), "reason": str(e)[:120]})
+    return {
+        "public_base_url": PUBLIC_BASE_URL,
+        "target_voice_webhook": target_voice,
+        "updated": updated, "skipped": skipped, "failed": failed,
+        "summary": f"{len(updated)} re-wired, {len(skipped)} already correct, {len(failed)} failed",
+    }
+
+
+@api_router.get("/admin/system/urls")
+async def admin_system_urls(user: dict = Depends(require_admin)):
+    """Snapshot of every public URL this deployment is using.
+    Handy when migrating domains — run before and after `PUBLIC_BASE_URL` change."""
+    voice_conns = await db.voice_connections.find({}, {"_id": 0}).to_list(500)
+    wa_conns = await db.whatsapp_connections.find({}, {"_id": 0}).to_list(500)
+    return {
+        "public_base_url": PUBLIC_BASE_URL,
+        "widget_embed_host": PUBLIC_BASE_URL,
+        "whatsapp_webhook_expected": f"{PUBLIC_BASE_URL.rstrip('/')}/api/whatsapp/webhook",
+        "voice_webhook_expected": f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/webhook",
+        "stripe_webhook_expected": f"{PUBLIC_BASE_URL.rstrip('/')}/api/webhook/stripe",
+        "voice_numbers_on_file": [
+            {"vendor_id": c["vendor_id"], "number": c.get("phone_number"), "recorded_webhook": c.get("voice_webhook")}
+            for c in voice_conns
+        ],
+        "whatsapp_numbers_on_file": [
+            {"vendor_id": w["vendor_id"], "phone_number_id": w.get("phone_number_id"), "display_phone_number": w.get("display_phone_number")}
+            for w in wa_conns
+        ],
+        "stripe_live_mode": STRIPE_SECRET_KEY.startswith("sk_live_") if STRIPE_SECRET_KEY else False,
+        "stripe_webhook_verification_enabled": bool(STRIPE_WEBHOOK_SECRET),
+    }
+
+
 # ------------------------------ App setup ------------------------------------
 app.include_router(api_router)
 app.add_middleware(
