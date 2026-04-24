@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages } from "lucide-react";
+import { useEffect } from "react";
+import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle } from "lucide-react";
 
 const Nav = () => (
   <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
@@ -14,6 +15,7 @@ const Nav = () => (
         <a href="#features" className="hover:text-[#002FA7]" data-testid="nav-features">Features</a>
         <a href="#channels" className="hover:text-[#002FA7]" data-testid="nav-channels">Channels</a>
         <a href="#how" className="hover:text-[#002FA7]" data-testid="nav-how">How it works</a>
+        <a href="#try" className="hover:text-[#002FA7]" data-testid="nav-try">Try live</a>
         <a href="#usecases" className="hover:text-[#002FA7]" data-testid="nav-usecases">Use cases</a>
         <a href="#pricing" className="hover:text-[#002FA7]" data-testid="nav-pricing">Pricing</a>
         <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
@@ -249,6 +251,85 @@ const MultiLanguage = () => (
   </section>
 );
 
+const TryLive = () => {
+  const PHONE = "+17822120295";
+  const PHONE_DISPLAY = "+1 (782) 212-0295";
+  const WA = "917087730721";
+  const WA_DISPLAY = "+91 70877 30721";
+  const prefilled = encodeURIComponent("Hi BotNira — I'd like to try the demo.");
+  return (
+    <section id="try" className="border-b-2 border-black bg-[#002FA7] text-white relative overflow-hidden">
+      <div className="absolute inset-0 opacity-[0.08] pointer-events-none" aria-hidden="true" style={{
+        backgroundImage: "radial-gradient(rgba(255,255,255,.9) 1.5px, transparent 1.5px)",
+        backgroundSize: "32px 32px",
+      }}/>
+      <div className="max-w-7xl mx-auto px-6 py-20 md:py-24 relative">
+        <div className="max-w-3xl">
+          <div className="inline-flex items-center gap-2 bg-[#ffdd00] text-black border-2 border-black px-3 py-1 font-bold text-xs tracking-[0.2em] uppercase shadow-brutal" data-testid="try-badge">
+            <PlayCircle size={14}/> Try it right now — no signup
+          </div>
+          <h2 className="font-display text-4xl md:text-5xl lg:text-6xl font-black tracking-tighter mt-5 leading-[0.95]">
+            Talk to BotNira<br/>
+            <span className="italic" style={{color:"#ffdd00"}}>before you buy it.</span>
+          </h2>
+          <p className="mt-5 text-lg opacity-90 max-w-2xl leading-relaxed">
+            Pick any of the three channels below and have a real conversation with a BotNira trained on
+            <strong> The DigiSparrow</strong> — book a fake demo, ask about pricing, speak in Hindi or Spanish.
+            This is the same agent your own customers will talk to.
+          </p>
+        </div>
+        <div className="mt-10 grid md:grid-cols-3 gap-5">
+          <a href={`tel:${PHONE}`} data-testid="try-call-btn" className="group border-2 border-black bg-white text-black p-6 shadow-brutal hover:shadow-brutal-lg hover:-translate-y-1 transition-all block">
+            <div className="flex items-center justify-between">
+              <div className="w-12 h-12 bg-[#002FA7] text-white border-2 border-black grid place-items-center"><PhoneCall size={22}/></div>
+              <span className="text-[10px] font-bold tracking-widest uppercase bg-black text-white px-2 py-1 border border-black">Call us</span>
+            </div>
+            <div className="mt-5 text-xs font-bold tracking-[0.2em] uppercase text-neutral-500">Phone</div>
+            <div className="mt-2 font-display font-black text-2xl tracking-tight" data-testid="try-phone-display">{PHONE_DISPLAY}</div>
+            <div className="mt-3 text-sm text-neutral-700 leading-snug">
+              Dial this number. BotNira answers in &lt;1 second, speaks naturally, can be interrupted, and transcribes the entire call into your Inbox.
+            </div>
+            <div className="mt-5 flex items-center gap-2 font-bold text-sm text-[#002FA7] group-hover:underline">Tap to call <ArrowRight size={14}/></div>
+          </a>
+          <a href={`https://wa.me/${WA}?text=${prefilled}`} target="_blank" rel="noopener noreferrer" data-testid="try-whatsapp-btn" className="group border-2 border-black bg-white text-black p-6 shadow-brutal hover:shadow-brutal-lg hover:-translate-y-1 transition-all block">
+            <div className="flex items-center justify-between">
+              <div className="w-12 h-12 bg-[#25D366] text-black border-2 border-black grid place-items-center"><MessageCircle size={22}/></div>
+              <span className="text-[10px] font-bold tracking-widest uppercase bg-black text-white px-2 py-1 border border-black">WhatsApp</span>
+            </div>
+            <div className="mt-5 text-xs font-bold tracking-[0.2em] uppercase text-neutral-500">WhatsApp</div>
+            <div className="mt-2 font-display font-black text-2xl tracking-tight" data-testid="try-wa-display">{WA_DISPLAY}</div>
+            <div className="mt-3 text-sm text-neutral-700 leading-snug">
+              Opens WhatsApp with BotNira as the recipient. Ask anything — hours, pricing, book a demo — it replies instantly in your language.
+            </div>
+            <div className="mt-5 flex items-center gap-2 font-bold text-sm text-[#002FA7] group-hover:underline">Open WhatsApp <ArrowRight size={14}/></div>
+          </a>
+          <button type="button" onClick={() => {
+            const btn = document.querySelector("#botnira-launcher") || document.querySelector("[data-botnira-launcher]");
+            if (btn) btn.click();
+            else window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+          }} data-testid="try-webchat-btn" className="group border-2 border-black bg-white text-black p-6 shadow-brutal hover:shadow-brutal-lg hover:-translate-y-1 transition-all text-left cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div className="w-12 h-12 bg-[#ffdd00] text-black border-2 border-black grid place-items-center"><MessageSquare size={22}/></div>
+              <span className="text-[10px] font-bold tracking-widest uppercase bg-black text-white px-2 py-1 border border-black">Web chat</span>
+            </div>
+            <div className="mt-5 text-xs font-bold tracking-[0.2em] uppercase text-neutral-500">Right on this page</div>
+            <div className="mt-2 font-display font-black text-2xl tracking-tight">Open the chat widget</div>
+            <div className="mt-3 text-sm text-neutral-700 leading-snug">
+              The floating BotNira button at the bottom-right of this page is live. Click it, ask a question, watch it handle appointment booking in real time.
+            </div>
+            <div className="mt-5 flex items-center gap-2 font-bold text-sm text-[#002FA7] group-hover:underline">Tap to chat <ArrowRight size={14}/></div>
+          </button>
+        </div>
+        <div className="mt-10 inline-flex items-center gap-3 bg-black/25 backdrop-blur border-2 border-white/20 px-4 py-2 text-sm font-mono">
+          <Sparkles size={14} style={{color:"#ffdd00"}}/>
+          Every channel is the SAME trained agent. Book a demo on the phone, confirm it on WhatsApp, change it in web chat — it's all one brain.
+        </div>
+      </div>
+    </section>
+  );
+};
+
+
 const How = () => (
   <section id="how" className="border-b-2 border-black">
     <div className="max-w-7xl mx-auto px-6 py-20">
@@ -409,9 +490,30 @@ const Footer = () => (
 );
 
 export default function Landing() {
+  // Inject the BotNira web widget ONLY on the landing page. We clean up on
+  // unmount so it doesn't leak into the vendor app.
+  useEffect(() => {
+    const LANDING_VENDOR_ID = "2883fa83-acf4-46f2-b2b9-b83c8bedbfb0"; // Kamal's demo vendor
+    const WIDGET_V = "1.3";
+    const src = `${window.location.origin}/widget.js?v=${WIDGET_V}`;
+    // Don't double-load
+    if (document.querySelector(`script[src="${src}"]`)) return;
+    const s = document.createElement("script");
+    s.src = src;
+    s.defer = true;
+    s.setAttribute("data-botnira-vendor", LANDING_VENDOR_ID);
+    s.setAttribute("data-botnira-marketing", "true");
+    document.body.appendChild(s);
+    return () => {
+      // Remove the launcher button + open panel if any were injected
+      document.querySelectorAll("[data-botnira-widget], #botnira-launcher").forEach(n => n.remove());
+      s.remove();
+    };
+  }, []);
   return (
     <div data-testid="landing-page">
-      <Nav /><Hero /><Channels /><Features /><UseCases /><MultiLanguage /><How /><Pricing /><FAQ /><Footer />
+      <Nav /><Hero /><TryLive /><Channels /><Features /><UseCases /><MultiLanguage /><How /><Pricing /><FAQ /><Footer />
     </div>
   );
 }
+
