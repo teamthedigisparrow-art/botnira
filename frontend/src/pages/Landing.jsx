@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check } from "lucide-react";
+import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages } from "lucide-react";
 
 const Nav = () => (
   <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
