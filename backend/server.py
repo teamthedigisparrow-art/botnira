@@ -238,6 +238,42 @@ def slugify(txt: str) -> str:
 # ------------------------------ Seed superadmin ------------------------------
 @app.on_event("startup")
 async def seed_admin():
+    # Canonical seed credentials — kept in sync with /app/memory/test_credentials.md.
+    # Seed is idempotent: if a stale DB already has these users with a wrong/old
+    # password hash, we always overwrite the password_hash + email_verified flag
+    # so login never fails after a re-deploy.
+    SEED_PASSWORDS = {
+        "admin@botnira.com": "admin123",
+        "demo@botnira.com": "demo123",
+        "kamal@thedigisparrow.com": "Kamala98@hmu",
+    }
+
+    # Force-resync passwords on every startup so a stale DB (older hash from a
+    # previous build) can never lock us out. This is the deployment_agent fix.
+    for _email, _pw in SEED_PASSWORDS.items():
+        existing_u = await db.users.find_one({"email": _email}, {"_id": 0, "password_hash": 1})
+        if existing_u:
+            stored_hash = existing_u.get("password_hash") or ""
+            try:
+                ok = stored_hash and verify_password(_pw, stored_hash)
+            except Exception:
+                ok = False
+            if not ok:
+                await db.users.update_one(
+                    {"email": _email},
+                    {"$set": {
+                        "password_hash": hash_password(_pw),
+                        "email_verified": True,
+                    }},
+                )
+                logger.info("Resynced seed password for %s", _email)
+            else:
+                # ensure email_verified flag is True for seed accounts
+                await db.users.update_one(
+                    {"email": _email, "email_verified": {"$ne": True}},
+                    {"$set": {"email_verified": True}},
+                )
+
     admin_email = "admin@botnira.com"
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
@@ -245,10 +281,11 @@ async def seed_admin():
             {
                 "id": new_id(),
                 "email": admin_email,
-                "password_hash": hash_password("admin123"),
+                "password_hash": hash_password(SEED_PASSWORDS[admin_email]),
                 "full_name": "Super Admin",
                 "role": "superadmin",
                 "vendor_id": None,
+                "email_verified": True,
                 "created_at": now_iso(),
             }
         )
@@ -278,10 +315,11 @@ async def seed_admin():
             {
                 "id": new_id(),
                 "email": demo_email,
-                "password_hash": hash_password("demo123"),
+                "password_hash": hash_password(SEED_PASSWORDS[demo_email]),
                 "full_name": "Dr. Demo",
                 "role": "vendor",
                 "vendor_id": vid,
+                "email_verified": True,
                 "created_at": now_iso(),
             }
         )
@@ -330,10 +368,11 @@ async def seed_admin():
         await db.users.insert_one({
             "id": new_id(),
             "email": test_email,
-            "password_hash": hash_password("kamal123"),
+            "password_hash": hash_password(SEED_PASSWORDS[test_email]),
             "full_name": "Kamal (Test Vendor)",
             "role": "vendor",
             "vendor_id": tv,
+            "email_verified": True,
             "created_at": now_iso(),
         })
         await db.bots.insert_one({

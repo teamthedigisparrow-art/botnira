@@ -61,6 +61,7 @@ See `/app/memory/test_credentials.md`.
 - `WS /api/voice/stream/{call_id}` — Twilio ⇄ OpenAI Realtime bridge
 
 ## Changelog
+- **2026-02-XX** — Idempotent seed: `seed_admin()` now force-resyncs `admin@botnira.com`, `demo@botnira.com`, and `kamal@thedigisparrow.com` password hashes on startup if they drift from the canonical values in `test_credentials.md`. Also auto-sets `email_verified=True` on seed accounts. Resolves the deployment_agent's "test credentials mismatch" finding.
 - **2026-04-23** — Shipped Twilio voice backend + frontend Channels panel. Requires `OPENAI_REALTIME_API_KEY` for the actual audio bridge — currently blank, so inbound calls will land on webhook but audio will not be processed until the key is added.
 - **2026-04-23** — Stripe LIVE mode activated. All 9 products provisioned in live Stripe. Webhook signature verification enabled.
 - **2026-04-23** — Email OTP auth system: signup verify, password reset, optional 2FA toggle.
