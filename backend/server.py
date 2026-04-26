@@ -783,7 +783,7 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
         return None
 
 
-async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str):
+async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str, external_id: Optional[str] = None):
     msg = {
         "id": new_id(),
         "conversation_id": conversation_id,
@@ -792,6 +792,8 @@ async def _push_message(conversation_id: str, vendor_id: str, role: str, content
         "content": content,
         "created_at": now_iso(),
     }
+    if external_id:
+        msg["external_id"] = external_id
     await db.messages.insert_one(msg)
     await db.conversations.update_one(
         {"id": conversation_id},
@@ -949,7 +951,27 @@ async def agent_reply(cid: str, payload: Dict[str, str], user: dict = Depends(re
                         "free-reply within 24h. Approved templates are needed to message outside that."
                     ),
                 }
-    # For web/sms/email channels the message is saved; widget will poll and
+    elif channel == "sms":
+        sms_to = conv.get("customer_contact", "")
+        conn = await db.voice_connections.find_one(
+            {"vendor_id": user["vendor_id"]}, {"_id": 0}
+        )
+        if not conn:
+            delivery = {"channel": channel, "ok": False, "error": "No phone number provisioned — go to Channels → Voice and buy a number first."}
+        elif not sms_to:
+            delivery = {"channel": channel, "ok": False, "error": "No customer phone number on this conversation"}
+        else:
+            sent = await _twilio_send_sms(conn, sms_to, content)
+            if not sent:
+                delivery = {
+                    "channel": channel,
+                    "ok": False,
+                    "error": "Twilio rejected the SMS — check the customer number is a valid US/CA number (international SMS is not supported yet).",
+                }
+            else:
+                # Bill 1 message per outbound SMS we send.
+                await _decrement_message_balance(user["vendor_id"])
+    # For web / email channels the message is saved; widget will poll and
     # deliver it to the visitor in ~3 seconds (see /api/chat/poll).
 
     if not delivery["ok"]:
@@ -2255,6 +2277,157 @@ async def billing_sync(user: dict = Depends(require_vendor)):
     return {"applied": applied, "summary": summary, "customer_id": cust_id}
 
 
+@api_router.get("/billing/usage")
+async def billing_usage(user: dict = Depends(require_vendor)):
+    """Per-period usage breakdown for the Billing page.
+
+    Voice minutes (calls only) and AI messages (web/whatsapp/email/sms — every
+    bot-or-agent reply) are counted separately. Returns plan allotment, top-up
+    boost, used so far this period, remaining, and a 14-day daily timeline.
+    """
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+
+    is_exempt = bool(vendor.get("is_exempt"))
+    plan_slug = vendor.get("plan", "trial")
+    plan_minutes = 0
+    plan_messages = 0
+    if plan_slug in PLANS and vendor.get("subscription_status") == "active":
+        plan_minutes = int(PLANS[plan_slug]["voice_min"])
+        plan_messages = int(PLANS[plan_slug]["messages"])
+    elif plan_slug == "trial":
+        plan_messages = TRIAL_MESSAGE_CAP
+
+    # Period bounds. For active subs use the Stripe current_period_end - 30d,
+    # for trials use vendor.created_at, and for canceled/exempt fall back to
+    # the current calendar month.
+    now = datetime.now(timezone.utc)
+    period_end_iso = vendor.get("current_period_end")
+    period_end = None
+    period_start = None
+    try:
+        if period_end_iso:
+            period_end = datetime.fromisoformat(period_end_iso.replace("Z", "+00:00"))
+            period_start = period_end - timedelta(days=30)
+    except Exception:
+        period_end = None
+    if not period_start:
+        if vendor.get("subscription_status") == "trialing" and vendor.get("trial_ends_at"):
+            try:
+                te = datetime.fromisoformat(vendor["trial_ends_at"].replace("Z", "+00:00"))
+                period_start = te - timedelta(days=TRIAL_DAYS)
+                period_end = te
+            except Exception:
+                pass
+    if not period_start:
+        # fallback: this calendar month
+        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        period_end = (period_start + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
+    period_start_iso = period_start.isoformat()
+    period_end_iso2 = period_end.isoformat() if period_end else None
+
+    # Sum minutes from call_records this period
+    minutes_used = 0.0
+    cursor = db.call_records.aggregate([
+        {"$match": {
+            "vendor_id": user["vendor_id"],
+            "started_at": {"$gte": period_start_iso},
+            "status": {"$ne": "in-progress"},
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$minutes"}, "calls": {"$sum": 1}}},
+    ])
+    rows = await cursor.to_list(1)
+    if rows:
+        minutes_used = round(float(rows[0].get("total") or 0.0), 2)
+    calls_count = int(rows[0].get("calls") or 0) if rows else 0
+
+    # Count AI replies (=billable messages) sent by us this period across all chat channels
+    msg_per_channel = {}
+    async for r in db.messages.aggregate([
+        {"$match": {
+            "vendor_id": user["vendor_id"],
+            "role": {"$in": ["bot", "agent"]},
+            "created_at": {"$gte": period_start_iso},
+        }},
+        {"$lookup": {
+            "from": "conversations",
+            "localField": "conversation_id",
+            "foreignField": "id",
+            "as": "conv",
+        }},
+        {"$unwind": "$conv"},
+        {"$match": {"conv.channel": {"$in": ["web", "whatsapp", "email", "sms"]}}},
+        {"$group": {"_id": "$conv.channel", "n": {"$sum": 1}}},
+    ]):
+        msg_per_channel[r["_id"]] = int(r["n"])
+    messages_used = sum(msg_per_channel.values())
+
+    # Top-ups added in this period (sum of completed topup transactions)
+    topup_minutes = 0.0
+    topup_messages = 0
+    async for r in db.payment_transactions.aggregate([
+        {"$match": {
+            "vendor_id": user["vendor_id"],
+            "type": "topup",
+            "status": "completed",
+            "created_at": {"$gte": period_start_iso},
+        }},
+        {"$group": {"_id": "$pack", "n": {"$sum": 1}}},
+    ]):
+        pack = TOPUPS.get(r["_id"]) if r["_id"] in TOPUPS else None
+        if pack:
+            topup_minutes += float(pack["voice_min"]) * r["n"]
+            topup_messages += int(pack["messages"]) * r["n"]
+
+    # Daily timeline (14 days back) for sparkline charts
+    timeline_start = (now - timedelta(days=14)).isoformat()
+    daily = {}
+    async for r in db.call_records.aggregate([
+        {"$match": {"vendor_id": user["vendor_id"], "started_at": {"$gte": timeline_start}}},
+        {"$group": {"_id": {"$substr": ["$started_at", 0, 10]}, "mins": {"$sum": "$minutes"}}},
+    ]):
+        daily.setdefault(r["_id"], {"day": r["_id"], "minutes": 0, "messages": 0})
+        daily[r["_id"]]["minutes"] = round(float(r["mins"] or 0.0), 2)
+    async for r in db.messages.aggregate([
+        {"$match": {
+            "vendor_id": user["vendor_id"],
+            "role": {"$in": ["bot", "agent"]},
+            "created_at": {"$gte": timeline_start},
+        }},
+        {"$group": {"_id": {"$substr": ["$created_at", 0, 10]}, "n": {"$sum": 1}}},
+    ]):
+        daily.setdefault(r["_id"], {"day": r["_id"], "minutes": 0, "messages": 0})
+        daily[r["_id"]]["messages"] = int(r["n"])
+    timeline = sorted(daily.values(), key=lambda x: x["day"])
+
+    return {
+        "is_exempt": is_exempt,
+        "plan": plan_slug,
+        "subscription_status": vendor.get("subscription_status"),
+        "period_start": period_start_iso,
+        "period_end": period_end_iso2,
+        "balance": {
+            "minutes_remaining": float(vendor.get("minutes_balance", 0.0)),
+            "messages_remaining": int(vendor.get("messages_balance", 0)),
+        },
+        "minutes": {
+            "plan_included": plan_minutes,
+            "topup_added": float(topup_minutes),
+            "used_this_period": minutes_used,
+            "calls": calls_count,
+        },
+        "messages": {
+            "plan_included": plan_messages,
+            "topup_added": int(topup_messages),
+            "used_this_period": int(messages_used),
+            "by_channel": msg_per_channel,  # {web: N, whatsapp: N, email: N, sms: N}
+        },
+        "timeline_14d": timeline,
+        "refresh_note": "Aggregated dashboard refreshes every 24 hours — your live balance always updates instantly.",
+    }
+
+
 @api_router.post("/billing/portal")
 async def billing_portal(payload: Dict[str, str], user: dict = Depends(require_vendor)):
     if not STRIPE_SECRET_KEY:
@@ -3110,6 +3283,7 @@ async def auth_mfa_status(user: dict = Depends(require_vendor)):
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
+from twilio.twiml.messaging_response import MessagingResponse
 from fastapi import WebSocket, WebSocketDisconnect
 
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
@@ -3241,6 +3415,7 @@ async def voice_buy_number(req: BuyNumberReq, user: dict = Depends(require_vendo
     base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else ""
     voice_webhook = f"{base}/api/voice/webhook"
     status_callback = f"{base}/api/voice/status-callback"
+    sms_webhook = f"{base}/api/sms/webhook"
 
     try:
         purchased = sub_tw.incoming_phone_numbers.create(
@@ -3249,6 +3424,9 @@ async def voice_buy_number(req: BuyNumberReq, user: dict = Depends(require_vendo
             voice_method="POST",
             status_callback=status_callback,
             status_callback_method="POST",
+            # Wire the SAME number for inbound SMS too — single number, both channels.
+            sms_url=sms_webhook,
+            sms_method="POST",
             friendly_name=f"BotNira · {vendor.get('name','Vendor')}",
         )
     except TwilioRestException as e:
@@ -3263,12 +3441,19 @@ async def voice_buy_number(req: BuyNumberReq, user: dict = Depends(require_vendo
         "country": req.country_code.upper(),
         "friendly_name": purchased.friendly_name,
         "voice_webhook": voice_webhook,
+        "sms_webhook": sms_webhook,
         "status": "active",
         "created_at": now_iso(),
     }
     await db.voice_connections.insert_one(conn)
     await db.channels.update_one(
         {"vendor_id": user["vendor_id"], "channel": "voice"},
+        {"$set": {"status": "connected", "config": {"phone_number": purchased.phone_number}, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    # SMS auto-activates on the same number.
+    await db.channels.update_one(
+        {"vendor_id": user["vendor_id"], "channel": "sms"},
         {"$set": {"status": "connected", "config": {"phone_number": purchased.phone_number}, "updated_at": now_iso()}},
         upsert=True,
     )
@@ -3392,6 +3577,170 @@ async def voice_status_callback(request: _StripeRequest):
                         {"$inc": {"minutes_balance": -mins, "minutes_used_total": mins}},
                     )
         await db.call_records.update_one({"call_sid": call_sid}, {"$set": updates})
+    return {"ok": True}
+
+
+# ============================================================
+# SMS module — same Twilio number as voice, mirrors WhatsApp behaviour.
+# - Inbound SMS (Twilio webhook) → AI reply grounded in vendor's bot
+# - Sent reply via TwiML → recorded in unified inbox under channel="sms"
+# - Live agent override + appointment auto-book supported (same pipeline)
+# - 1 SMS = 1 message debited from messages_balance
+# - North America (US/CA) only at launch — Twilio rates outside NA are 5–50× higher
+# ============================================================
+SMS_ALLOWED_PREFIXES = ("+1",)  # US + Canada at launch
+
+
+def _twilio_subaccount_client_for_conn(conn: dict) -> Optional[TwilioClient]:
+    """Build a Twilio sub-account client for sending SMS for a vendor's number."""
+    sub_sid = conn.get("subaccount_sid")
+    if not sub_sid:
+        return None
+    sub = None
+    try:
+        # Look up the subaccount auth token (stored when we created it)
+        # We re-fetch via parent account API key if we don't have it cached.
+        if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+            parent = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            sub = parent.api.accounts(sub_sid).fetch()
+        if not sub:
+            return None
+        return TwilioClient(sub_sid, sub.auth_token)
+    except Exception as e:
+        logger.warning("twilio sub client build failed: %s", e)
+        return None
+
+
+async def _twilio_send_sms(conn: dict, to_number: str, body: str) -> bool:
+    """Send an outbound SMS using the vendor's own Twilio sub-account number.
+    Returns True if Twilio accepted the request."""
+    if not to_number.startswith(SMS_ALLOWED_PREFIXES):
+        logger.info("SMS to %s blocked — outside supported region (US/CA only)", to_number)
+        return False
+    cli = _twilio_subaccount_client_for_conn(conn)
+    if not cli:
+        return False
+    try:
+        # Truncate to 1600 chars (Twilio hard limit per message ≈ 10 segments)
+        body = (body or "")[:1600]
+        cli.messages.create(
+            from_=conn["phone_number"],
+            to=to_number,
+            body=body,
+        )
+        return True
+    except TwilioRestException as e:
+        logger.warning("Twilio SMS send failed: %s", e.msg)
+        return False
+    except Exception as e:
+        logger.warning("Twilio SMS send error: %s", e)
+        return False
+
+
+@api_router.post("/sms/webhook")
+async def sms_webhook(request: _StripeRequest):
+    """Twilio POSTs here for every inbound SMS to a BotNira-provisioned number.
+    We respond with empty TwiML and send the AI reply via the REST API
+    (so we control timing + can record it in the inbox properly)."""
+    form = await request.form()
+    from_number = form.get("From", "")
+    to_number = form.get("To", "")
+    body = (form.get("Body") or "").strip()
+    msg_sid = form.get("MessageSid", "")
+    profile_name = (form.get("ProfileName") or "").strip()  # often empty for SMS, populated for WA
+
+    logger.info("[sms webhook] from=%s to=%s body=%r sid=%s", from_number, to_number, body[:80], msg_sid)
+
+    empty_resp = Response(content=str(MessagingResponse()), media_type="application/xml")
+
+    if not from_number or not to_number or not body:
+        return empty_resp
+
+    # Look up vendor by the Twilio number that received the SMS
+    conn = await db.voice_connections.find_one({"phone_number": to_number}, {"_id": 0})
+    if not conn:
+        logger.warning("SMS to unbound number %s — ignoring", to_number)
+        return empty_resp
+    vendor_id = conn["vendor_id"]
+
+    # Region gate — block non-NA inbound numbers (we'd be charged carrier fees we can't recoup)
+    if not from_number.startswith(SMS_ALLOWED_PREFIXES):
+        logger.info("SMS from %s rejected — non-NA sender", from_number)
+        return empty_resp
+
+    # Find or create the conversation keyed by sender's number
+    conv = await db.conversations.find_one(
+        {"vendor_id": vendor_id, "channel": "sms", "customer_contact": from_number},
+        {"_id": 0},
+    )
+    conv = conv or await _ensure_conversation(
+        vendor_id, None, "sms", profile_name or from_number, from_number
+    )
+    # Idempotency: skip if we've already recorded this Twilio MessageSid
+    if msg_sid:
+        existing = await db.messages.find_one(
+            {"conversation_id": conv["id"], "external_id": msg_sid}, {"_id": 0, "id": 1}
+        )
+        if existing:
+            return empty_resp
+
+    await _push_message(conv["id"], vendor_id, "user", body, external_id=msg_sid)
+
+    # Plan + balance gate. If the vendor can't use SMS right now, send a one-time
+    # paywall notice via SMS so the caller knows.
+    ok, reason = await _vendor_can_use_channel(vendor_id, "sms")
+    if not ok:
+        await _twilio_send_sms(conn, from_number, reason or "Service paused. Please try again later.")
+        return empty_resp
+
+    # AI reply grounded in vendor's bot
+    try:
+        reply = await get_ai_reply(vendor_id, conv["id"], body)
+    except Exception as e:
+        logger.exception("get_ai_reply failed for SMS: %s", e)
+        reply = "Sorry, I'm having trouble responding right now. Please try again in a minute."
+
+    await _push_message(conv["id"], vendor_id, "bot", reply)
+    await _decrement_message_balance(vendor_id)
+
+    sent = await _twilio_send_sms(conn, from_number, reply)
+    if not sent:
+        logger.warning("AI SMS reply could not be sent (vendor=%s, to=%s)", vendor_id, from_number)
+
+    # Auto-book appointment if the bot's reply confirmed one
+    try:
+        await _maybe_book_appointment(vendor_id, conv["id"], reply)
+    except Exception:
+        pass
+
+    return empty_resp
+
+
+@api_router.post("/sms/send")
+async def sms_send(payload: Dict[str, str], user: dict = Depends(require_vendor)):
+    """Live-agent override: vendor types a reply in the inbox, we send it as SMS."""
+    conv_id = payload.get("conversation_id")
+    text = (payload.get("text") or "").strip()
+    if not conv_id or not text:
+        raise HTTPException(status_code=400, detail="conversation_id and text required")
+    conv = await db.conversations.find_one(
+        {"id": conv_id, "vendor_id": user["vendor_id"], "channel": "sms"}, {"_id": 0}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="SMS conversation not found")
+    conn = await db.voice_connections.find_one(
+        {"vendor_id": user["vendor_id"]}, {"_id": 0}
+    )
+    if not conn:
+        raise HTTPException(status_code=400, detail="No active phone number — provision voice first")
+    ok, reason = await _vendor_can_use_channel(user["vendor_id"], "sms")
+    if not ok:
+        raise HTTPException(status_code=402, detail=reason or "SMS not available on your plan")
+    sent = await _twilio_send_sms(conn, conv["customer_contact"], text)
+    if not sent:
+        raise HTTPException(status_code=502, detail="Twilio rejected the SMS — check the number is valid US/CA")
+    await _push_message(conv_id, user["vendor_id"], "agent", text)
+    await _decrement_message_balance(user["vendor_id"])
     return {"ok": True}
 
 
@@ -3642,6 +3991,7 @@ async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
         raise HTTPException(status_code=500, detail="PUBLIC_BASE_URL not set in backend .env")
     target_voice = f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/webhook"
     target_status = f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/status-callback"
+    target_sms = f"{PUBLIC_BASE_URL.rstrip('/')}/api/sms/webhook"
     updated, skipped, failed = [], [], []
     async for conn in db.voice_connections.find({}, {"_id": 0}):
         sub = await db.voice_subaccounts.find_one(
@@ -3653,7 +4003,7 @@ async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
         try:
             sub_tw = _twilio_subaccount_client(sub["account_sid"], sub["auth_token"])
             num = sub_tw.incoming_phone_numbers(conn["phone_number_sid"]).fetch()
-            if num.voice_url == target_voice and num.status_callback == target_status:
+            if num.voice_url == target_voice and num.status_callback == target_status and num.sms_url == target_sms:
                 skipped.append(conn.get("phone_number"))
                 continue
             sub_tw.incoming_phone_numbers(conn["phone_number_sid"]).update(
@@ -3661,10 +4011,26 @@ async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
                 voice_method="POST",
                 status_callback=target_status,
                 status_callback_method="POST",
+                sms_url=target_sms,
+                sms_method="POST",
             )
             await db.voice_connections.update_one(
                 {"id": conn["id"]},
-                {"$set": {"voice_webhook": target_voice, "migrated_at": now_iso()}},
+                {"$set": {
+                    "voice_webhook": target_voice,
+                    "sms_webhook": target_sms,
+                    "migrated_at": now_iso(),
+                }},
+            )
+            # Auto-activate SMS channel for any vendor whose voice number we just rewired
+            await db.channels.update_one(
+                {"vendor_id": conn["vendor_id"], "channel": "sms"},
+                {"$set": {
+                    "status": "connected",
+                    "config": {"phone_number": conn.get("phone_number")},
+                    "updated_at": now_iso(),
+                }},
+                upsert=True,
             )
             updated.append(conn.get("phone_number"))
         except Exception as e:
@@ -3672,8 +4038,9 @@ async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
     return {
         "public_base_url": PUBLIC_BASE_URL,
         "target_voice_webhook": target_voice,
+        "target_sms_webhook": target_sms,
         "updated": updated, "skipped": skipped, "failed": failed,
-        "summary": f"{len(updated)} re-wired, {len(skipped)} already correct, {len(failed)} failed",
+        "summary": f"{len(updated)} re-wired (voice + SMS), {len(skipped)} already correct, {len(failed)} failed",
     }
 
 

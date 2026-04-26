@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useAuth } from "../../contexts/AuthContext";
 import { Rocket, Zap, Phone, MessageCircle, Mail, MessageSquare, Globe, Check, Clock, CreditCard, RefreshCw, AlertCircle } from "lucide-react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import UsagePanel from "../../components/UsagePanel";
 
 const PLAN_ICONS = { starter: Zap, growth: Rocket, pro: Rocket };
 const PACK_THEMES = {
@@ -311,6 +312,9 @@ export default function Billing() {
           })}
         </div>
       </div>
+
+      {/* Usage this period */}
+      <UsagePanel exempt={isExempt} />
 
       {/* Payment history */}
       {!isExempt && payments.length > 0 && (
