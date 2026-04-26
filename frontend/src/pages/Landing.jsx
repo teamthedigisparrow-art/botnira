@@ -34,7 +34,7 @@ const Hero = () => (
     <div className="max-w-7xl mx-auto px-6 py-20 md:py-28 grid md:grid-cols-12 gap-10 items-center">
       <div className="md:col-span-7">
         <div className="inline-flex items-center gap-2 border-2 border-black px-3 py-1 mb-6 bg-white" data-testid="hero-badge">
-          <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">Powered by GPT-5.2</span>
+          <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">Powered by BotNira AI</span>
         </div>
         <h1 className="font-display text-5xl md:text-7xl font-black leading-[0.95] tracking-tighter">
           The AI front desk<br/>that never<br/>
@@ -134,7 +134,7 @@ const Features = () => (
           { icon: Languages, title: "Speaks every language", body: "BotNira auto-detects the customer's language and replies fluently in 95+ languages — English, Spanish, French, Hindi, Arabic, Chinese, and more. Train once, serve globally." },
           { icon: ShieldCheck, title: "Human-in-the-loop", body: "Jump into any conversation and take over when the bot needs a hand." },
           { icon: Zap, title: "Ships in minutes", body: "Paste your business info, pick a tone, and your assistant is live." },
-          { icon: Sparkles, title: "GPT-5.2 brain", body: "Latest OpenAI model, tuned with a strict grounding prompt for on-brand answers." },
+          { icon: Sparkles, title: "Best-in-class AI brain", body: "Tuned with a strict grounding prompt so BotNira only ever answers with on-brand info from your business profile." },
         ].map((f) => (
           <div key={f.title} className="bg-white border-2 border-black p-6 hover-lift shadow-brutal" data-testid={`feature-${f.title.toLowerCase().replace(/\s+/g,'-')}`}>
             <f.icon size={28} />
@@ -414,7 +414,7 @@ const Pricing = () => (
 const FAQS = [
   {
     q: "What is an AI receptionist and how does it work?",
-    a: "An AI receptionist is a virtual front-desk agent powered by large language models (like GPT-5.2) that answers customer phone calls, WhatsApp messages, SMS, emails and website chats on your behalf, 24/7. BotNira is trained on your business description and FAQs, so it answers only with your information — no hallucinations. It can book appointments, capture leads, and hand off to a human when needed.",
+    a: "An AI receptionist is a virtual front-desk agent powered by BotNira's large-language-model engine that answers customer phone calls, WhatsApp messages, SMS, emails and website chats on your behalf, 24/7. BotNira is trained on your business description and FAQs, so it answers only with your information — no hallucinations. It can book appointments, capture leads, and hand off to a human when needed.",
   },
   {
     q: "Can BotNira answer phone calls instead of a real receptionist?",
@@ -430,7 +430,7 @@ const FAQS = [
   },
   {
     q: "Is my customer data safe with BotNira?",
-    a: "Yes. BotNira keeps each business in a separate workspace, and customer data never crosses between vendors. Messages are encrypted in transit (TLS 1.3), stored in MongoDB Atlas with role-based access, and we only share the minimum data with our AI providers (OpenAI, Anthropic, Google) to generate replies. See our Privacy Policy for full details.",
+    a: "Yes. BotNira keeps each business in a separate workspace, and customer data never crosses between vendors. Messages are encrypted in transit (TLS 1.3), stored with role-based access, and only the minimum data needed to generate a reply is shared with our AI engine. See our Privacy Policy for full details.",
   },
   {
     q: "Can I try BotNira for free before I pay?",
@@ -446,7 +446,7 @@ const FAQS = [
   },
   {
     q: "What languages does BotNira support?",
-    a: "BotNira speaks every major world language out of the box — English, Spanish, French, German, Portuguese, Italian, Hindi, Arabic, Chinese, Japanese and 90+ others — because it runs on GPT-5.2, Claude Sonnet 4.5 and Gemini. You train it once in your own language and it responds in whatever language your customer writes in.",
+    a: "BotNira speaks every major world language out of the box — English, Spanish, French, German, Portuguese, Italian, Hindi, Arabic, Chinese, Japanese and 90+ others. You train it once in your own language and it responds in whatever language your customer writes in.",
   },
   {
     q: "Can a human take over a conversation if the AI can't help?",

@@ -77,7 +77,7 @@ export default function Privacy() {
           <p>To run BotNira we share the minimum necessary data with:</p>
           <ul>
             <li><strong>Meta Platforms Inc.</strong> — for WhatsApp Business Cloud API (receiving + sending messages).</li>
-            <li><strong>OpenAI / Anthropic / Google</strong> — to generate the AI replies (we send the Vendor's business info + the current conversation, never a customer's private data outside of what they themselves typed).</li>
+            <li><strong>BotNira's AI engine</strong> — to generate the AI replies (we send the Vendor's business info + the current conversation, never a customer's private data outside of what they themselves typed).</li>
             <li><strong>MongoDB Atlas</strong> — as our primary database.</li>
             <li><strong>Stripe</strong> — payment processing (we never see full card numbers).</li>
           </ul>

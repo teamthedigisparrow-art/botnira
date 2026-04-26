@@ -51,7 +51,7 @@ export default function ConnectVoicePanel({ onChange }) {
   };
 
   const buy = async (num) => {
-    if (!window.confirm(`Purchase ${num} for your business? You'll be billed monthly by Twilio (included in your plan).`)) return;
+    if (!window.confirm(`Purchase ${num} for your business? You'll be billed monthly through your BotNira plan.`)) return;
     setBuying(num);
     try {
       await api.post("/voice/buy-number", { country_code: country, phone_number: num });
@@ -90,7 +90,7 @@ export default function ConnectVoicePanel({ onChange }) {
                 <span className="badge bg-black text-white border-black text-[10px]">VOICE</span>
                 <span className="badge bg-black text-white border-black text-[10px]">SMS · US/CA</span>
               </div>
-              <div className="text-xs">Twilio + OpenAI Realtime. Same number for calls AND text messages.</div>
+              <div className="text-xs">Powered by BotNira's realtime voice + messaging engine. Same number for calls AND text messages.</div>
             </div>
           </div>
           <span className="badge bg-black text-white border-black" data-testid="voice-badge-live">LIVE</span>
@@ -103,7 +103,7 @@ export default function ConnectVoicePanel({ onChange }) {
               <div className="text-xs font-mono text-neutral-600 mt-1">Country: {status.country}</div>
               <div className="text-xs font-mono text-neutral-500 mt-1 break-all">Subaccount: {status.subaccount_sid}</div>
               <div className="mt-3 border-2 border-black bg-amber-50 px-3 py-2 text-xs font-mono leading-relaxed" data-testid="voice-sms-info">
-                <strong>Heads up:</strong> Customers can <strong>call</strong> AND <strong>text</strong> this number — both inbound calls and SMS reach your BotNira inbox. <strong>SMS is US &amp; Canada only</strong> (Twilio rates for other countries are 5–50× higher; international SMS is silently rejected).
+                <strong>Heads up:</strong> Customers can <strong>call</strong> AND <strong>text</strong> this number — both inbound calls and SMS reach your BotNira inbox. <strong>SMS is US &amp; Canada only</strong> at launch — international SMS is silently rejected.
               </div>
             </div>
             <div className="border-2 border-black p-4">
@@ -154,7 +154,7 @@ export default function ConnectVoicePanel({ onChange }) {
             <div className="mt-3 font-display font-bold text-lg">No phone number active yet</div>
             <div className="mt-1 text-sm text-neutral-600 max-w-md mx-auto">
               Get a dedicated BotNira phone number in 200+ countries.
-              The number handles <strong>voice calls everywhere</strong> and <strong>SMS in US &amp; Canada</strong>. International SMS is not supported (Twilio carrier rates make it unprofitable).
+              The number handles <strong>voice calls everywhere</strong> and <strong>SMS in US &amp; Canada</strong>. International SMS is not supported at launch.
             </div>
             <button
               onClick={() => { setShowPicker(true); loadCountries(); }}
