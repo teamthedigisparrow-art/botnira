@@ -1,6 +1,7 @@
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
 import { Building2, BarChart3, LogOut, LayoutDashboard, CreditCard } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import BrandMark from "../components/BrandMark";
 
 const links = [
   { to: "/admin", label: "Overview", icon: LayoutDashboard, end: true, tid: "admin-nav-overview" },
@@ -16,9 +17,7 @@ export default function AdminLayout() {
     <div className="min-h-screen grid md:grid-cols-[260px_1fr]">
       <aside className="border-r-2 border-black bg-black text-white flex flex-col" data-testid="admin-sidebar">
         <Link to="/admin" className="px-5 h-16 border-b-2 border-white/30 flex items-center gap-2" data-testid="admin-brand">
-          <div className="w-7 h-7 bg-white border-2 border-white grid place-items-center">
-            <span className="text-black font-black text-xs">B</span>
-          </div>
+          <BrandMark size={28} />
           <span className="font-display font-black text-lg">BotNira<span className="text-[#6f8cff]">/admin</span></span>
         </Link>
         <div className="px-5 py-4 border-b-2 border-white/30">

@@ -2,6 +2,7 @@ import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
 import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import PaywallGuard from "../components/PaywallGuard";
+import BrandMark from "../components/BrandMark";
 
 const links = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, end: true, tid: "nav-overview" },
@@ -21,9 +22,7 @@ export default function VendorLayout() {
     <div className="min-h-screen grid md:grid-cols-[260px_1fr]">
       <aside className="border-r-2 border-black bg-white flex flex-col" data-testid="vendor-sidebar">
         <Link to="/app" className="px-5 h-16 border-b-2 border-black flex items-center gap-2" data-testid="vendor-brand">
-          <div className="w-7 h-7 bg-[#002FA7] border-2 border-black grid place-items-center">
-            <span className="text-white font-black text-xs">B</span>
-          </div>
+          <BrandMark size={28} />
           <span className="font-display font-black text-lg">BotNira</span>
         </Link>
         <div className="px-5 py-4 border-b-2 border-black">

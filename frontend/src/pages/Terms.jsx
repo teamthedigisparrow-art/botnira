@@ -1,12 +1,11 @@
 import { Link } from "react-router-dom";
+import BrandMark from "../components/BrandMark";
 
 const LegalNav = () => (
   <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b-2 border-black">
     <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
       <Link to="/" className="flex items-center gap-2">
-        <div className="w-8 h-8 bg-[#002FA7] border-2 border-black grid place-items-center">
-          <span className="text-white font-black text-sm">B</span>
-        </div>
+        <BrandMark size={32} />
         <span className="font-display font-black text-xl tracking-tight">BotNira</span>
       </Link>
       <div className="flex items-center gap-6 text-sm font-bold">

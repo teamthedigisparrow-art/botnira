@@ -1,14 +1,13 @@
 import { Link } from "react-router-dom";
 import { useEffect } from "react";
 import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle } from "lucide-react";
+import BrandMark from "../components/BrandMark";
 
 const Nav = () => (
   <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
     <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
       <Link to="/" className="flex items-center gap-2" data-testid="brand-logo">
-        <div className="w-8 h-8 bg-[#002FA7] border-2 border-black grid place-items-center">
-          <span className="text-white font-black text-sm">B</span>
-        </div>
+        <BrandMark size={32} />
         <span className="font-display font-black text-xl tracking-tight">BotNira</span>
       </Link>
       <div className="hidden md:flex items-center gap-8 text-sm font-medium">
