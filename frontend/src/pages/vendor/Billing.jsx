@@ -251,12 +251,27 @@ export default function Billing() {
             <div className="text-xs font-mono text-neutral-500 mt-1">remaining</div>
           </div>
           <div className="border-2 border-black p-4">
-            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Next renewal</div>
-            <div className="font-display font-black text-lg mt-2 break-words">
-              {me.current_period_end ? new Date(me.current_period_end).toLocaleDateString() :
-                onTrial && me.trial_ends_at ? `Trial ends ${new Date(me.trial_ends_at).toLocaleDateString()}` :
-                "—"}
+            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">
+              {isActive ? "Next payment" : onTrial ? "Trial ends" : "Next renewal"}
             </div>
+            <div className="font-display font-black text-lg mt-2 break-words" data-testid="next-payment-date">
+              {isActive && me.current_period_end
+                ? new Date(me.current_period_end).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+                : onTrial && me.trial_ends_at
+                ? new Date(me.trial_ends_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+                : me.current_period_end
+                ? new Date(me.current_period_end).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+                : "—"}
+            </div>
+            {isActive && planMeta && (
+              <div className="text-xs font-mono text-neutral-500 mt-1">${planMeta.price_usd} will renew</div>
+            )}
+            {me.subscription_status === "past_due" && (
+              <div className="text-xs font-bold text-red-700 mt-1">Payment failed — update card</div>
+            )}
+            {me.subscription_status === "canceled" && (
+              <div className="text-xs font-bold text-neutral-500 mt-1">Subscription canceled</div>
+            )}
           </div>
         </div>
         <div className="border-t-2 border-black px-6 py-3 flex justify-end gap-2">
@@ -322,6 +337,12 @@ export default function Billing() {
                         <span className="badge bg-green-400 text-black border-green-400">✓ Paid</span>
                       ) : p.status === "initiated" ? (
                         <span className="badge bg-yellow-200 text-black border-yellow-700">Pending</span>
+                      ) : p.status === "refunded" ? (
+                        <span className="badge bg-neutral-400 text-black border-neutral-700">↩ Refunded</span>
+                      ) : p.status === "partially_refunded" ? (
+                        <span className="badge bg-orange-200 text-black border-orange-700">↩ Partial refund</span>
+                      ) : p.status === "failed" ? (
+                        <span className="badge bg-red-400 text-white border-red-700">✗ Failed</span>
                       ) : (
                         <span className="badge bg-neutral-200 text-black border-neutral-700">{p.status}</span>
                       )}

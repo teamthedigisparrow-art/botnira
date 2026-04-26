@@ -80,7 +80,7 @@ export default function AdminBilling() {
               <th className="px-3 py-2">MRR</th>
               <th className="px-3 py-2">Balance</th>
               <th className="px-3 py-2">Total spent</th>
-              <th className="px-3 py-2">Renewal</th>
+              <th className="px-3 py-2">Next payment / Trial ends</th>
               <th className="px-3 py-2">Stripe</th>
             </tr>
           </thead>
@@ -112,11 +112,28 @@ export default function AdminBilling() {
                 </td>
                 <td className="px-3 py-2">${v.total_spent_usd}</td>
                 <td className="px-3 py-2">
-                  {v.subscription_status === "active" && v.current_period_end
-                    ? new Date(v.current_period_end).toLocaleDateString()
-                    : v.trial_ends_at
-                    ? <span>trial<br/>{new Date(v.trial_ends_at).toLocaleDateString()}</span>
-                    : "—"}
+                  {v.is_exempt ? (
+                    <span className="text-amber-700 font-bold">Free forever</span>
+                  ) : v.subscription_status === "active" && v.current_period_end ? (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-green-700 font-bold">Next payment</div>
+                      <div>{new Date(v.current_period_end).toLocaleDateString()}</div>
+                    </div>
+                  ) : v.subscription_status === "trialing" && v.trial_ends_at ? (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-yellow-700 font-bold">Trial ends</div>
+                      <div>{new Date(v.trial_ends_at).toLocaleDateString()}</div>
+                    </div>
+                  ) : v.subscription_status === "past_due" ? (
+                    <div className="text-red-700 font-bold">Payment failed</div>
+                  ) : v.subscription_status === "canceled" ? (
+                    <div className="text-neutral-500">Canceled</div>
+                  ) : v.trial_ends_at ? (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-yellow-700 font-bold">Trial ends</div>
+                      <div>{new Date(v.trial_ends_at).toLocaleDateString()}</div>
+                    </div>
+                  ) : "—"}
                 </td>
                 <td className="px-3 py-2">
                   {v.stripe_customer_id ? (

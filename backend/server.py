@@ -1964,6 +1964,8 @@ async def billing_payments(user: dict = Depends(require_vendor)):
             "status": r.get("status", "initiated"),
             "created_at": r.get("created_at"),
             "completed_at": r.get("completed_at"),
+            "refunded_at": r.get("refunded_at"),
+            "refunded_amount": r.get("refunded_amount"),
         })
     return {"payments": out}
 
@@ -2028,18 +2030,24 @@ async def billing_sync(user: dict = Depends(require_vendor)):
     applied = 0
     summary = []
 
-    # 1) Active subscription for this customer
+    # 1) Active subscription for this customer.
+    # We record ANY non-terminal sub status, but only grant the plan benefits
+    # (top up balance, set plan slug) when Stripe says it's actually "active".
+    # Trialing / past_due / incomplete must NOT unlock channels.
     try:
         subs = _stripe.Subscription.list(customer=cust_id, status="all", limit=10)
-        active_sub = next(
-            (s for s in subs.data if s.status in ("active", "trialing", "past_due")),
+        # Prefer truly active subs first; fall back to any other status so we
+        # at least record the relationship in the DB.
+        live_sub = next((s for s in subs.data if s.status == "active"), None)
+        any_sub = live_sub or next(
+            (s for s in subs.data if s.status in ("trialing", "past_due", "unpaid", "incomplete")),
             None,
         )
-        if active_sub:
+        if any_sub:
             # Map price -> plan slug
             plan_slug = None
             try:
-                pid = active_sub.items.data[0].price.id
+                pid = any_sub.items.data[0].price.id
                 for slug, price_id in STRIPE_PRICE_IDS.get("plans", {}).items():
                     if price_id == pid:
                         plan_slug = slug
@@ -2047,15 +2055,16 @@ async def billing_sync(user: dict = Depends(require_vendor)):
             except Exception:
                 pass
             updates = {
-                "stripe_subscription_id": active_sub.id,
-                "subscription_status": active_sub.status,
+                "stripe_subscription_id": any_sub.id,
+                "subscription_status": any_sub.status,
             }
-            cpe = getattr(active_sub, "current_period_end", None)
+            cpe = getattr(any_sub, "current_period_end", None)
             if cpe:
                 updates["current_period_end"] = datetime.fromtimestamp(
                     cpe, tz=timezone.utc
                 ).isoformat()
-            if plan_slug and plan_slug in PLANS:
+            # Plan + balance grant ONLY if subscription is actually active.
+            if any_sub.status == "active" and plan_slug and plan_slug in PLANS:
                 p = PLANS[plan_slug]
                 updates.update({
                     "plan": plan_slug,
@@ -2075,7 +2084,7 @@ async def billing_sync(user: dict = Depends(require_vendor)):
                     updates["messages_balance"] = int(p["messages"])
                     updates["activated_at"] = now_iso()
             await db.vendors.update_one({"id": vendor["id"]}, {"$set": updates})
-            summary.append(f"Subscription {active_sub.id[:18]}… ({active_sub.status}, plan={plan_slug or 'unknown'})")
+            summary.append(f"Subscription {any_sub.id[:18]}… ({any_sub.status}, plan={plan_slug or 'unknown'})")
     except Exception as e:
         logger.warning("billing_sync subs fetch failed: %s", e)
 
@@ -2151,7 +2160,11 @@ async def stripe_webhook(request: _StripeRequest):
         txn_type = md.get("type")
         key = md.get("plan") or md.get("pack")
         session_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
-        if vendor_id and txn_type and key and session_id:
+        # CRITICAL: only fulfill when payment is actually paid. For payment
+        # methods like ACH/SEPA/BACS/Klarna, the session can complete before
+        # the funds clear — payment_status stays "unpaid" until then.
+        pay_status = data_obj.get("payment_status") if isinstance(data_obj, dict) else getattr(data_obj, "payment_status", None)
+        if vendor_id and txn_type and key and session_id and pay_status == "paid":
             if txn_type == "subscription":
                 sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
                 if sub_id:
@@ -2209,8 +2222,126 @@ async def stripe_webhook(request: _StripeRequest):
         sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
         await db.vendors.update_one(
             {"stripe_subscription_id": sub_id},
-            {"$set": {"subscription_status": "canceled"}},
+            {"$set": {"subscription_status": "canceled", "canceled_at": now_iso()}},
         )
+
+    elif etype == "checkout.session.async_payment_succeeded":
+        # Fires for delayed-settlement methods (ACH/SEPA/etc.) once funds clear.
+        md = data_obj.get("metadata") if isinstance(data_obj, dict) else (data_obj.metadata or {})
+        vendor_id = md.get("vendor_id")
+        txn_type = md.get("type")
+        key = md.get("plan") or md.get("pack")
+        session_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        if vendor_id and txn_type and key and session_id:
+            await _apply_successful_payment(session_id, vendor_id, txn_type, key)
+
+    elif etype == "checkout.session.async_payment_failed":
+        session_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"status": "failed", "failed_at": now_iso()}},
+        )
+
+    elif etype == "charge.refunded":
+        # Mark the underlying payment as refunded so vendor + admin can see it.
+        # If full refund of a subscription invoice — also lock channels.
+        try:
+            charge_amount = data_obj.get("amount") if isinstance(data_obj, dict) else data_obj.amount
+            charge_refunded = data_obj.get("amount_refunded") if isinstance(data_obj, dict) else data_obj.amount_refunded
+            cust_id = data_obj.get("customer") if isinstance(data_obj, dict) else data_obj.customer
+            invoice_id = data_obj.get("invoice") if isinstance(data_obj, dict) else getattr(data_obj, "invoice", None)
+            full_refund = bool(charge_amount) and (charge_refunded == charge_amount)
+
+            # Locate vendor by Stripe customer
+            vendor = await db.vendors.find_one({"stripe_customer_id": cust_id}, {"_id": 0}) if cust_id else None
+            if not vendor:
+                logger.info("charge.refunded: no vendor for customer %s", cust_id)
+                return {"ok": True}
+
+            # Find which checkout session/payment_transaction this charge belongs to.
+            # Strategy: charge.invoice → invoice.subscription → vendor.stripe_subscription_id
+            # OR fall back to most recent completed txn.
+            target_txn = None
+            if invoice_id:
+                try:
+                    inv = _stripe.Invoice.retrieve(invoice_id)
+                    inv_sub = getattr(inv, "subscription", None)
+                    if inv_sub:
+                        # Find session(s) created for this subscription
+                        target_txn = await db.payment_transactions.find_one(
+                            {"vendor_id": vendor["id"], "type": "subscription", "status": "completed"},
+                            {"_id": 0},
+                            sort=[("created_at", -1)],
+                        )
+                except Exception as e:
+                    logger.warning("invoice retrieve in refund handler failed: %s", e)
+            if not target_txn:
+                # fall back to vendor's most recent completed payment
+                target_txn = await db.payment_transactions.find_one(
+                    {"vendor_id": vendor["id"], "status": "completed"},
+                    {"_id": 0},
+                    sort=[("created_at", -1)],
+                )
+
+            if target_txn:
+                new_status = "refunded" if full_refund else "partially_refunded"
+                await db.payment_transactions.update_one(
+                    {"id": target_txn["id"]},
+                    {"$set": {
+                        "status": new_status,
+                        "refunded_at": now_iso(),
+                        "refunded_amount": (charge_refunded or 0) / 100.0,
+                    }},
+                )
+
+            # If a full refund of a subscription charge → cancel access immediately.
+            if full_refund and target_txn and target_txn.get("type") == "subscription":
+                await db.vendors.update_one(
+                    {"id": vendor["id"]},
+                    {"$set": {
+                        "subscription_status": "canceled",
+                        "minutes_balance": 0,
+                        "messages_balance": 0,
+                        "canceled_at": now_iso(),
+                        "cancel_reason": "refunded",
+                    }},
+                )
+            # If a full refund of a topup → decrement granted balance.
+            elif full_refund and target_txn and target_txn.get("type") == "topup":
+                pack_id = target_txn.get("pack")
+                pack = TOPUPS.get(pack_id) if pack_id else None
+                if pack:
+                    await db.vendors.update_one(
+                        {"id": vendor["id"]},
+                        {"$inc": {
+                            "minutes_balance": -float(pack["voice_min"]),
+                            "messages_balance": -int(pack["messages"]),
+                        }},
+                    )
+                    # Clamp to zero so we don't go negative
+                    v_now = await db.vendors.find_one({"id": vendor["id"]}, {"_id": 0})
+                    fix = {}
+                    if v_now and v_now.get("minutes_balance", 0) < 0:
+                        fix["minutes_balance"] = 0
+                    if v_now and v_now.get("messages_balance", 0) < 0:
+                        fix["messages_balance"] = 0
+                    if fix:
+                        await db.vendors.update_one({"id": vendor["id"]}, {"$set": fix})
+        except Exception as e:
+            logger.warning("charge.refunded handler error: %s", e)
+
+    elif etype == "charge.dispute.created":
+        # Customer initiated a chargeback — treat similarly to a refund.
+        try:
+            cust_id = data_obj.get("customer") if isinstance(data_obj, dict) else data_obj.customer
+            vendor = await db.vendors.find_one({"stripe_customer_id": cust_id}, {"_id": 0}) if cust_id else None
+            if vendor:
+                await db.vendors.update_one(
+                    {"id": vendor["id"]},
+                    {"$set": {"subscription_status": "canceled", "cancel_reason": "disputed"}},
+                )
+        except Exception as e:
+            logger.warning("charge.dispute.created handler error: %s", e)
 
     return {"ok": True}
 
