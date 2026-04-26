@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
 import { useAuth } from "../../contexts/AuthContext";
-import { Rocket, Zap, Phone, MessageCircle, Mail, MessageSquare, Globe, Check, Clock, CreditCard } from "lucide-react";
+import { Rocket, Zap, Phone, MessageCircle, Mail, MessageSquare, Globe, Check, Clock, CreditCard, RefreshCw, AlertCircle } from "lucide-react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 
 const PLAN_ICONS = { starter: Zap, growth: Rocket, pro: Rocket };
@@ -14,38 +14,89 @@ const PACK_THEMES = {
   fleet:  { emoji: "⛵", color: "bg-green-100 border-green-700" },
   armada: { emoji: "⚓", color: "bg-purple-100 border-purple-700" },
 };
+const PLAN_NAMES = { starter: "Starter", growth: "Growth", pro: "Pro" };
+
+const fmtDate = (iso) => {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+};
 
 export default function Billing() {
   const { reload } = useAuth();
   const [me, setMe] = useState(null);
   const [plans, setPlans] = useState([]);
   const [topups, setTopups] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [busy, setBusy] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const [params] = useSearchParams();
   const nav = useNavigate();
+  const autoSyncRan = useRef(false);
 
-  const load = async () => {
+  const loadAll = async () => {
     try {
-      const [a, b] = await Promise.all([
+      const [a, b, c] = await Promise.all([
         api.get("/billing/me"),
         api.get("/billing/plans"),
+        api.get("/billing/payments"),
       ]);
       setMe(a.data);
       setPlans(b.data.plans);
       setTopups(b.data.topups);
+      setPayments(c.data.payments || []);
+      return a.data;
     } catch (e) {
       toast.error("Failed to load billing");
+      return null;
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const syncFromStripe = async ({ silent = false } = {}) => {
+    setSyncing(true);
+    try {
+      const { data } = await api.post("/billing/sync");
+      const fresh = await loadAll();
+      await reload();
+      if (data.applied > 0) {
+        toast.success(`Synced ${data.applied} payment${data.applied > 1 ? "s" : ""} from Stripe — your plan is now active.`, { duration: 7000 });
+      } else if (!silent) {
+        if (fresh?.subscription_status === "active") {
+          toast.success("Already in sync. Your subscription is active.");
+        } else {
+          toast.info("No new payments to sync from Stripe.");
+        }
+      }
+      return data;
+    } catch (e) {
+      if (!silent) toast.error(e?.response?.data?.detail || "Sync failed");
+      return null;
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  useEffect(() => { loadAll(); }, []);
+
+  // Auto-sync once on mount: if vendor has a Stripe customer but no active sub
+  // and isn't on trial-start, attempt to reconcile (covers the case where the
+  // webhook + redirect both failed during go-live SSL propagation).
+  useEffect(() => {
+    if (!me) return;
+    if (autoSyncRan.current) return;
+    if (me.is_exempt) return;
+    if (!me.stripe_customer_id) return;
+    if (me.subscription_status === "active") return;
+    autoSyncRan.current = true;
+    syncFromStripe({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.stripe_customer_id, me?.subscription_status]);
 
   // Handle Stripe redirect back with session_id
   useEffect(() => {
     const sid = params.get("session_id");
     const cancelled = params.get("cancelled");
     if (cancelled) {
-      toast.info("Checkout cancelled");
+      toast.info("Checkout cancelled. No payment was made.", { duration: 5000 });
       nav("/app/billing", { replace: true });
       return;
     }
@@ -56,20 +107,31 @@ export default function Billing() {
       try {
         const { data } = await api.get(`/billing/checkout/status/${sid}`);
         if (data.payment_status === "paid") {
-          toast.success("Payment successful — balance updated!", { duration: 6000 });
-          await load();
+          toast.success("Payment successful — your plan is now active!", { duration: 7000 });
+          await loadAll();
           await reload();
           nav("/app/billing", { replace: true });
           return;
         }
         if (data.status === "expired") {
-          toast.error("Session expired");
+          toast.error("Checkout session expired without completing payment.");
           nav("/app/billing", { replace: true });
           return;
         }
-        if (tries < 8) setTimeout(poll, 1500);
+        if (tries < 8) {
+          setTimeout(poll, 1500);
+        } else {
+          // Last-ditch fallback: try the sync endpoint
+          toast.info("Verifying payment with Stripe…");
+          await syncFromStripe({ silent: false });
+          nav("/app/billing", { replace: true });
+        }
       } catch (e) {
         if (tries < 6) setTimeout(poll, 1500);
+        else {
+          toast.error("Could not verify payment status — try Sync with Stripe.");
+          nav("/app/billing", { replace: true });
+        }
       }
     };
     poll();
@@ -118,15 +180,46 @@ export default function Billing() {
   const isExempt = me.is_exempt;
   const onTrial = me.access?.trial;
   const paywall = me.access?.paywall;
-  const planLabel = (me.plan || "trial").toUpperCase();
+  const isActive = me.subscription_status === "active" && !isExempt;
+  const planSlug = me.plan || "trial";
+  const planLabel = isActive
+    ? (PLAN_NAMES[planSlug] || planSlug).toUpperCase()
+    : (planSlug || "trial").toUpperCase();
   const trialDays = me.access?.trial_days_left || 0;
+  const planMeta = plans.find(p => p.id === planSlug);
 
   return (
     <div className="p-8 space-y-8" data-testid="billing-page">
-      <div>
-        <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Billing</div>
-        <h1 className="font-display text-4xl font-black tracking-tighter">Plans, balance &amp; recharge.</h1>
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Billing</div>
+          <h1 className="font-display text-4xl font-black tracking-tighter">Plans, balance &amp; recharge.</h1>
+        </div>
+        {!isExempt && me.stripe_customer_id && (
+          <button
+            data-testid="sync-stripe-btn"
+            onClick={() => syncFromStripe({ silent: false })}
+            disabled={syncing}
+            className="text-sm font-bold border-2 border-black px-4 py-2 hover-lift bg-white shadow-brutal flex items-center gap-2 disabled:opacity-60"
+          >
+            <RefreshCw size={14} className={syncing ? "animate-spin" : ""} />
+            {syncing ? "Syncing…" : "Sync with Stripe"}
+          </button>
+        )}
       </div>
+
+      {/* Recovery banner: customer has Stripe ID but no active sub yet */}
+      {!isExempt && me.stripe_customer_id && !isActive && !onTrial && (
+        <div className="border-2 border-amber-700 bg-amber-50 p-4 flex items-start gap-3" data-testid="recovery-banner">
+          <AlertCircle size={20} className="text-amber-800 mt-0.5 shrink-0" />
+          <div className="text-sm">
+            <div className="font-display font-bold">Just paid on Stripe but don't see it here yet?</div>
+            <div className="mt-1 text-neutral-700">
+              Click <strong>Sync with Stripe</strong> above. We'll fetch your latest payment and unlock your plan.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Current status */}
       <div className="border-2 border-black bg-white shadow-brutal" data-testid="billing-status">
@@ -135,14 +228,17 @@ export default function Billing() {
           <div className="flex items-center gap-2">
             {isExempt && <span className="badge bg-amber-300 text-black border-amber-300">⚡ EXEMPT — FREE FOREVER</span>}
             {onTrial && !isExempt && <span className="badge bg-yellow-300 text-black border-yellow-300" data-testid="trial-badge"><Clock size={12} className="inline mr-1"/>TRIAL · {trialDays}d LEFT</span>}
-            {!onTrial && !isExempt && !paywall && <span className="badge bg-green-400 text-black border-green-400">ACTIVE</span>}
-            {paywall && <span className="badge bg-red-500 text-white border-red-500">PAYWALL</span>}
+            {isActive && <span className="badge bg-green-400 text-black border-green-400" data-testid="active-badge">ACTIVE · {planLabel}</span>}
+            {paywall && <span className="badge bg-red-500 text-white border-red-500" data-testid="paywall-badge">PAYWALL</span>}
           </div>
         </div>
         <div className="p-6 grid md:grid-cols-4 gap-4">
           <div className="border-2 border-black p-4">
             <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Plan</div>
-            <div className="font-display font-black text-2xl mt-2">{planLabel}</div>
+            <div className="font-display font-black text-2xl mt-2" data-testid="plan-label">{planLabel}</div>
+            {isActive && planMeta && (
+              <div className="text-xs font-mono text-neutral-500 mt-1">${planMeta.price_usd}/mo</div>
+            )}
           </div>
           <div className="border-2 border-black p-4" data-testid="voice-balance">
             <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Voice minutes</div>
@@ -198,6 +294,45 @@ export default function Billing() {
           })}
         </div>
       </div>
+
+      {/* Payment history */}
+      {!isExempt && payments.length > 0 && (
+        <div className="border-2 border-black bg-white shadow-brutal" data-testid="payment-history">
+          <div className="bg-black text-white px-6 py-3 font-display font-black text-xl">Payment history</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-neutral-100 border-b-2 border-black">
+                  <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Date</th>
+                  <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Type</th>
+                  <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Plan/Pack</th>
+                  <th className="text-right px-4 py-2 font-mono text-xs uppercase tracking-wider">Amount</th>
+                  <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map(p => (
+                  <tr key={p.id} className="border-b border-neutral-200" data-testid={`payment-row-${p.id}`}>
+                    <td className="px-4 py-2 font-mono text-xs">{fmtDate(p.completed_at || p.created_at)}</td>
+                    <td className="px-4 py-2 font-bold capitalize">{p.type}</td>
+                    <td className="px-4 py-2 capitalize">{PLAN_NAMES[p.plan_or_pack] || p.plan_or_pack}</td>
+                    <td className="px-4 py-2 text-right font-mono">${p.amount} {(p.currency||"usd").toUpperCase()}</td>
+                    <td className="px-4 py-2">
+                      {p.status === "completed" ? (
+                        <span className="badge bg-green-400 text-black border-green-400">✓ Paid</span>
+                      ) : p.status === "initiated" ? (
+                        <span className="badge bg-yellow-200 text-black border-yellow-700">Pending</span>
+                      ) : (
+                        <span className="badge bg-neutral-200 text-black border-neutral-700">{p.status}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Plans */}
       {!isExempt && (

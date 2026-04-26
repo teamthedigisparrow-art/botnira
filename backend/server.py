@@ -1850,10 +1850,32 @@ async def checkout_topup(req: CheckoutReq, user: dict = Depends(require_vendor))
 
 async def _apply_successful_payment(session_id: str, vendor_id: str, txn_type: str, plan_or_pack: str):
     """Idempotently apply successful payment: grant balance or activate sub.
-    Guards against double-apply via payment_transactions.status='completed'."""
+    Guards against double-apply via payment_transactions.status='completed'.
+    Auto-creates a payment_transactions row if missing (e.g. webhook fires for a
+    session that was created on a different deployment, or our DB lost the row)."""
     txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
     if not txn:
-        return
+        # Reconstruct a transaction record from Stripe metadata so the user has
+        # a payment history row, even when the original create call didn't reach
+        # this database.
+        amt = 0.0
+        if txn_type == "subscription" and plan_or_pack in PLANS:
+            amt = PLANS[plan_or_pack]["price_usd"]
+        elif txn_type == "topup" and plan_or_pack in TOPUPS:
+            amt = TOPUPS[plan_or_pack]["price_usd"]
+        await db.payment_transactions.insert_one({
+            "id": new_id(),
+            "vendor_id": vendor_id,
+            "session_id": session_id,
+            "type": txn_type,
+            "plan" if txn_type == "subscription" else "pack": plan_or_pack,
+            "amount": amt,
+            "currency": "usd",
+            "status": "initiated",
+            "created_at": now_iso(),
+            "reconstructed": True,
+        })
+        txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
     if txn.get("status") == "completed":
         return  # already applied
     if txn_type == "topup":
@@ -1921,6 +1943,168 @@ async def checkout_status(session_id: str, user: dict = Depends(require_vendor))
         "currency": session.currency,
         "metadata": dict(md),
     }
+
+
+@api_router.get("/billing/payments")
+async def billing_payments(user: dict = Depends(require_vendor)):
+    """Full payment history for the logged-in vendor. Used to render the
+    'Payment history' table on the Billing page."""
+    rows = await db.payment_transactions.find(
+        {"vendor_id": user["vendor_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    out = []
+    for r in rows:
+        out.append({
+            "id": r.get("id"),
+            "session_id": r.get("session_id"),
+            "type": r.get("type"),
+            "plan_or_pack": r.get("plan") or r.get("pack"),
+            "amount": r.get("amount", 0),
+            "currency": r.get("currency", "usd"),
+            "status": r.get("status", "initiated"),
+            "created_at": r.get("created_at"),
+            "completed_at": r.get("completed_at"),
+        })
+    return {"payments": out}
+
+
+@api_router.post("/billing/sync")
+async def billing_sync(user: dict = Depends(require_vendor)):
+    """Reconcile the vendor's Stripe state to the local DB.
+
+    Use case: a payment succeeded on Stripe but the webhook + frontend
+    redirect both failed (e.g. the success_url pointed at a domain whose
+    SSL was still propagating). Calling this endpoint fetches the active
+    subscription + recent paid checkout sessions for this vendor's Stripe
+    customer and applies any that haven't been applied yet.
+
+    Idempotent — safe to call any number of times.
+    """
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Billing not configured")
+    vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    if vendor.get("is_exempt"):
+        return {"applied": 0, "note": "Exempt account — nothing to sync"}
+
+    cust_id = vendor.get("stripe_customer_id")
+    # If we don't have a customer_id locally, search Stripe by the user's email
+    # — covers the case where the vendor record was rebuilt after payment.
+    if not cust_id:
+        try:
+            customers = _stripe.Customer.list(email=user["email"], limit=5)
+            for c in customers.data:
+                cmd = (c.metadata or {})
+                if cmd.get("vendor_id") == vendor["id"]:
+                    cust_id = c.id
+                    await db.vendors.update_one(
+                        {"id": vendor["id"]},
+                        {"$set": {"stripe_customer_id": cust_id}},
+                    )
+                    break
+            # fallback: if there's exactly one customer with this email and no
+            # other vendor uses it, claim it
+            if not cust_id and len(customers.data) == 1:
+                candidate = customers.data[0].id
+                taken = await db.vendors.find_one(
+                    {"stripe_customer_id": candidate, "id": {"$ne": vendor["id"]}},
+                    {"_id": 0, "id": 1},
+                )
+                if not taken:
+                    cust_id = candidate
+                    await db.vendors.update_one(
+                        {"id": vendor["id"]},
+                        {"$set": {"stripe_customer_id": cust_id}},
+                    )
+        except Exception as e:
+            logger.warning("billing_sync customer lookup failed: %s", e)
+    if not cust_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No Stripe customer on file. Start a checkout first."
+        )
+
+    applied = 0
+    summary = []
+
+    # 1) Active subscription for this customer
+    try:
+        subs = _stripe.Subscription.list(customer=cust_id, status="all", limit=10)
+        active_sub = next(
+            (s for s in subs.data if s.status in ("active", "trialing", "past_due")),
+            None,
+        )
+        if active_sub:
+            # Map price -> plan slug
+            plan_slug = None
+            try:
+                pid = active_sub.items.data[0].price.id
+                for slug, price_id in STRIPE_PRICE_IDS.get("plans", {}).items():
+                    if price_id == pid:
+                        plan_slug = slug
+                        break
+            except Exception:
+                pass
+            updates = {
+                "stripe_subscription_id": active_sub.id,
+                "subscription_status": active_sub.status,
+            }
+            cpe = getattr(active_sub, "current_period_end", None)
+            if cpe:
+                updates["current_period_end"] = datetime.fromtimestamp(
+                    cpe, tz=timezone.utc
+                ).isoformat()
+            if plan_slug and plan_slug in PLANS:
+                p = PLANS[plan_slug]
+                updates.update({
+                    "plan": plan_slug,
+                    "plan_minutes_monthly": p["voice_min"],
+                    "plan_messages_monthly": p["messages"],
+                })
+                # Only top up the balance if vendor has not already received this
+                # plan's allotment (don't keep adding on every sync click).
+                already = await db.payment_transactions.find_one({
+                    "vendor_id": vendor["id"],
+                    "type": "subscription",
+                    "plan": plan_slug,
+                    "status": "completed",
+                }, {"_id": 0})
+                if not already:
+                    updates["minutes_balance"] = float(p["voice_min"])
+                    updates["messages_balance"] = int(p["messages"])
+                    updates["activated_at"] = now_iso()
+            await db.vendors.update_one({"id": vendor["id"]}, {"$set": updates})
+            summary.append(f"Subscription {active_sub.id[:18]}… ({active_sub.status}, plan={plan_slug or 'unknown'})")
+    except Exception as e:
+        logger.warning("billing_sync subs fetch failed: %s", e)
+
+    # 2) Recent paid checkout sessions belonging to this vendor
+    try:
+        sessions = _stripe.checkout.Session.list(customer=cust_id, limit=20)
+        for s in sessions.data:
+            if s.payment_status != "paid":
+                continue
+            md = dict(s.metadata or {})
+            # Only fulfill sessions explicitly tagged for THIS vendor
+            if md.get("vendor_id") != vendor["id"]:
+                continue
+            txn_type = md.get("type")
+            key = md.get("plan") or md.get("pack")
+            if not txn_type or not key:
+                continue
+            existing = await db.payment_transactions.find_one(
+                {"session_id": s.id}, {"_id": 0}
+            )
+            if existing and existing.get("status") == "completed":
+                continue
+            await _apply_successful_payment(s.id, vendor["id"], txn_type, key)
+            applied += 1
+            summary.append(f"Applied {txn_type}={key} from session {s.id[:18]}…")
+    except Exception as e:
+        logger.warning("billing_sync sessions fetch failed: %s", e)
+
+    return {"applied": applied, "summary": summary, "customer_id": cust_id}
 
 
 @api_router.post("/billing/portal")
