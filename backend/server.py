@@ -60,6 +60,10 @@ TRIAL_MESSAGE_CAP = 100  # hard cap on AI msgs during trial
 EXEMPT_EMAILS = {"kamal@thedigisparrow.com"}  # always free, never hit paywall
 # Stripe Price ID cache, populated on startup
 STRIPE_PRICE_IDS = {"plans": {}, "topups": {}}
+# 13% HST applied to every BotNira charge (subscriptions + topups). The actual
+# Stripe Tax Rate object is created/found on startup and its ID stored here.
+HST_RATE_PERCENT = 13.0
+HST_TAX_RATE_ID: Optional[str] = None
 
 # Meta / WhatsApp Cloud API
 META_APP_ID = os.environ.get("META_APP_ID", "")
@@ -1666,6 +1670,51 @@ async def _ensure_stripe_prices():
         logger.exception("Stripe price provisioning failed: %s", e)
 
 
+async def _ensure_hst_tax_rate():
+    """Find or create the 13% HST Stripe Tax Rate. Stored in HST_TAX_RATE_ID
+    and attached to every checkout session so Stripe shows the tax line on
+    checkout, the receipt email, and the invoice PDF."""
+    global HST_TAX_RATE_ID
+    if not STRIPE_SECRET_KEY:
+        return
+    try:
+        rates = _stripe.TaxRate.list(active=True, limit=100)
+        # Stripe's StripeObject doesn't support .get() — must use bracket
+        # access wrapped in try/except.
+        botnira_rates = []
+        for tr in rates.data:
+            try:
+                key = tr.metadata["botnira_key"]
+            except Exception:
+                key = None
+            if key == "hst_13":
+                botnira_rates.append(tr)
+        if botnira_rates:
+            # Keep the oldest one, archive any duplicates from past runs.
+            botnira_rates.sort(key=lambda x: x.created)
+            HST_TAX_RATE_ID = botnira_rates[0].id
+            for dup in botnira_rates[1:]:
+                try:
+                    _stripe.TaxRate.modify(dup.id, active=False)
+                    logger.info("Archived duplicate HST rate %s", dup.id)
+                except Exception:
+                    pass
+            logger.info("Using HST tax rate %s", HST_TAX_RATE_ID)
+            return
+        tr = _stripe.TaxRate.create(
+            display_name="HST",
+            description="Harmonized Sales Tax (Canada)",
+            jurisdiction="CA",
+            percentage=HST_RATE_PERCENT,
+            inclusive=False,
+            metadata={"botnira_key": "hst_13"},
+        )
+        HST_TAX_RATE_ID = tr.id
+        logger.info("Created HST tax rate %s (%.0f%%)", tr.id, HST_RATE_PERCENT)
+    except Exception as e:
+        logger.exception("Failed to provision HST tax rate: %s", e)
+
+
 @app.on_event("startup")
 async def startup_stripe():
     # Backfill billing fields on existing vendors (idempotent migration).
@@ -1736,6 +1785,8 @@ async def startup_stripe():
         logger.warning("Vendor billing migration failed: %s", e)
     # Provision Stripe products/prices
     await _ensure_stripe_prices()
+    # Provision HST 13% tax rate
+    await _ensure_hst_tax_rate()
 
 
 @api_router.get("/billing/plans")
@@ -1751,6 +1802,9 @@ async def billing_plans():
             for k, v in TOPUPS.items()
         ],
         "trial_days": TRIAL_DAYS,
+        "tax_rate_percent": HST_RATE_PERCENT,
+        "tax_label": "HST",
+        "tax_jurisdiction": "Canada",
     }
 
 
@@ -1813,10 +1867,16 @@ async def checkout_subscription(req: CheckoutReq, user: dict = Depends(require_v
         raise HTTPException(status_code=400, detail="Exempt account — billing disabled")
     cust_id = await _get_or_create_stripe_customer(vendor, user["email"])
     origin = req.origin_url.rstrip("/")
+    line_item = {"price": price_id, "quantity": 1}
+    if HST_TAX_RATE_ID:
+        line_item["tax_rates"] = [HST_TAX_RATE_ID]
+    sub_data = {"metadata": {"vendor_id": vendor["id"], "plan": req.plan}}
+    if HST_TAX_RATE_ID:
+        sub_data["default_tax_rates"] = [HST_TAX_RATE_ID]
     session = _stripe.checkout.Session.create(
         mode="subscription",
         customer=cust_id,
-        line_items=[{"price": price_id, "quantity": 1}],
+        line_items=[line_item],
         success_url=f"{origin}/app/billing?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{origin}/app/billing?cancelled=1",
         metadata={
@@ -1824,9 +1884,7 @@ async def checkout_subscription(req: CheckoutReq, user: dict = Depends(require_v
             "type": "subscription",
             "plan": req.plan,
         },
-        subscription_data={
-            "metadata": {"vendor_id": vendor["id"], "plan": req.plan},
-        },
+        subscription_data=sub_data,
     )
     await db.payment_transactions.insert_one({
         "id": new_id(),
@@ -1856,10 +1914,13 @@ async def checkout_topup(req: CheckoutReq, user: dict = Depends(require_vendor))
         raise HTTPException(status_code=400, detail="Exempt account — billing disabled")
     cust_id = await _get_or_create_stripe_customer(vendor, user["email"])
     origin = req.origin_url.rstrip("/")
+    line_item = {"price": price_id, "quantity": 1}
+    if HST_TAX_RATE_ID:
+        line_item["tax_rates"] = [HST_TAX_RATE_ID]
     session = _stripe.checkout.Session.create(
         mode="payment",
         customer=cust_id,
-        line_items=[{"price": price_id, "quantity": 1}],
+        line_items=[line_item],
         success_url=f"{origin}/app/billing?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{origin}/app/billing?cancelled=1",
         metadata={
@@ -1939,6 +2000,11 @@ async def _apply_successful_payment(session_id: str, vendor_id: str, txn_type: s
         {"session_id": session_id},
         {"$set": {"status": "completed", "completed_at": now_iso()}},
     )
+    # Fire-and-forget: send the customer their welcome / receipt email.
+    try:
+        await _send_purchase_confirmation_email(vendor_id, session_id, txn_type, plan_or_pack)
+    except Exception as e:
+        logger.warning("Purchase confirmation email failed: %s", e)
 
 
 @api_router.get("/billing/checkout/status/{session_id}")
@@ -1986,22 +2052,61 @@ async def billing_payments(user: dict = Depends(require_vendor)):
     rows = await db.payment_transactions.find(
         {"vendor_id": user["vendor_id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
-    out = []
+
+    # For each completed/refunded txn, look up the Stripe-hosted invoice or
+    # receipt URL on demand. We cache it back into the document so subsequent
+    # loads are fast.
+    enriched = []
     for r in rows:
-        out.append({
+        invoice_url = r.get("invoice_url") or ""
+        receipt_url = r.get("receipt_url") or ""
+        if (
+            STRIPE_SECRET_KEY
+            and r.get("status") in ("completed", "refunded", "partially_refunded")
+            and r.get("session_id", "").startswith("cs_")
+            and not (invoice_url or receipt_url)
+        ):
+            try:
+                sess = _stripe.checkout.Session.retrieve(r["session_id"])
+                inv_id = getattr(sess, "invoice", None)
+                if inv_id:
+                    inv = _stripe.Invoice.retrieve(inv_id)
+                    invoice_url = getattr(inv, "hosted_invoice_url", "") or ""
+                pi_id = getattr(sess, "payment_intent", None)
+                if pi_id:
+                    pi = _stripe.PaymentIntent.retrieve(pi_id)
+                    charges = getattr(pi, "charges", None)
+                    if charges and charges.data:
+                        receipt_url = getattr(charges.data[0], "receipt_url", "") or ""
+                if invoice_url or receipt_url:
+                    await db.payment_transactions.update_one(
+                        {"id": r["id"]},
+                        {"$set": {"invoice_url": invoice_url, "receipt_url": receipt_url}},
+                    )
+            except Exception as e:
+                logger.debug("Stripe link lookup failed for %s: %s", r.get("session_id"), e)
+
+        subtotal = float(r.get("amount", 0))
+        tax = round(subtotal * (HST_RATE_PERCENT / 100.0), 2)
+        total = round(subtotal + tax, 2)
+        enriched.append({
             "id": r.get("id"),
             "session_id": r.get("session_id"),
             "type": r.get("type"),
             "plan_or_pack": r.get("plan") or r.get("pack"),
-            "amount": r.get("amount", 0),
+            "amount": subtotal,
+            "tax": tax,
+            "total": total,
             "currency": r.get("currency", "usd"),
             "status": r.get("status", "initiated"),
             "created_at": r.get("created_at"),
             "completed_at": r.get("completed_at"),
             "refunded_at": r.get("refunded_at"),
             "refunded_amount": r.get("refunded_amount"),
+            "invoice_url": invoice_url,
+            "receipt_url": receipt_url,
         })
-    return {"payments": out}
+    return {"payments": enriched, "tax_rate_percent": HST_RATE_PERCENT}
 
 
 @api_router.post("/billing/sync")
@@ -2391,6 +2496,7 @@ async def admin_billing_list(user: dict = Depends(require_admin)):
     mrr = 0.0
     active_count = 0
     trial_count = 0
+    total_collected_subtotal = 0.0
     for v in vendors:
         plan = v.get("plan", "trial")
         sub_status = v.get("subscription_status", "trialing")
@@ -2402,12 +2508,18 @@ async def admin_billing_list(user: dict = Depends(require_admin)):
         if sub_status == "trialing":
             trial_count += 1
         u = users_by_vid.get(v["id"]) or {}
-        # aggregate topup spend
+        # aggregate completed spend (subtotal, pre-tax)
         agg = await db.payment_transactions.aggregate([
             {"$match": {"vendor_id": v["id"], "status": "completed"}},
             {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
         ]).to_list(1)
         total_spent = (agg[0]["total"] if agg else 0.0) if agg else 0.0
+        total_collected_subtotal += float(total_spent)
+        # plan-side tax math
+        plan_tax = round(plan_price * (HST_RATE_PERCENT / 100.0), 2)
+        plan_total = round(plan_price + plan_tax, 2)
+        spent_tax = round(float(total_spent) * (HST_RATE_PERCENT / 100.0), 2)
+        spent_total = round(float(total_spent) + spent_tax, 2)
         rows.append({
             "vendor_id": v["id"],
             "name": v.get("name"),
@@ -2416,6 +2528,8 @@ async def admin_billing_list(user: dict = Depends(require_admin)):
             "plan": plan,
             "subscription_status": sub_status,
             "plan_price_usd": plan_price,
+            "plan_tax_usd": plan_tax,
+            "plan_total_usd": plan_total,
             "trial_ends_at": v.get("trial_ends_at"),
             "current_period_end": v.get("current_period_end"),
             "minutes_balance": float(v.get("minutes_balance", 0.0)),
@@ -2424,12 +2538,24 @@ async def admin_billing_list(user: dict = Depends(require_admin)):
             "stripe_customer_id": v.get("stripe_customer_id"),
             "stripe_subscription_id": v.get("stripe_subscription_id"),
             "total_spent_usd": round(float(total_spent), 2),
+            "total_spent_tax_usd": spent_tax,
+            "total_spent_with_tax_usd": spent_total,
             "created_at": v.get("created_at"),
         })
+    mrr_tax = round(mrr * (HST_RATE_PERCENT / 100.0), 2)
+    mrr_with_tax = round(mrr + mrr_tax, 2)
     return {
         "summary": {
             "mrr_usd": round(mrr, 2),
+            "mrr_tax_usd": mrr_tax,
+            "mrr_with_tax_usd": mrr_with_tax,
             "arr_usd": round(mrr * 12, 2),
+            "arr_with_tax_usd": round(mrr_with_tax * 12, 2),
+            "tax_rate_percent": HST_RATE_PERCENT,
+            "tax_label": "HST",
+            "total_collected_subtotal_usd": round(total_collected_subtotal, 2),
+            "total_collected_tax_usd": round(total_collected_subtotal * (HST_RATE_PERCENT / 100.0), 2),
+            "total_collected_with_tax_usd": round(total_collected_subtotal * (1 + HST_RATE_PERCENT / 100.0), 2),
             "active_subscriptions": active_count,
             "trialing": trial_count,
             "total_vendors": len(vendors),
@@ -2627,6 +2753,165 @@ async def _send_appointment_email(vendor_id: str, appt: dict):
     except Exception as e:
         logger.warning("Appointment email send failed for %s: %s", to_email, e)
 
+
+
+async def _send_purchase_confirmation_email(vendor_id: str, session_id: str, txn_type: str, plan_or_pack: str):
+    """Sends a 'thanks for your purchase' email with plan details and a link
+    to the Stripe-hosted invoice/receipt PDF."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("SMTP not configured — skipping purchase email for vendor=%s", vendor_id)
+        return
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    if not vendor:
+        return
+    owner = await db.users.find_one(
+        {"vendor_id": vendor_id, "role": "vendor"}, {"_id": 0, "email": 1, "full_name": 1}
+    )
+    if not owner or not owner.get("email"):
+        return
+
+    to_email = owner["email"]
+    biz_name = vendor.get("name") or "your business"
+    owner_name = owner.get("full_name") or to_email.split("@")[0]
+
+    # Resolve plan/pack details
+    is_sub = txn_type == "subscription"
+    cfg = PLANS.get(plan_or_pack) if is_sub else TOPUPS.get(plan_or_pack)
+    if not cfg:
+        return
+    pretty_kind = "subscription" if is_sub else "top-up"
+    pretty_name = cfg["name"]
+    subtotal = float(cfg["price_usd"])
+    tax = round(subtotal * (HST_RATE_PERCENT / 100.0), 2)
+    total = round(subtotal + tax, 2)
+
+    # Try to grab the Stripe-hosted invoice / receipt link
+    invoice_url = ""
+    receipt_url = ""
+    try:
+        if STRIPE_SECRET_KEY:
+            sess = _stripe.checkout.Session.retrieve(session_id)
+            inv_id = getattr(sess, "invoice", None)
+            if inv_id:
+                inv = _stripe.Invoice.retrieve(inv_id)
+                invoice_url = getattr(inv, "hosted_invoice_url", "") or ""
+            pi_id = getattr(sess, "payment_intent", None)
+            if pi_id:
+                pi = _stripe.PaymentIntent.retrieve(pi_id)
+                charges = getattr(pi, "charges", None)
+                if charges and charges.data:
+                    receipt_url = getattr(charges.data[0], "receipt_url", "") or ""
+    except Exception as e:
+        logger.warning("Could not fetch Stripe invoice/receipt: %s", e)
+
+    if is_sub:
+        subject = f"Welcome to BotNira {pretty_name} — your subscription is live"
+        intro = (
+            f"You're now on the <strong>BotNira {pretty_name} plan</strong>. "
+            f"All 5 channels — web, WhatsApp, voice, email and SMS — are unlocked for {biz_name}."
+        )
+    else:
+        subject = f"Top-up confirmed — {pretty_name} pack added to {biz_name}"
+        intro = (
+            f"Your <strong>{pretty_name}</strong> top-up has been added to {biz_name}'s balance."
+        )
+
+    # Plain text body
+    body_text_lines = [
+        f"Hi {owner_name},",
+        "",
+        f"Thanks for your purchase. {pretty_kind.capitalize()}: {pretty_name}.",
+        "",
+        f"What you get:",
+        f"  • {cfg['voice_min']} voice minutes",
+        f"  • {cfg['messages']:,} AI messages",
+    ]
+    if is_sub:
+        body_text_lines.append("  • All 5 channels unlocked — web, WhatsApp, voice, email, SMS")
+    body_text_lines += [
+        "",
+        f"Receipt:",
+        f"  Subtotal:  ${subtotal:,.2f} USD",
+        f"  HST 13%:   ${tax:,.2f} USD",
+        f"  Total:     ${total:,.2f} USD",
+        "",
+    ]
+    if invoice_url:
+        body_text_lines += [f"View / download invoice: {invoice_url}", ""]
+    elif receipt_url:
+        body_text_lines += [f"Download receipt: {receipt_url}", ""]
+    body_text_lines += [
+        f"Manage your plan: https://botnira.com/app/billing",
+        "",
+        "— BotNira",
+    ]
+    body_text = "\n".join(body_text_lines)
+
+    rows_html = (
+        f"<tr><td style='padding:6px 0;color:#666;'>Subtotal</td>"
+        f"<td style='padding:6px 0;text-align:right;font-family:monospace;'>${subtotal:,.2f} USD</td></tr>"
+        f"<tr><td style='padding:6px 0;color:#666;'>HST 13%</td>"
+        f"<td style='padding:6px 0;text-align:right;font-family:monospace;'>${tax:,.2f} USD</td></tr>"
+        f"<tr><td style='padding:10px 0;border-top:2px solid #000;font-weight:bold;'>Total charged</td>"
+        f"<td style='padding:10px 0;border-top:2px solid #000;text-align:right;font-family:monospace;font-weight:bold;font-size:18px;'>${total:,.2f} USD</td></tr>"
+    )
+    cta_html = ""
+    if invoice_url:
+        cta_html = f'<a href="{invoice_url}" style="display:inline-block;background:#000;color:#fff;text-decoration:none;padding:10px 18px;border:2px solid #000;font-weight:bold;font-size:13px;margin-right:8px;">View invoice</a>'
+    elif receipt_url:
+        cta_html = f'<a href="{receipt_url}" style="display:inline-block;background:#000;color:#fff;text-decoration:none;padding:10px 18px;border:2px solid #000;font-weight:bold;font-size:13px;margin-right:8px;">View receipt</a>'
+
+    body_html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
+    <div style="background:#002FA7;color:#fff;padding:20px 24px;border-bottom:2px solid #000;">
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.85;">BotNira · Purchase confirmed</div>
+      <div style="font-size:24px;font-weight:900;margin-top:6px;line-height:1.2;">🎉 You're in! {pretty_name} is live.</div>
+    </div>
+    <div style="padding:24px;">
+      <p style="margin:0 0 14px;font-size:14px;line-height:1.5;">Hi <strong>{owner_name}</strong>, {intro}</p>
+      <div style="border:2px solid #000;padding:14px 16px;background:#FFFBE6;margin:14px 0;font-size:13px;">
+        <div style="font-weight:bold;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#666;margin-bottom:6px;">{'Plan' if is_sub else 'Pack'}</div>
+        <div style="font-size:18px;font-weight:900;">{pretty_name}</div>
+        <ul style="margin:10px 0 0;padding-left:18px;line-height:1.6;">
+          <li><strong>{cfg['voice_min']}</strong> voice minutes</li>
+          <li><strong>{cfg['messages']:,}</strong> AI messages</li>
+          {'<li>All 5 channels unlocked</li>' if is_sub else '<li>Stacks on top of your current balance</li>'}
+        </ul>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;">
+        {rows_html}
+      </table>
+      <div style="margin-top:22px;">
+        {cta_html}
+        <a href="https://botnira.com/app/billing" style="display:inline-block;background:#002FA7;color:#fff;text-decoration:none;padding:10px 18px;border:2px solid #000;font-weight:bold;font-size:13px;box-shadow:4px 4px 0 #000;">Open BotNira</a>
+      </div>
+    </div>
+    <div style="background:#000;color:#999;padding:12px 24px;font-size:11px;font-family:monospace;line-height:1.5;">
+      Questions? Just reply to this email.<br/>© 2026 BotNira · Powered by your AI receptionist
+    </div>
+  </div>
+</body>
+</html>"""
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+    msg["To"] = to_email
+    msg.set_content(body_text)
+    msg.add_alternative(body_html, subtype="html")
+
+    def _send_sync():
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.send_message(msg)
+    try:
+        await asyncio.to_thread(_send_sync)
+        logger.info("Purchase email sent to %s (vendor=%s, %s=%s)", to_email, vendor_id, txn_type, plan_or_pack)
+    except Exception as e:
+        logger.warning("Purchase email send failed for %s: %s", to_email, e)
 
 
 def _send_otp_email(to_email: str, code: str, purpose: str):

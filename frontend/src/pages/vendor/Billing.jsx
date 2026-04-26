@@ -27,6 +27,7 @@ export default function Billing() {
   const [plans, setPlans] = useState([]);
   const [topups, setTopups] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [taxRate, setTaxRate] = useState(13);
   const [busy, setBusy] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [params] = useSearchParams();
@@ -43,6 +44,7 @@ export default function Billing() {
       setMe(a.data);
       setPlans(b.data.plans);
       setTopups(b.data.topups);
+      setTaxRate(b.data.tax_rate_percent ?? 13);
       setPayments(c.data.payments || []);
       return a.data;
     } catch (e) {
@@ -321,8 +323,11 @@ export default function Billing() {
                   <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Date</th>
                   <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Type</th>
                   <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Plan/Pack</th>
-                  <th className="text-right px-4 py-2 font-mono text-xs uppercase tracking-wider">Amount</th>
+                  <th className="text-right px-4 py-2 font-mono text-xs uppercase tracking-wider">Subtotal</th>
+                  <th className="text-right px-4 py-2 font-mono text-xs uppercase tracking-wider">HST {taxRate}%</th>
+                  <th className="text-right px-4 py-2 font-mono text-xs uppercase tracking-wider">Total</th>
                   <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Status</th>
+                  <th className="text-left px-4 py-2 font-mono text-xs uppercase tracking-wider">Invoice</th>
                 </tr>
               </thead>
               <tbody>
@@ -331,7 +336,9 @@ export default function Billing() {
                     <td className="px-4 py-2 font-mono text-xs">{fmtDate(p.completed_at || p.created_at)}</td>
                     <td className="px-4 py-2 font-bold capitalize">{p.type}</td>
                     <td className="px-4 py-2 capitalize">{PLAN_NAMES[p.plan_or_pack] || p.plan_or_pack}</td>
-                    <td className="px-4 py-2 text-right font-mono">${p.amount} {(p.currency||"usd").toUpperCase()}</td>
+                    <td className="px-4 py-2 text-right font-mono">${p.amount?.toFixed?.(2) ?? p.amount}</td>
+                    <td className="px-4 py-2 text-right font-mono text-neutral-600">${(p.tax ?? 0).toFixed(2)}</td>
+                    <td className="px-4 py-2 text-right font-mono font-bold">${(p.total ?? p.amount).toFixed(2)}</td>
                     <td className="px-4 py-2">
                       {p.status === "completed" ? (
                         <span className="badge bg-green-400 text-black border-green-400">✓ Paid</span>
@@ -347,6 +354,19 @@ export default function Billing() {
                         <span className="badge bg-neutral-200 text-black border-neutral-700">{p.status}</span>
                       )}
                     </td>
+                    <td className="px-4 py-2">
+                      {p.invoice_url ? (
+                        <a href={p.invoice_url} target="_blank" rel="noopener noreferrer" className="text-[#002FA7] underline font-bold text-xs">
+                          Invoice ↗
+                        </a>
+                      ) : p.receipt_url ? (
+                        <a href={p.receipt_url} target="_blank" rel="noopener noreferrer" className="text-[#002FA7] underline font-bold text-xs">
+                          Receipt ↗
+                        </a>
+                      ) : (
+                        <span className="text-neutral-400 text-xs">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -359,11 +379,16 @@ export default function Billing() {
       {!isExempt && (
         <div data-testid="plans-section">
           <div className="font-display font-black text-2xl mb-1">Monthly plans</div>
-          <p className="text-sm text-neutral-600 mb-5">Pick a base plan — auto-renews monthly, cancel anytime.</p>
+          <p className="text-sm text-neutral-600 mb-3">Pick a base plan — auto-renews monthly, cancel anytime.</p>
+          <div className="border-2 border-amber-700 bg-amber-50 px-4 py-2 mb-5 inline-block text-xs font-mono" data-testid="tax-notice-plans">
+            <strong>Heads up:</strong> all prices are in USD. <strong>{taxRate}% HST</strong> will be added at checkout (Canadian Harmonized Sales Tax).
+          </div>
           <div className="grid md:grid-cols-3 gap-5">
             {plans.map(p => {
               const Icon = PLAN_ICONS[p.id] || Rocket;
               const isCurrent = me.plan === p.id && me.subscription_status === "active";
+              const taxAmt = (p.price_usd * taxRate / 100).toFixed(2);
+              const totalAmt = (p.price_usd * (1 + taxRate / 100)).toFixed(2);
               return (
                 <div key={p.id} className={`border-2 border-black p-6 bg-white shadow-brutal ${isCurrent ? "ring-4 ring-[#002FA7]" : ""}`} data-testid={`plan-${p.id}`}>
                   <div className="flex items-center justify-between">
@@ -375,6 +400,7 @@ export default function Billing() {
                     <span className="font-display font-black text-5xl tracking-tighter">${p.price_usd}</span>
                     <span className="text-xs font-mono text-neutral-500">/mo USD</span>
                   </div>
+                  <div className="text-[11px] font-mono text-neutral-500 mt-1">+ ${taxAmt} HST = <strong>${totalAmt}/mo</strong> total</div>
                   <ul className="mt-5 space-y-2 text-sm">
                     <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.voice_min}</strong> voice minutes</li>
                     <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.messages.toLocaleString()}</strong> AI messages</li>
@@ -400,15 +426,21 @@ export default function Billing() {
       {!isExempt && (
         <div data-testid="topups-section">
           <div className="font-display font-black text-2xl mb-1">Top-up packs</div>
-          <p className="text-sm text-neutral-600 mb-5">One-time recharge. Never expires. Stacks on top of your plan.</p>
+          <p className="text-sm text-neutral-600 mb-3">One-time recharge. Never expires. Stacks on top of your plan.</p>
+          <div className="border-2 border-amber-700 bg-amber-50 px-4 py-2 mb-5 inline-block text-xs font-mono" data-testid="tax-notice-topups">
+            <strong>Heads up:</strong> {taxRate}% HST will be added to top-up purchases at checkout.
+          </div>
           <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
             {topups.map(t => {
               const theme = PACK_THEMES[t.id] || { emoji: "★", color: "bg-neutral-100 border-neutral-700" };
+              const taxAmt = (t.price_usd * taxRate / 100).toFixed(2);
+              const totalAmt = (t.price_usd * (1 + taxRate / 100)).toFixed(2);
               return (
                 <div key={t.id} className={`border-2 p-5 shadow-brutal ${theme.color}`} data-testid={`topup-${t.id}`}>
                   <div className="text-4xl">{theme.emoji}</div>
                   <div className="font-display font-black text-xl mt-2">{t.name}</div>
                   <div className="mt-2 font-display font-black text-3xl tracking-tighter">${t.price_usd}</div>
+                  <div className="text-[10px] font-mono text-neutral-700 mt-1">+ ${taxAmt} HST = <strong>${totalAmt}</strong></div>
                   <ul className="mt-3 space-y-1 text-xs font-mono">
                     <li><strong>{t.voice_min}</strong> voice min</li>
                     <li><strong>{t.messages.toLocaleString()}</strong> AI msgs</li>

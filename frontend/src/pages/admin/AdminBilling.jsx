@@ -37,12 +37,22 @@ export default function AdminBilling() {
 
       <div className="grid md:grid-cols-5 gap-4">
         <div className="border-2 border-black bg-white p-4" data-testid="summary-mrr">
-          <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">MRR</div>
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">MRR (pre-tax)</div>
           <div className="font-display font-black text-3xl mt-2">${data.summary.mrr_usd}</div>
+          {data.summary.mrr_with_tax_usd && (
+            <div className="text-[10px] font-mono text-neutral-500 mt-1">
+              + ${data.summary.mrr_tax_usd} HST = <strong>${data.summary.mrr_with_tax_usd}</strong> billed
+            </div>
+          )}
         </div>
         <div className="border-2 border-black bg-white p-4" data-testid="summary-arr">
-          <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">ARR</div>
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">ARR (pre-tax)</div>
           <div className="font-display font-black text-3xl mt-2">${data.summary.arr_usd.toLocaleString()}</div>
+          {data.summary.arr_with_tax_usd && (
+            <div className="text-[10px] font-mono text-neutral-500 mt-1">
+              ${data.summary.arr_with_tax_usd.toLocaleString()} with HST
+            </div>
+          )}
         </div>
         <div className="border-2 border-black bg-white p-4">
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">Active subs</div>
@@ -57,6 +67,23 @@ export default function AdminBilling() {
           <div className="font-display font-black text-3xl mt-2">{data.summary.total_vendors}</div>
         </div>
       </div>
+
+      {data.summary.total_collected_subtotal_usd > 0 && (
+        <div className="border-2 border-black bg-amber-50 p-4 grid md:grid-cols-3 gap-4 text-sm" data-testid="tax-summary">
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-600">Total collected (subtotal)</div>
+            <div className="font-display font-black text-xl">${data.summary.total_collected_subtotal_usd.toLocaleString()}</div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-600">HST {data.summary.tax_rate_percent}% remitted</div>
+            <div className="font-display font-black text-xl">${data.summary.total_collected_tax_usd.toLocaleString()}</div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-600">Total charged customers</div>
+            <div className="font-display font-black text-xl">${data.summary.total_collected_with_tax_usd.toLocaleString()}</div>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center border-2 border-black bg-white">
         <Search size={16} className="ml-3"/>

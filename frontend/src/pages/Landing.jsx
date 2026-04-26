@@ -383,6 +383,7 @@ const Pricing = () => (
               <span className="font-display font-black text-6xl tracking-tighter">${p.price}</span>
               <span className="text-xs font-mono text-neutral-500">/mo USD</span>
             </div>
+            <div className="text-[11px] font-mono text-neutral-500 mt-1">+ 13% HST · ${(p.price * 1.13).toFixed(2)}/mo total</div>
             <ul className="mt-6 space-y-2 text-sm">
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.min}</strong> voice minutes/mo</li>
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.msg.toLocaleString()}</strong> AI messages/mo</li>
@@ -404,6 +405,9 @@ const Pricing = () => (
       <p className="mt-10 text-center text-sm font-mono text-neutral-600">
         Need more minutes? Grab a <strong>one-time top-up</strong> (Spark → Armada, $125 to $5,499) from your billing page. Never expires.
       </p>
+      <div className="mt-4 max-w-2xl mx-auto border-2 border-amber-700 bg-amber-50 px-4 py-2 text-xs font-mono text-center" data-testid="landing-tax-notice">
+        <strong>Heads up:</strong> All prices in USD. <strong>13% HST</strong> (Canadian Harmonized Sales Tax) is added to every plan and top-up at checkout.
+      </div>
     </div>
   </section>
 );
