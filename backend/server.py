@@ -1668,16 +1668,23 @@ async def _ensure_stripe_prices():
 
 @app.on_event("startup")
 async def startup_stripe():
-    # Backfill billing fields on existing vendors (idempotent migration)
+    # Backfill billing fields on existing vendors (idempotent migration).
+    # CRITICAL: trial_ends_at must be derived from the vendor's actual
+    # created_at, NOT from "now". Otherwise every backend restart silently
+    # extends old vendors' trials. Migration only applies to vendors that
+    # have no subscription_status yet (i.e. never been touched).
     try:
-        async for v in db.vendors.find({}, {"_id": 0, "id": 1, "plan": 1, "created_at": 1, "is_exempt": 1}):
+        async for v in db.vendors.find({}, {"_id": 0, "id": 1, "plan": 1, "created_at": 1, "is_exempt": 1, "subscription_status": 1, "trial_ends_at": 1}):
             updates = {}
-            if "subscription_status" not in v:
-                # Pre-existing vendors → treat as fresh trial from today
+            if "subscription_status" not in v or v.get("subscription_status") is None:
+                # Pre-existing vendors → trial = created_at + TRIAL_DAYS.
+                created_iso = v.get("created_at") or now_iso()
+                try:
+                    created_dt = datetime.fromisoformat(created_iso.replace("Z", "+00:00"))
+                except Exception:
+                    created_dt = datetime.now(timezone.utc)
                 updates["subscription_status"] = "trialing"
-                updates["trial_ends_at"] = (
-                    datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)
-                ).isoformat()
+                updates["trial_ends_at"] = (created_dt + timedelta(days=TRIAL_DAYS)).isoformat()
                 updates["minutes_balance"] = 0.0
                 updates["messages_balance"] = TRIAL_MESSAGE_CAP
                 updates["plan_minutes_monthly"] = 0
@@ -1685,6 +1692,33 @@ async def startup_stripe():
                 updates["plan"] = "trial"
             if updates:
                 await db.vendors.update_one({"id": v["id"]}, {"$set": updates})
+
+        # One-shot correction for vendors whose trial_ends_at was previously
+        # set to "now + TRIAL_DAYS" by an older migration. We detect these by
+        # the gap between created_at and trial_ends_at being far larger than
+        # TRIAL_DAYS, and rewrite to created_at + TRIAL_DAYS.
+        async for v in db.vendors.find(
+            {"subscription_status": "trialing", "trial_ends_at": {"$exists": True}, "is_exempt": {"$ne": True}},
+            {"_id": 0, "id": 1, "created_at": 1, "trial_ends_at": 1},
+        ):
+            try:
+                created_dt = datetime.fromisoformat(v["created_at"].replace("Z", "+00:00"))
+                trial_end_dt = datetime.fromisoformat(v["trial_ends_at"].replace("Z", "+00:00"))
+                gap_days = (trial_end_dt - created_dt).total_seconds() / 86400
+                # If gap is larger than TRIAL_DAYS + 0.5 day tolerance, repair it.
+                if gap_days > (TRIAL_DAYS + 0.5):
+                    correct = (created_dt + timedelta(days=TRIAL_DAYS)).isoformat()
+                    await db.vendors.update_one(
+                        {"id": v["id"]},
+                        {"$set": {"trial_ends_at": correct}},
+                    )
+                    logger.info(
+                        "Repaired drifted trial_ends_at for vendor %s: was %s → now %s",
+                        v["id"], v["trial_ends_at"], correct,
+                    )
+            except Exception:
+                continue
+
         # Ensure kamal (test vendor) is exempt and has messages_balance high
         kamal_user = await db.users.find_one({"email": "kamal@thedigisparrow.com"}, {"_id": 0})
         if kamal_user and kamal_user.get("vendor_id"):
