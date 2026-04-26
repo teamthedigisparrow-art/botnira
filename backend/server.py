@@ -3392,7 +3392,7 @@ async def voice_search_numbers(req: SearchNumbersReq, user: dict = Depends(requi
 
 
 @api_router.post("/voice/buy-number")
-async def voice_buy_number(req: BuyNumberReq, user: dict = Depends(require_vendor)):
+async def voice_buy_number(req: BuyNumberReq, request: _StripeRequest, user: dict = Depends(require_vendor)):
     """Activate voice for the vendor: create subaccount if needed, purchase the number,
     wire voice webhook. Hard-blocked if vendor is on trial / paywalled / exempt-disabled."""
     vendor = await db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
@@ -3412,7 +3412,9 @@ async def voice_buy_number(req: BuyNumberReq, user: dict = Depends(require_vendo
     sub = await _get_or_create_subaccount(user["vendor_id"], vendor.get("name", "Vendor"))
     sub_tw = _twilio_subaccount_client(sub["account_sid"], sub["auth_token"])
 
-    base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else ""
+    # Derive webhook base URL from the vendor's incoming request — not from
+    # PUBLIC_BASE_URL — so a stale env var can never poison newly bought numbers.
+    base = _public_base_url_from_request(request) or (PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else "")
     voice_webhook = f"{base}/api/voice/webhook"
     status_callback = f"{base}/api/voice/status-callback"
     sms_webhook = f"{base}/api/sms/webhook"
@@ -3983,15 +3985,38 @@ async def voice_stream(ws: WebSocket, call_id: str):
             pass
 
 
+def _public_base_url_from_request(request: _StripeRequest) -> str:
+    """Derive the public base URL the caller used to reach us, ignoring
+    PUBLIC_BASE_URL when the request itself tells us the right hostname.
+
+    Why: Emergent deployment env vars sometimes don't propagate to the
+    running pod — but the request's `X-Forwarded-Host` / `Host` header IS
+    always set correctly by the ingress (it comes from the user's browser).
+    By trusting the request, the migration tool always writes the SAME
+    domain that the admin is currently using to call this endpoint.
+    """
+    fwd_proto = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
+    fwd_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    if fwd_host:
+        return f"{fwd_proto}://{fwd_host}".rstrip("/")
+    # Last-resort fallback (only used when there's no Host header — unlikely)
+    return (PUBLIC_BASE_URL or "").rstrip("/")
+
+
 @api_router.post("/admin/voice/migrate-webhooks")
-async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
-    """Re-wire every purchased Twilio number to the current PUBLIC_BASE_URL.
-    Safe to run anytime. Idempotent — numbers already pointing at the right URL are skipped."""
-    if not PUBLIC_BASE_URL:
-        raise HTTPException(status_code=500, detail="PUBLIC_BASE_URL not set in backend .env")
-    target_voice = f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/webhook"
-    target_status = f"{PUBLIC_BASE_URL.rstrip('/')}/api/voice/status-callback"
-    target_sms = f"{PUBLIC_BASE_URL.rstrip('/')}/api/sms/webhook"
+async def admin_voice_migrate_webhooks(request: _StripeRequest, user: dict = Depends(require_admin)):
+    """Re-wire every purchased Twilio number to the current public URL.
+    Derives target URL from the inbound request's Host header — so calling
+    this from `https://botnira.com/admin` always writes botnira.com to Twilio,
+    even if PUBLIC_BASE_URL env var is misconfigured.
+    Safe to run anytime. Idempotent — numbers already pointing at the right
+    URL are skipped."""
+    base = _public_base_url_from_request(request)
+    if not base:
+        raise HTTPException(status_code=500, detail="Could not determine public base URL")
+    target_voice = f"{base}/api/voice/webhook"
+    target_status = f"{base}/api/voice/status-callback"
+    target_sms = f"{base}/api/sms/webhook"
     updated, skipped, failed = [], [], []
     async for conn in db.voice_connections.find({}, {"_id": 0}):
         sub = await db.voice_subaccounts.find_one(
@@ -4036,7 +4061,7 @@ async def admin_voice_migrate_webhooks(user: dict = Depends(require_admin)):
         except Exception as e:
             failed.append({"number": conn.get("phone_number"), "reason": str(e)[:120]})
     return {
-        "public_base_url": PUBLIC_BASE_URL,
+        "public_base_url": base,
         "target_voice_webhook": target_voice,
         "target_sms_webhook": target_sms,
         "updated": updated, "skipped": skipped, "failed": failed,
