@@ -82,7 +82,14 @@ export default function Channels() {
     toast.success("Inbound simulated — check inbox");
   };
 
-  const widgetOrigin = process.env.REACT_APP_BACKEND_URL || window.location.origin;
+  // Vendors copy this snippet onto their public website, so it must point at
+  // the production domain (botnira.com), NOT the internal preview URL. We keep
+  // it in REACT_APP_WIDGET_PUBLIC_URL so it can be flipped independently of
+  // the API origin used by the dashboard.
+  const widgetOrigin =
+    process.env.REACT_APP_WIDGET_PUBLIC_URL ||
+    process.env.REACT_APP_BACKEND_URL ||
+    window.location.origin;
   const WIDGET_VERSION = "1.3";
   const embed = `<script src="${widgetOrigin}/widget.js?v=${WIDGET_VERSION}" data-botnira-vendor="${vendor?.id || ""}" defer></script>`;
   const copy = async () => {
