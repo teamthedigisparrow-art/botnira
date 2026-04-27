@@ -4,70 +4,70 @@
 Multi-tenant AI receptionist SaaS. Each business (vendor) has an isolated workspace, trains its own bot, and serves customers across web, WhatsApp, email, SMS, and voice. Bot strictly answers within the vendor's own business info. One superadmin oversees all vendors with full billing visibility.
 
 ## Architecture
-- **Backend**: FastAPI + MongoDB (Motor), JWT auth, emergentintegrations `LlmChat` for GPT-5.2 / Claude Sonnet 4.5 / Gemini.
+- **Backend**: FastAPI + MongoDB (Motor), JWT auth, emergentintegrations `LlmChat` for GPT / Claude / Gemini.
 - **Frontend**: React 19 + Tailwind + Shadcn UI + Recharts. Swiss/neo-brutalist theme.
-- **Billing**: Stripe (LIVE mode) — subscriptions + prepaid top-ups, 13% HST tax, hard-stop at zero balance.
-- **Voice**: Twilio (subaccount per vendor) + OpenAI Realtime API bridge.
+- **Billing**: Stripe (LIVE) — subscriptions + prepaid top-ups, 13% HST, hard-stop at 0 balance.
+- **Voice**: Twilio (subaccount per vendor) ⇄ OpenAI Realtime bridge.
 - **SMS**: Twilio (US/CA only).
-- **Email OTP**: Gmail SMTP.
+- **Email**: IMAP poll (60 s) + SMTP outbound from vendor's own address. Fernet-encrypted at rest.
+- **Email OTP**: Gmail SMTP for system-side OTP / appointment / purchase emails.
 
 ## Seeded accounts
 See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 ### Core
-- JWT auth, Vendor profile, Bot Studio, Web widget (Shadow DOM), Unified 3-pane Inbox
-- WhatsApp Cloud API, SMS (US/CA), Voice bridge, Outbound email
+- JWT auth + email-OTP signup/reset + optional 2FA
+- Vendor profile, Bot Studio, Web widget (Shadow DOM)
+- Unified 3-pane Inbox with rich text + live agent override
 - Conversations / Appointments / Analytics
 - Superadmin: vendors, suspend/activate, global analytics
 - Privacy Policy, Terms
 
+### Channels
+- **Web** — embed widget v1.3
+- **WhatsApp** — Meta Cloud API + embedded signup
+- **Voice** — Twilio number search/buy + Media Streams ⇄ OpenAI Realtime
+- **SMS** — Twilio inbound+outbound (US/CA)
+- **Email (NEW — 2026-04-27)** — IMAP polling every 60 s, SMTP outbound, AI auto-reply toggle, threading via Message-ID/In-Reply-To, password Fernet-encrypted with key derived from JWT_SECRET. Auto-detects IMAP/SMTP for Gmail / Outlook / Yahoo / Zoho / iCloud. Advanced fields for custom IMAP servers. Channels page panel with status, last-sync timestamp, received/sent counters, "Check now" manual poll, AI auto-reply pause/resume.
+
 ### Landing & SEO
-- Landing: Hero, Channels, Features, Use Cases (8 cards), Multi-language, How, Pricing, FAQ, Footer
-- 8 SEO-optimized Use Case detail pages at `/use-case/<slug>` (salon, dental, auto-repair, real-estate, restaurant, education, home-services, healthcare-clinic) with FAQ JSON-LD, OpenGraph, canonical, BreadcrumbList schema
-- **TrustedBy** strip — animated marquee of fictional brand SVG wordmarks + 6,000+/47/1.2M/4.9★ stats
-- **Reviews** grid — placeholder Google-style customer reviews (8 cards, multi-country)
-- Rich black 4-column footer (brand, use cases, product, company) on Landing + UseCase pages
+- Landing: Hero, Channels, TrustedBy strip, Features, Use Cases (8), Multi-language, How, Reviews, Pricing, FAQ, Footer
+- 8 SEO Use Case detail pages at `/use-case/<slug>` with FAQ JSON-LD, OpenGraph, canonical, BreadcrumbList
+- Rich black 4-column footer matching `/use-case/*` style on Landing
 - Google Analytics + Search Console tags in `index.html`
 
 ### Stripe billing (LIVE mode)
-- 3 recurring plans + 6 prepaid top-ups, 13% HST Stripe Tax, 5-day free trial, paywall, manual sync recovery, webhook signature verification
-- Purchase confirmation emails
-
-### Auth hardening
-- Signup → email verify (OTP), password reset (OTP), optional 2FA
-- Idempotent admin/demo/exempt seeding
-
-### Voice
-- Twilio subaccount-per-vendor, search/buy numbers, Media Streams ⇄ OpenAI Realtime bridge, transcript saved to inbox, per-call minute metering, deactivation releases number
-- Admin "Migrate Twilio webhooks" button (uses request `Origin` header to pick prod URL)
-
-### SMS
-- Twilio inbound webhook + outbound helper (US/CA only)
+- 3 plans + 6 prepaid top-ups, 13% HST, 5-day free trial, paywall, manual sync recovery, webhook signature verification, purchase confirmation emails.
 
 ## Changelog
-- **2026-04-27** — Wired `<TrustedBy />` and `<Reviews />` into Landing page composition. Replaced minimal Landing footer with rich 4-column black footer matching `/use-case/*` style.
-- **2026-04-27** — 8 SEO Use Case detail pages live at `/use-case/<slug>`. Per-page meta, OG, schema.org FAQ + Article + Breadcrumb JSON-LD.
-- **2026-04-26** — 13% HST Stripe Tax + Purchase confirmation emails; Twilio SMS webhooks (US/CA); Stripe self-healing sync; trial expiry fix; usage panel on Billing page; admin Twilio webhook migration button.
-- **2026-04-23** — Twilio voice + Stripe LIVE + email-OTP auth + landing FAQ shipped.
+- **2026-04-27** — **Email channel shipped.** IMAP polling + SMTP outbound, vendor-managed inbox, AI auto-reply, Fernet password encryption, Channels page panel, threading via Message-ID. 23/23 backend pytest cases pass. (`/app/backend/server.py:3748+`, `/app/frontend/src/components/botnira/ConnectEmailPanel.jsx`)
+- **2026-04-27** — Wired `<TrustedBy />` and `<Reviews />` into Landing. Replaced Landing footer with rich 4-col black footer.
+- **2026-04-27** — 8 SEO Use Case detail pages live at `/use-case/<slug>`.
+- **2026-04-26** — 13% HST + purchase emails + Twilio SMS + Stripe self-healing + trial fix + usage panel + admin Twilio webhook migration.
+- **2026-04-23** — Twilio voice + Stripe LIVE + email-OTP auth + landing FAQ.
 
 ## Pending / Backlog
-### P0 (blocking voice launch)
-- User must provide `OPENAI_REALTIME_API_KEY` for the audio bridge.
+### P0
+- User must provide `OPENAI_REALTIME_API_KEY` for voice audio bridge.
 
 ### P1
-- **Inbound Email channel** (IMAP poller into unified inbox; only outbound works today).
-- **WhatsApp templates manager** for 24h+ Meta session window.
-- Bing Webmaster verification — placeholder meta tag in `/app/frontend/public/index.html`, awaiting code from user.
+- WhatsApp templates manager (24h+ Meta session window).
 - Customer-facing appointment confirmation email + BCC superadmin.
+- Bing Webmaster verification — placeholder meta tag awaiting code.
+- Email channel polish: edit IMAP/SMTP host post-connect (currently disconnect+reconnect).
 
 ### P2
 - Vendor onboarding wizard.
 - Superadmin vendor analytics drill-down.
 - KB uploads, sentiment/intent analytics, team invites.
-- Refactor `server.py` (>4100 lines) into `/app/backend/routes/*` modules.
+
+### Tech debt (high)
+- Refactor `server.py` (>4700 lines) into `/app/backend/routes/{billing,voice,email,sms,auth,admin,conversations}.py`. The Email module (3748–4344) is self-contained and is the cleanest first extraction.
+- Idempotency fallback for emails without Message-ID header.
+- `_email_poll_once` concurrency cap when vendor count > 50.
 
 ## Known items
-- Stripe LIVE; Twilio paid account.
-- Meta App Review pending for wider WhatsApp onboarding.
-- Reviews + brand wall on landing are GENERIC PLACEHOLDERS (not real Google reviews / not real brands) per legal compliance — vendor must collect real reviews before claiming any "verified" status.
+- Stripe LIVE; Twilio paid; Meta App Review pending for wider WhatsApp.
+- Reviews + brand wall on landing are PLACEHOLDERS by legal design.
+- Email connect requires app passwords (not regular login passwords).
