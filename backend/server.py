@@ -783,7 +783,7 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
         return None
 
 
-async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str, external_id: Optional[str] = None):
+async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str, external_id: Optional[str] = None, extra: Optional[Dict[str, Any]] = None):
     msg = {
         "id": new_id(),
         "conversation_id": conversation_id,
@@ -794,6 +794,10 @@ async def _push_message(conversation_id: str, vendor_id: str, role: str, content
     }
     if external_id:
         msg["external_id"] = external_id
+    if extra:
+        for k, v in extra.items():
+            if v is not None:
+                msg[k] = v
     await db.messages.insert_one(msg)
     await db.conversations.update_one(
         {"id": conversation_id},
@@ -3852,25 +3856,29 @@ def _decode_header_str(raw) -> str:
         return str(raw)
 
 
-def _extract_plain_body(msg) -> str:
-    """Pull the cleanest plain-text body from a parsed email.message.EmailMessage."""
-    # Prefer text/plain, fall back to a stripped HTML.
+def _extract_bodies(msg):
+    """Returns (plain_text, html_or_None). Prefers a clean text/plain part, but also
+    captures the raw HTML body when present so the frontend can render it."""
+    plain = ""
+    html = None
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition", "")):
+            disp = str(part.get("Content-Disposition", ""))
+            if "attachment" in disp:
+                continue
+            ctype = part.get_content_type()
+            if ctype == "text/plain" and not plain:
                 try:
-                    return part.get_content().strip()
+                    plain = (part.get_content() or "").strip()
                 except Exception:
                     payload = part.get_payload(decode=True) or b""
-                    return payload.decode(part.get_content_charset() or "utf-8", errors="replace").strip()
-        for part in msg.walk():
-            if part.get_content_type() == "text/html":
+                    plain = payload.decode(part.get_content_charset() or "utf-8", errors="replace").strip()
+            elif ctype == "text/html" and not html:
                 try:
                     html = part.get_content()
                 except Exception:
                     payload = part.get_payload(decode=True) or b""
                     html = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
-                return _strip_html(html)
     else:
         ctype = msg.get_content_type()
         try:
@@ -3879,9 +3887,18 @@ def _extract_plain_body(msg) -> str:
             payload = msg.get_payload(decode=True) or b""
             content = payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
         if ctype == "text/html":
-            return _strip_html(content)
-        return (content or "").strip()
-    return ""
+            html = content
+        else:
+            plain = (content or "").strip()
+    if not plain and html:
+        plain = _strip_html(html)
+    return plain, html
+
+
+def _extract_plain_body(msg) -> str:
+    """Pull the cleanest plain-text body from a parsed email.message.EmailMessage."""
+    plain, _html = _extract_bodies(msg)
+    return plain
 
 
 def _strip_html(html: str) -> str:
@@ -3962,7 +3979,7 @@ def _imap_fetch_unseen(conn: dict) -> List[dict]:
                 message_id = (msg.get("Message-ID") or "").strip()
                 in_reply_to = (msg.get("In-Reply-To") or "").strip()
                 references = (msg.get("References") or "").strip()
-                body = _extract_plain_body(msg)
+                body, html_body = _extract_bodies(msg)
                 trimmed = _strip_quoted_reply(body)
                 out.append({
                     "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
@@ -3970,6 +3987,7 @@ def _imap_fetch_unseen(conn: dict) -> List[dict]:
                     "from_name": (from_name or "").strip() or (from_email or ""),
                     "subject": subject,
                     "body": trimmed or body,
+                    "body_html": html_body,
                     "message_id": message_id,
                     "in_reply_to": in_reply_to,
                     "references": references,
@@ -4055,11 +4073,17 @@ async def _process_inbound_email(conn: dict, parsed: dict):
             {"id": conv["id"]}, {"$set": {"subject": parsed["subject"]}}
         )
 
-    # Save the incoming user message
+    # Save the incoming user message (with raw HTML when present so the inbox
+    # can render it richly).
     body = (parsed.get("body") or "").strip()
     if not body:
         body = parsed.get("subject") or "(empty email)"
-    await _push_message(conv["id"], vendor_id, "user", body, external_id=msg_id or None)
+    extra = {}
+    if parsed.get("body_html"):
+        extra["body_html"] = parsed["body_html"]
+    if parsed.get("subject"):
+        extra["subject"] = parsed["subject"]
+    await _push_message(conv["id"], vendor_id, "user", body, external_id=msg_id or None, extra=extra)
 
     # Update connection counters
     await db.email_connections.update_one(
@@ -4149,19 +4173,40 @@ class EmailConnectReq(BaseModel):
     imap_port: Optional[int] = None
     smtp_host: Optional[str] = None
     smtp_port: Optional[int] = None
-    ai_auto_reply: Optional[bool] = True
+    # Default OFF so vendors review what BotNira drafts before going hands-off.
+    # Vendors can flip it on later from the Channels panel.
+    ai_auto_reply: Optional[bool] = False
 
 
 def _verify_imap_smtp_sync(email_address: str, password: str,
                            imap_host: str, imap_port: int,
-                           smtp_host: str, smtp_port: int) -> Dict[str, Any]:
-    """Hits both IMAP + SMTP. Returns {ok, error?, imap_ok, smtp_ok}."""
-    out = {"ok": False, "imap_ok": False, "smtp_ok": False, "error": None}
+                           smtp_host: str, smtp_port: int,
+                           skip_existing: bool = True) -> Dict[str, Any]:
+    """Hits both IMAP + SMTP. Returns {ok, error?, imap_ok, smtp_ok, marked_seen}.
+    When skip_existing=True, marks every UNSEEN message currently in INBOX as
+    \\Seen so the poller only processes truly NEW emails arriving after connect."""
+    out = {"ok": False, "imap_ok": False, "smtp_ok": False, "error": None, "marked_seen": 0}
     # IMAP
     try:
         M = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=15)
         M.login(email_address, password)
-        try: M.select("INBOX", readonly=True)
+        try:
+            if skip_existing:
+                # Open INBOX read/write so we can flag old mail as Seen.
+                M.select("INBOX", readonly=False)
+                typ, data = M.search(None, "UNSEEN")
+                if typ == "OK" and data and data[0]:
+                    uids = data[0].split()
+                    if uids:
+                        # Comma-separated UID set keeps it to a single STORE call.
+                        uid_set = b",".join(uids)
+                        try:
+                            M.store(uid_set, "+FLAGS", "(\\Seen)")
+                            out["marked_seen"] = len(uids)
+                        except Exception:
+                            pass
+            else:
+                M.select("INBOX", readonly=True)
         finally:
             try: M.logout()
             except Exception: pass
@@ -4211,6 +4256,7 @@ async def email_connect(req: EmailConnectReq, user: dict = Depends(require_vendo
         req.email_address, req.password,
         hosts["imap_host"], hosts["imap_port"],
         hosts["smtp_host"], hosts["smtp_port"],
+        True,  # skip_existing — flag all current UNSEEN as read so poller only sees NEW mail
     )
     if not verify["ok"]:
         raise HTTPException(status_code=400, detail=verify.get("error") or "Email login failed")
@@ -4224,7 +4270,7 @@ async def email_connect(req: EmailConnectReq, user: dict = Depends(require_vendo
         "smtp_host": hosts["smtp_host"],
         "smtp_port": hosts["smtp_port"],
         "password_encrypted": _enc_password(req.password),
-        "ai_auto_reply": bool(req.ai_auto_reply if req.ai_auto_reply is not None else True),
+        "ai_auto_reply": bool(req.ai_auto_reply if req.ai_auto_reply is not None else False),
         "enabled": True,
         "total_received": 0,
         "total_sent": 0,
@@ -4242,7 +4288,11 @@ async def email_connect(req: EmailConnectReq, user: dict = Depends(require_vendo
         {"$set": {"status": "connected", "updated_at": now_iso()}},
         upsert=True,
     )
-    return {"ok": True, "connection": _public_conn(record)}
+    return {
+        "ok": True,
+        "connection": _public_conn(record),
+        "skipped_old": verify.get("marked_seen", 0),
+    }
 
 
 @api_router.get("/email/status")
@@ -4283,6 +4333,33 @@ async def email_disconnect(user: dict = Depends(require_vendor)):
         upsert=True,
     )
     return {"ok": True}
+
+
+@api_router.post("/email/draft-reply")
+async def email_draft_reply(payload: Dict[str, str], user: dict = Depends(require_vendor)):
+    """Generate an AI reply for an email conversation WITHOUT sending it.
+    The vendor reviews / edits in the inbox composer and hits Send themselves."""
+    conv_id = payload.get("conversation_id")
+    if not conv_id:
+        raise HTTPException(status_code=400, detail="conversation_id required")
+    conv = await db.conversations.find_one(
+        {"id": conv_id, "vendor_id": user["vendor_id"], "channel": "email"}, {"_id": 0}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Email conversation not found")
+    # Anchor on the latest customer message in the thread.
+    last_user = await db.messages.find_one(
+        {"conversation_id": conv_id, "role": "user"},
+        sort=[("created_at", -1)], projection={"_id": 0, "content": 1},
+    )
+    if not last_user:
+        raise HTTPException(status_code=400, detail="No customer message to reply to.")
+    try:
+        reply = await get_ai_reply(user["vendor_id"], conv_id, last_user.get("content", ""))
+    except Exception as e:
+        logger.exception("[email] draft-reply failed: %s", e)
+        raise HTTPException(status_code=502, detail="AI couldn't generate a reply right now.")
+    return {"ok": True, "draft": reply}
 
 
 @api_router.post("/email/poll-now")

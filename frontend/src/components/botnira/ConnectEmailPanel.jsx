@@ -20,7 +20,7 @@ export default function ConnectEmailPanel({ onChange }) {
   // Form state
   const [emailAddr, setEmailAddr] = useState("");
   const [password, setPassword] = useState("");
-  const [aiReply, setAiReply] = useState(true);
+  const [aiReply, setAiReply] = useState(false);
   const [showAdv, setShowAdv] = useState(false);
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState(993);
@@ -56,8 +56,14 @@ export default function ConnectEmailPanel({ onChange }) {
         if (smtpHost) body.smtp_host = smtpHost;
         if (smtpPort) body.smtp_port = Number(smtpPort);
       }
-      await api.post("/email/connect", body);
-      toast.success("Email connected — polling your inbox now.");
+      const { data } = await api.post("/email/connect", body);
+      const skipped = data?.skipped_old || 0;
+      toast.success(
+        skipped > 0
+          ? `Email connected — ${skipped} existing email${skipped === 1 ? "" : "s"} skipped. Now watching for new mail.`
+          : "Email connected — watching for new mail.",
+        { duration: 6000 }
+      );
       setPassword("");
       load();
       onChange?.();
@@ -238,15 +244,20 @@ export default function ConnectEmailPanel({ onChange }) {
             </label>
           </div>
 
-          <label className="flex items-center gap-3 text-sm font-bold cursor-pointer select-none">
+          <label className="flex items-start gap-3 text-sm font-bold cursor-pointer select-none">
             <input
               data-testid="email-toggle-ai"
               type="checkbox"
               checked={aiReply}
               onChange={(e) => setAiReply(e.target.checked)}
-              className="w-4 h-4 accent-[#002FA7]"
+              className="w-4 h-4 accent-[#002FA7] mt-0.5"
             />
-            Let BotNira draft and send AI replies automatically
+            <span className="flex-1">
+              Let BotNira draft and send AI replies automatically
+              <span className="block text-[11px] font-mono font-normal text-neutral-500 mt-0.5">
+                Off by default — start with manual review, then flip on once you trust the drafts.
+              </span>
+            </span>
           </label>
 
           <button
