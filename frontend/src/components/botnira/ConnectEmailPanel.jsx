@@ -218,7 +218,7 @@ export default function ConnectEmailPanel({ onChange }) {
           </div>
 
           {/* Step-by-step Gmail app password guide — most vendors are on Gmail */}
-          <details className="border-2 border-black bg-white" data-testid="gmail-app-pw-guide">
+          <details className="group border-2 border-black bg-white" data-testid="gmail-app-pw-guide">
             <summary className="cursor-pointer px-5 py-4 list-none flex items-center justify-between">
               <span className="flex items-center gap-2 font-display font-bold">
                 <Info size={16} className="text-[#002FA7]" />

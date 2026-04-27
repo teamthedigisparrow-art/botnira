@@ -100,6 +100,7 @@ export default function VendorLayout() {
               end={l.end}
               data-testid={l.tid}
               title={collapsed ? l.label : undefined}
+              aria-label={collapsed ? l.label : undefined}
               className={({isActive}) =>
                 `${collapsed ? "flex items-center justify-center px-2 py-2.5" : "flex items-center gap-3 px-3 py-2"} text-sm font-bold border-2 ${isActive ? "bg-[#002FA7] text-white border-black" : "border-transparent hover:border-black"}`
               }
