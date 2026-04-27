@@ -9,6 +9,7 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButton";
 import ConnectVoicePanel from "../../components/botnira/ConnectVoicePanel";
+import ConnectEmailPanel from "../../components/botnira/ConnectEmailPanel";
 
 const META = {
   web: { icon: Globe, label: "Web Widget", note: "Embed on any website. Always live." },
@@ -136,7 +137,7 @@ export default function Channels() {
                   Upgrade to unlock
                 </Link>
               )}
-              {!locked && c.channel !== "web" && c.channel !== "voice" && (
+              {!locked && c.channel !== "web" && c.channel !== "voice" && c.channel !== "email" && (
                 <button data-testid={`ch-toggle-${c.channel}`} onClick={() => toggle(c.channel, connected ? "disconnected" : "connected")} className="mt-4 w-full text-sm font-bold border-2 border-black px-3 py-2 hover-lift">
                   {connected ? "Disconnect" : "Mark as connected"}
                 </button>
@@ -144,6 +145,11 @@ export default function Channels() {
               {!locked && c.channel === "voice" && (
                 <div className="mt-4 text-xs font-mono text-neutral-600 border border-dashed border-black/40 p-2">
                   See the Voice activation panel below to buy a phone number.
+                </div>
+              )}
+              {!locked && c.channel === "email" && (
+                <div className="mt-4 text-xs font-mono text-neutral-600 border border-dashed border-black/40 p-2">
+                  See the Email panel below to connect your inbox.
                 </div>
               )}
             </div>
@@ -297,6 +303,11 @@ export default function Channels() {
       {/* Voice panel (Twilio + OpenAI Realtime) */}
       {allowedChannels.has("voice") && (
         <ConnectVoicePanel onChange={loadChannels} />
+      )}
+
+      {/* Email panel (IMAP poll + SMTP send, vendor-managed) */}
+      {allowedChannels.has("email") && (
+        <ConnectEmailPanel onChange={loadChannels} />
       )}
 
       {/* Web widget installer */}
