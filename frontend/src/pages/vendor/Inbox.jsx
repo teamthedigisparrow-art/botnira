@@ -119,7 +119,7 @@ export default function Inbox() {
     const { data } = await api.get(`/conversations/${id}`);
     setDetail(data);
     setTimeout(() => scrollRef.current?.scrollTo({ top: 99999 }), 50);
-    // If the thread was unread, flip it + update the local list instantly.
+    // Flip unread → read ONLY if the thread was actually unread — saves a DB write per open.
     if (data?.conversation?.unread) {
       try {
         await api.post(`/conversations/${id}/read`);

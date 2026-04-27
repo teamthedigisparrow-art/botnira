@@ -4,62 +4,58 @@
 Multi-tenant AI receptionist SaaS. Each business (vendor) has an isolated workspace, trains its own bot, and serves customers across web, WhatsApp, email, SMS, and voice. Bot strictly answers within the vendor's own business info. One superadmin oversees all vendors with full billing visibility.
 
 ## Architecture
-- **Backend**: FastAPI + MongoDB (Motor), JWT auth, emergentintegrations `LlmChat`. Modules: `server.py` (4173 lines, monolith) + `email_routes.py` (extracted Email channel, ~620 lines).
+- **Backend**: FastAPI + MongoDB (Motor), JWT auth, emergentintegrations `LlmChat`. Modules: `server.py` (~4200 lines) + `email_routes.py` (~670 lines, extracted).
 - **Frontend**: React 19 + Tailwind + Shadcn UI + Recharts + DOMPurify (HTML email sanitization).
 - **Billing**: Stripe LIVE — subscriptions + prepaid top-ups, 13% HST, hard-stop at 0 balance.
 - **Voice**: Twilio (subaccount per vendor) ⇄ OpenAI Realtime bridge.
 - **SMS**: Twilio (US/CA only).
-- **Email**: IMAP poll (60 s) + SMTP outbound from vendor's own address. Fernet-encrypted at rest. HTML body preserved + sanitized for inbox rendering.
+- **Email**: IMAP poll (60 s) with **UID watermark** + SMTP outbound from vendor's own address. Fernet-encrypted. HTML preserved + sanitized.
 
 ## Seeded accounts
 See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
-### Refactor (NEW — 2026-04-27 v3)
-- **Email channel extracted** into `/app/backend/email_routes.py` (~620 lines). Server.py shrunk by 638 lines (4811 → 4173). Pattern: extracted module imports `server as _s` for helpers (db, logger, _push_message, _ensure_conversation, _vendor_can_use_channel, _decrement_message_balance, _maybe_book_appointment, get_ai_reply, require_vendor, JWT_SECRET, SMTP_FROM_NAME, now_iso, new_id). Server.py mounts the router at the bottom: `api_router.include_router(_email_router, prefix="/email")` + `app.add_event_handler("startup", _email_start)`. Late `from email_routes import ...` inside `agent_reply`'s email branch avoids circular import. 23/23 regression tests pass.
+### Inbox (v3 — 2026-04-27 iter 5)
+- **Server-side pagination** — 30 threads per page, `Load more` button. `/api/conversations?limit&offset` returns `{items, total, has_more, unread_total}`.
+- **Server-side search** (debounced 280ms) — `?q=...` searches `customer_name`, `customer_contact`, `last_message_preview`, `subject` across the full dataset. Load-more hidden during search (global).
+- **Unread indicator** on every thread card — blue dot (top-left), bolder font, blue "NEW" label, subtle blue bg. Auto mark-as-read on open (`POST /conversations/{cid}/read`). Top-right "N NEW" badge.
+- **Channel filter pills** with real-time totals (parallel count calls).
+- **Thread timestamps** — "2:43pm" today / "Yesterday 11am" / "Mar 14 1:23pm".
+- **HTML email rendering** via DOMPurify.
+- **Generate AI reply** button (email channel only).
 
-### Vendor app shell (NEW — 2026-04-27 v3)
-- **Collapsible left sidebar** in VendorLayout — toggle button + persisted `localStorage` state (`botnira.vendor.sidebar.collapsed`). Collapses 260px → 64px, hides labels (icon-only with tooltips + aria-label for a11y). Frees ~196px of horizontal real estate for the inbox/main pane.
+### Email channel (v3 — 2026-04-27 iter 5)
+- **Bulletproof UID watermark polling** — `UID SEARCH UID {last_uid+1}:*`, immune to \Seen flag flips, label moves, re-deliveries.
+- **3-layer UIDNEXT fallback on connect** — STATUS(UIDNEXT) → SELECT untagged response → SEARCH ALL max+1.
+- **Fresh start on reconnect** — `fresh_start=true` checkbox (default ON) wipes previously ingested email threads so the inbox starts clean.
+- **Clear history** button in the Email panel (post-connect) for one-click wipe.
+- **AI auto-reply OFF by default** — vendor reviews drafts first.
+- **HTML body captured + sanitized** for rich rendering.
+- **Step-by-step Gmail app-password walkthrough** in the connect panel.
+- Endpoints: `/api/email/{connect, status, settings, disconnect, poll-now, send, draft-reply, clear-history}`.
+- Auto-detects IMAP/SMTP for Gmail / Outlook / Yahoo / Zoho / iCloud.
 
-### Channels — Email panel (NEW — 2026-04-27 v3)
-- **Step-by-step Gmail App-Password walkthrough** — `<details>` block with 6 numbered steps, direct links to `myaccount.google.com/security` and `/apppasswords`, Tip block (workspace accounts), and Privacy note (Fernet encryption). Renders only when email is not yet connected.
-
-### Inbox UX (2026-04-27 v2)
-- 3-pane: filters | thread list | conversation detail
-- Channel filter pills (Show all default + per-channel with live counts)
-- Search bar — name / phone / email / preview substring match
-- Generate AI reply button (email channel only) — calls `/api/email/draft-reply`, stuffs draft into composer
-- HTML email rendering via DOMPurify (allowlist: no script/style/iframe/event handlers)
-- Live agent override on every channel
-
-### Email channel (2026-04-27 v2)
-- IMAP poll every 60 s (`SEARCH UNSEEN`)
-- First-connect skip-old: existing unread mail flagged `\Seen` instantly so poller only sees new arrivals
-- AI auto-reply OFF by default
-- HTML body capture + storage on `messages.body_html`
-- SMTP outbound from vendor's own address with proper threading (Message-ID / In-Reply-To / References)
-- Fernet-encrypted password (key derived from `JWT_SECRET`)
-- Endpoints: `/api/email/{connect, status, settings, disconnect, poll-now, send, draft-reply}` (now in `email_routes.py`)
-- Auto-detects IMAP/SMTP for Gmail / Outlook / Yahoo / Zoho / iCloud
-- 1 outbound = 1 message debited
+### Vendor shell
+- **Collapsible left sidebar** (260 ↔ 64px) with localStorage persistence.
 
 ### Other channels & core (unchanged)
 - JWT auth + email-OTP signup/reset + optional 2FA
-- Web widget, WhatsApp Cloud API, Voice (Twilio + OpenAI Realtime), SMS (Twilio US/CA)
-- Conversations / Appointments / Analytics / Bot Studio
+- Web widget, WhatsApp Cloud API, Voice, SMS (US/CA)
+- Appointments / Analytics / Bot Studio
 - Superadmin: vendors, suspend/activate, global analytics
-- Landing: Hero, Channels, TrustedBy, Features, Use Cases (8), Multi-language, How, Reviews, Pricing, FAQ, rich black footer
+- Landing: Hero, Channels, TrustedBy, Features, Use Cases (8), Multi-language, How, Reviews, Pricing, FAQ, rich footer
 - 8 SEO Use Case detail pages at `/use-case/<slug>`
-- Stripe LIVE — 3 plans, 6 top-ups, 13% HST, paywall, manual sync recovery, purchase confirmation emails
+- Stripe LIVE — 3 plans, 6 top-ups, 13% HST, paywall, sync recovery, purchase emails
 
 ## Changelog
-- **2026-04-27 v3** — Email module extracted to `email_routes.py`. Collapsible vendor sidebar with localStorage persistence. Step-by-step Gmail app-password guide on Channels page. 23/23 regression tests pass.
-- **2026-04-27 v2** — Inbox UX overhaul (channel pills, search, AI draft, HTML rendering). Email v2 (skip-old, AI off default, HTML capture).
-- **2026-04-27 v1** — Email channel shipped (IMAP + SMTP).
-- **2026-04-27** — Landing page TrustedBy + Reviews + rich footer, 8 SEO Use Case pages.
-- **2026-04-26** — 13% HST + purchase emails + Twilio SMS + Stripe self-healing + admin Twilio webhook migration.
-- **2026-04-23** — Twilio voice + Stripe LIVE + email-OTP auth + landing FAQ.
+- **2026-04-27 iter 5** — Inbox pagination (30/page + Load More), debounced server-side search, unread indicator + mark-read endpoint, Fresh-start checkbox on reconnect, 3-layer UIDNEXT fallback. **41/41 pytest cases pass.**
+- **2026-04-27 iter 4** — UID watermark poller, /email/clear-history, thread timestamps.
+- **2026-04-27 iter 3** — Email module extracted to email_routes.py, collapsible sidebar, Gmail app-password guide.
+- **2026-04-27 iter 2** — Channel filter pills, Generate AI reply, HTML email rendering.
+- **2026-04-27 iter 1** — Email channel MVP (IMAP + SMTP).
+- **2026-04-26** — 13% HST + Twilio SMS + Stripe self-healing + Twilio webhook migration.
+- **2026-04-23** — Twilio voice + Stripe LIVE + email-OTP + landing FAQ.
 
 ## Pending / Backlog
 ### P0
@@ -68,7 +64,7 @@ See `/app/memory/test_credentials.md`.
 ### P1
 - WhatsApp templates manager (24h+ Meta session window).
 - Customer-facing appointment confirmation email + BCC superadmin.
-- Bing Webmaster verification — placeholder meta tag awaiting code.
+- Bing Webmaster verification meta tag (awaiting code).
 - Edit IMAP/SMTP host post-connect (currently disconnect+reconnect).
 
 ### P2
@@ -76,14 +72,15 @@ See `/app/memory/test_credentials.md`.
 - Superadmin vendor analytics drill-down.
 - KB uploads, sentiment/intent analytics, team invites.
 
-### Tech debt (in progress)
-- ✅ Email module extracted.
-- 🔜 Voice module extraction (~700 lines next).
-- 🔜 WhatsApp module extraction.
-- 🔜 Billing module extraction.
+### Tech debt
+- ✅ Email module extracted (`email_routes.py`).
+- 🔜 Voice module extraction (~700 lines).
+- 🔜 WhatsApp / Billing / Auth module extraction.
+- 🔜 Idempotency fallback for emails without Message-ID header.
+- 🔜 Concurrency cap in `_email_poll_once` when vendors > 50.
 
 ## Known items
-- Stripe LIVE; Twilio paid; Meta App Review pending for wider WhatsApp.
-- Reviews + brand wall on landing are PLACEHOLDERS by legal design.
-- Email connect requires app passwords (not regular login passwords) — Gmail walkthrough now in-app.
-- Kamal's email connection currently DISCONNECTED (testing agent disconnected to verify guide UI). User to reconnect with their app password.
+- Stripe LIVE, Twilio paid, Meta App Review pending.
+- Landing Reviews + TrustedBy are placeholders by legal design.
+- Email connect requires **app passwords** (not regular login); Gmail walkthrough in-app.
+- Kamal's email **reconnected** during iter-5 testing with fresh_start → cleaned 440 historical threads, fresh UID watermark at 105732.

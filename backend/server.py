@@ -924,7 +924,7 @@ async def list_conversations(
             {"subject":              {"$regex": escaped, "$options": "i"}},
         ]
         # When searching, broaden the window so the result set isn't cut mid-search.
-        limit = min(max(limit, 200), 200)
+        limit = 200
 
     total = await db.conversations.count_documents(mongo_q)
     items = await (

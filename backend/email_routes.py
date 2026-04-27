@@ -595,7 +595,7 @@ async def email_connect(req: EmailConnectReq, user: dict = Depends(_s.require_ve
     # Triggered via payload.fresh_start=True (frontend sends this on "Reconnect
     # fresh" action). Non-destructive by default.
     cleared = 0
-    if getattr(req, "fresh_start", False):
+    if req.fresh_start:
         email_convs = await _s.db.conversations.find(
             {"vendor_id": user["vendor_id"], "channel": "email"}, {"_id": 0, "id": 1}
         ).to_list(10000)
