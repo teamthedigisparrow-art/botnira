@@ -1,0 +1,25 @@
+{
+  "summary": "Verified the 3 changes in this round: (1) backend refactor of Email channel into /app/backend/email_routes.py — all 23 regression tests pass, poller still starts ('[email] poller started (every 60s)' confirmed in backend logs), router correctly mounted at /api/email/* via api_router.include_router, late-import in agent_reply resolves; (2) new Gmail app-password walkthrough <details> guide renders when email is disconnected — 6 numbered steps, Tip + Privacy notes present, expands on summary click; (3) collapsible vendor sidebar with localStorage persistence works correctly on /app/channels and /app/inbox — collapses to 64px, labels hide, expand/collapse buttons swap, state persists across reloads. No regressions found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_email_channel.py",
+    "/app/test_reports/pytest/email_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "email_routes.py extraction is clean (~620 lines, self-contained, single `import server as _s` with lazy helper access). server.py still 4733 lines — next candidates for extraction: voice.py (~700 lines), billing.py, whatsapp.py.",
+    "Late import pattern `from email_routes import _get_email_connection, _email_send_async` inside agent_reply works but leaves the reverse-dependency invisible to static analysers. Consider a tiny module-level cache + explicit dependency injection if you extract more channels this way.",
+    "Sidebar label hiding uses `{!collapsed && <span>...}` — works perfectly, but the NavLink loses the accessible text. The `title={collapsed ? l.label : undefined}` provides a tooltip fallback, but for a11y consider adding `aria-label={l.label}` on the NavLink itself when collapsed so screen-readers still announce the destination.",
+    "Gmail guide <details> uses `group-open:rotate-45` on the `+` marker but the parent <summary> is not `group` — the rotate won't fire. Cosmetic-only; the guide still opens/closes correctly.",
+    "Sidebar expand button renders BELOW the brand/logo row only when collapsed — reasonable, but visually it sits between the (now-hidden) workspace block and the nav, adding ~50px blank space at top. Consider merging the expand button into the collapsed brand row to reclaim vertical space."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (23/23 email regression pytest cases)", "frontend": "100% (Gmail guide + sidebar collapse/persist/inbox-layout all verified)"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu used for all UI + API testing. admin@botnira.com + demo@botnira.com used by backend suite for auth-gating + trial-lock coverage.",
+  "seed_data_creation": "None. Side-effect: kamal's email connection was disconnected (via /api/email/disconnect) to force the Gmail guide UI into view. Left disconnected as instructed — user will reconnect manually with their app password.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Email channel is still disconnected for kamal (intentional — was disconnected to verify the new Gmail guide). Run `pytest /app/backend/tests/test_email_channel.py -v` → 23/23. Verified: (a) /app/backend/email_routes.py exists, imports `server as _s`, exposes `router` + `_start_email_poller`; (b) server.py line 4163 mounts router via api_router.include_router(_email_router, prefix='/email'); (c) late-import in agent_reply (line 981) resolves cleanly — static import check succeeded; (d) Gmail guide: <details data-testid='gmail-app-pw-guide'> opens on summary click, shows 6 steps, has Tip + Privacy blocks, contains live links to myaccount.google.com/security and /apppasswords; (e) Sidebar: initial state width 260px / data-collapsed='0', after click collapse-btn → 64px / data-collapsed='1', labels disappear (nav-inbox inner text becomes ''), expand-btn appears, collapse-btn hidden, localStorage key 'botnira.vendor.sidebar.collapsed' set to '1', persists across reload and cross-navigation to /app/inbox; (f) Inbox with sidebar collapsed → main pane width 1856px vs 1660px expanded = +196px recovered, 3-pane inbox grid renders correctly (screenshot in .screenshots/inbox_collapsed.jpg).",
+  "rca_of_the_issue": "N/A — no bugs. Refactor is correctly structured (server.py imports router at the bottom so email_routes.py can `import server as _s` for helpers without circular ImportError). The `from email_routes import ...` late import inside agent_reply works because by the time an HTTP request hits that code path, Python has already fully imported both modules."
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Mail, RefreshCw, Trash2, ChevronDown, ChevronUp, ExternalLink, Loader2 } from "lucide-react";
+import { Mail, RefreshCw, Trash2, ChevronDown, ChevronUp, ExternalLink, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 
@@ -216,6 +216,57 @@ export default function ConnectEmailPanel({ onChange }) {
               </a>
             </div>
           </div>
+
+          {/* Step-by-step Gmail app password guide — most vendors are on Gmail */}
+          <details className="border-2 border-black bg-white" data-testid="gmail-app-pw-guide">
+            <summary className="cursor-pointer px-5 py-4 list-none flex items-center justify-between">
+              <span className="flex items-center gap-2 font-display font-bold">
+                <Info size={16} className="text-[#002FA7]" />
+                How to generate a Gmail app password (3-minute walkthrough)
+              </span>
+              <span className="text-xl group-open:rotate-45 transition-transform select-none">＋</span>
+            </summary>
+            <div className="px-5 pb-5 text-sm text-neutral-800 space-y-3 border-t border-black/10 pt-4">
+              <p className="text-[13px] leading-relaxed">
+                Google requires <strong>2-Step Verification</strong> on your account before it will let you create an app password. Once that's on, you can generate a 16-character password just for BotNira (you can revoke it anytime).
+              </p>
+              <ol className="list-decimal pl-5 space-y-2 text-[13px] leading-relaxed">
+                <li>
+                  Open
+                  <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer" className="underline font-bold mx-1 inline-flex items-center gap-1">
+                    Google Account → Security <ExternalLink size={10} />
+                  </a>
+                  and turn on <strong>2-Step Verification</strong> if it's not already on. Skip this step if it already is.
+                </li>
+                <li>
+                  Go straight to
+                  <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="underline font-bold mx-1 inline-flex items-center gap-1">
+                    myaccount.google.com/apppasswords <ExternalLink size={10} />
+                  </a>
+                  (you'll be asked to re-enter your Google password).
+                </li>
+                <li>
+                  In the <strong>App name</strong> field type something memorable like <span className="font-mono bg-neutral-100 border border-black/20 px-1">BotNira</span> and click <strong>Create</strong>.
+                </li>
+                <li>
+                  Google shows you a <strong>16-character password</strong> in a yellow box (e.g. <span className="font-mono bg-neutral-100 border border-black/20 px-1">abcd efgh ijkl mnop</span>).
+                  Copy it now — you won't see it again.
+                </li>
+                <li>
+                  Paste that password into the <strong>App password</strong> field above (spaces are fine; Google ignores them).
+                </li>
+                <li>
+                  Click <strong>Connect inbox</strong>. We'll test IMAP + SMTP and confirm in ~5 seconds.
+                </li>
+              </ol>
+              <div className="border-l-4 border-yellow-400 bg-yellow-50 p-3 text-[12px] font-mono text-neutral-800">
+                <strong>Tip:</strong> Don't see "App passwords"? Your Google account is probably a workspace/managed account with the option turned off — ask your IT admin to enable <em>Less secure app access</em> equivalents, or use a personal Gmail. Workspace admins can also issue an app password from the <a className="underline" href="https://admin.google.com" target="_blank" rel="noreferrer">Admin console</a>.
+              </div>
+              <div className="text-[12px] font-mono text-neutral-600">
+                <strong>Privacy:</strong> BotNira encrypts your app password at rest with Fernet (key derived from your tenant's JWT secret). It's only ever used to talk to Gmail's IMAP/SMTP servers — never logged, never shared, never used to train AI.
+              </div>
+            </div>
+          </details>
 
           <div className="grid md:grid-cols-2 gap-4">
             <label className="block">
