@@ -3986,20 +3986,40 @@ async def voice_stream(ws: WebSocket, call_id: str):
 
 
 def _public_base_url_from_request(request: _StripeRequest) -> str:
-    """Derive the public base URL the caller used to reach us, ignoring
-    PUBLIC_BASE_URL when the request itself tells us the right hostname.
+    """Derive the public base URL the caller used to reach us.
 
     Why: Emergent deployment env vars sometimes don't propagate to the
-    running pod — but the request's `X-Forwarded-Host` / `Host` header IS
-    always set correctly by the ingress (it comes from the user's browser).
-    By trusting the request, the migration tool always writes the SAME
-    domain that the admin is currently using to call this endpoint.
+    running pod, and Cloudflare rewrites X-Forwarded-Host to the internal
+    hostname. The most reliable signal is the browser-sent Origin/Referer
+    header, which contains the URL the user actually has in their address bar.
+
+    Order of preference:
+      1. Origin header (browser-set, never rewritten by Cloudflare)
+      2. Referer header (same source, fallback)
+      3. X-Forwarded-Host (set by ingress / edge)
+      4. Host header
+      5. PUBLIC_BASE_URL env var (last resort)
     """
+    # 1. Origin header — most authoritative. Looks like "https://botnira.com"
+    origin = (request.headers.get("origin") or "").strip()
+    if origin and origin.startswith(("http://", "https://")):
+        return origin.rstrip("/")
+    # 2. Referer — same info, just appended with the path
+    referer = (request.headers.get("referer") or "").strip()
+    if referer and referer.startswith(("http://", "https://")):
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(referer)
+            if p.scheme and p.netloc:
+                return f"{p.scheme}://{p.netloc}".rstrip("/")
+        except Exception:
+            pass
+    # 3-4. Forwarded host headers (less reliable on Cloudflare)
     fwd_proto = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
     fwd_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
     if fwd_host:
         return f"{fwd_proto}://{fwd_host}".rstrip("/")
-    # Last-resort fallback (only used when there's no Host header — unlikely)
+    # 5. Last-resort
     return (PUBLIC_BASE_URL or "").rstrip("/")
 
 
