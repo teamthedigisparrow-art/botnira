@@ -1,20 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
-import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe, Search, Sparkles, Loader2, X } from "lucide-react";
+import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe, Search, Sparkles, Loader2, X, Dot } from "lucide-react";
 import DOMPurify from "dompurify";
 import RichText from "../../components/botnira/RichText";
 
 const ICONS = { web: Globe, whatsapp: MessageCircle, email: Mail, sms: MessageSquare, voice: Phone };
 const CHANNELS = ["web", "whatsapp", "email", "sms", "voice"];
+const PAGE_SIZE = 30;
+
+// Smart relative timestamp: "2:43pm" today, "Yesterday 11am", "Mar 14 1:23pm"
+// for older. Keeps the thread row compact while still being unambiguous.
+function formatRelative(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  const sameYesterday = d.toDateString() === y.toDateString();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).toLowerCase().replace(" ", "");
+  if (sameDay) return time;
+  if (sameYesterday) return `Yesterday ${time}`;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const datePart = d.toLocaleDateString([], sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  return `${datePart} ${time}`;
+}
+
+function fullDateTitle(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString();
+}
 
 const ChannelBadge = ({ ch }) => {
   const Icon = ICONS[ch] || Globe;
   return <span className="badge" data-testid={`badge-${ch}`}><Icon size={10} /> {ch}</span>;
 };
 
-// Strict allowlist for inbound HTML email rendering. Strips all script/style,
-// event handlers, and dangerous URL schemes — DOMPurify is the source of truth.
 function sanitizeEmailHtml(html) {
   if (!html) return "";
   return DOMPurify.sanitize(html, {
@@ -27,20 +51,67 @@ function sanitizeEmailHtml(html) {
 
 export default function Inbox() {
   const [convs, setConvs] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [active, setActive] = useState(null);
   const [detail, setDetail] = useState(null);
+
   const [statusFilter, setStatusFilter] = useState("all");
   const [channelFilter, setChannelFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
   const [reply, setReply] = useState("");
   const [drafting, setDrafting] = useState(false);
   const scrollRef = useRef(null);
 
+  // Debounce the search input so we don't hit the server on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 280);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  const buildQuery = (offset) => {
+    const p = new URLSearchParams();
+    if (statusFilter !== "all") p.set("status", statusFilter);
+    if (channelFilter !== "all") p.set("channel", channelFilter);
+    if (debouncedSearch) p.set("q", debouncedSearch);
+    p.set("limit", String(PAGE_SIZE));
+    p.set("offset", String(offset));
+    return p.toString();
+  };
+
+  // Initial / filter-change load: reset the list
   const load = async () => {
-    const q = statusFilter === "all" ? "" : `?status=${statusFilter}`;
-    const { data } = await api.get(`/conversations${q}`);
-    setConvs(data);
-    if (data.length && !active) setActive(data[0].id);
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/conversations?${buildQuery(0)}`);
+      const items = data.items || [];
+      setConvs(items);
+      setTotal(data.total || 0);
+      setHasMore(!!data.has_more);
+      setUnreadTotal(data.unread_total || 0);
+      if (items.length && !active) setActive(items[0].id);
+    } catch (e) {
+      console.error(e);
+    } finally { setLoading(false); }
+  };
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const { data } = await api.get(`/conversations?${buildQuery(convs.length)}`);
+      const newItems = data.items || [];
+      setConvs(prev => [...prev, ...newItems]);
+      setTotal(data.total || 0);
+      setHasMore(!!data.has_more);
+    } catch (e) {
+      console.error(e);
+    } finally { setLoadingMore(false); }
   };
 
   const loadDetail = async (id) => {
@@ -48,32 +119,45 @@ export default function Inbox() {
     const { data } = await api.get(`/conversations/${id}`);
     setDetail(data);
     setTimeout(() => scrollRef.current?.scrollTo({ top: 99999 }), 50);
+    // If the thread was unread, flip it + update the local list instantly.
+    if (data?.conversation?.unread) {
+      try {
+        await api.post(`/conversations/${id}/read`);
+        setConvs(prev => prev.map(c => c.id === id ? { ...c, unread: false } : c));
+        setUnreadTotal(u => Math.max(0, u - 1));
+      } catch (_) { /* best-effort */ }
+    }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
-  useEffect(() => { loadDetail(active); }, [active]);
+  // Reload whenever a filter or the debounced search changes
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, channelFilter, debouncedSearch]);
 
-  // Derived list — applies channel + free-text search filters client-side
-  const visibleConvs = useMemo(() => {
-    let v = convs;
-    if (channelFilter !== "all") v = v.filter(c => c.channel === channelFilter);
-    const q = search.trim().toLowerCase();
-    if (q) {
-      v = v.filter(c =>
-        (c.customer_name || "").toLowerCase().includes(q) ||
-        (c.customer_contact || "").toLowerCase().includes(q) ||
-        (c.last_message_preview || "").toLowerCase().includes(q)
-      );
-    }
-    return v;
-  }, [convs, channelFilter, search]);
+  useEffect(() => { loadDetail(active); /* eslint-disable-line */ }, [active]);
 
-  // Counts per channel — drives the filter pills
-  const channelCounts = useMemo(() => {
-    const out = { all: convs.length };
-    for (const c of CHANNELS) out[c] = convs.filter(v => v.channel === c).length;
-    return out;
-  }, [convs]);
+  // Counts per channel (from a lightweight parallel call so the filter pills
+  // always show the real totals, not just the currently-filtered window).
+  const [channelCounts, setChannelCounts] = useState({ all: 0, web: 0, whatsapp: 0, email: 0, sms: 0, voice: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: all } = await api.get(`/conversations?limit=1&offset=0${statusFilter !== "all" ? `&status=${statusFilter}` : ""}`);
+        const counts = { all: all.total || 0 };
+        // Fire channel counts in parallel — one tiny count-only query each.
+        const results = await Promise.all(CHANNELS.map(c =>
+          api.get(`/conversations?limit=1&offset=0&channel=${c}${statusFilter !== "all" ? `&status=${statusFilter}` : ""}`)
+            .then(r => r.data.total || 0)
+            .catch(() => 0)
+        ));
+        CHANNELS.forEach((c, i) => { counts[c] = results[i]; });
+        if (!cancelled) setChannelCounts(counts);
+      } catch (e) { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [statusFilter, debouncedSearch]);
 
   const sendReply = async () => {
     if (!reply.trim() || !active) return;
@@ -116,8 +200,13 @@ export default function Inbox() {
     <div className="h-screen grid grid-cols-[320px_360px_1fr] overflow-hidden" data-testid="inbox-page">
       {/* filters */}
       <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto">
-        <div className="h-16 border-b-2 border-black px-5 flex items-center">
+        <div className="h-16 border-b-2 border-black px-5 flex items-center justify-between">
           <h2 className="font-display font-black text-xl tracking-tight">Inbox</h2>
+          {unreadTotal > 0 && (
+            <span data-testid="inbox-unread-total" className="text-[10px] font-bold tracking-wider bg-[#002FA7] text-white px-2 py-0.5">
+              {unreadTotal} NEW
+            </span>
+          )}
         </div>
         <div className="p-4 space-y-1">
           {["all", "open", "resolved"].map(f => (
@@ -158,7 +247,9 @@ export default function Inbox() {
       {/* list */}
       <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto flex flex-col">
         <div className="h-16 border-b-2 border-black px-5 flex items-center justify-between flex-shrink-0">
-          <span className="text-xs font-bold tracking-widest uppercase">Threads ({visibleConvs.length})</span>
+          <span className="text-xs font-bold tracking-widest uppercase">
+            Threads <span data-testid="thread-count">({convs.length}/{total})</span>
+          </span>
           {channelFilter !== "all" && (
             <span className="text-[10px] font-mono px-2 py-0.5 bg-yellow-200 border border-black">
               {channelFilter.toUpperCase()} only
@@ -172,7 +263,7 @@ export default function Inbox() {
             data-testid="thread-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, phone or email"
+            placeholder="Search all threads by name / phone / email"
             className="flex-1 bg-transparent text-sm focus:outline-none font-mono"
           />
           {search && (
@@ -182,17 +273,76 @@ export default function Inbox() {
           )}
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {visibleConvs.length === 0 && <div className="p-6 text-sm text-neutral-500">No conversations match.</div>}
-          {visibleConvs.map(c => (
-            <button key={c.id} data-testid={`thread-${c.id}`} onClick={() => setActive(c.id)} className={`w-full text-left px-5 py-4 border-b border-black/10 ${active === c.id ? "bg-neutral-100" : "hover:bg-neutral-50"}`}>
-              <div className="flex items-center justify-between">
-                <span className="font-bold truncate">{c.customer_name || "Guest"}</span>
-                <ChannelBadge ch={c.channel} />
-              </div>
-              <div className="text-xs text-neutral-600 font-mono truncate mt-1">{c.last_message_preview || "…"}</div>
-              <div className="text-[10px] text-neutral-500 mt-1">{c.status.toUpperCase()}</div>
+          {loading && (
+            <div className="p-6 text-sm font-mono text-neutral-500 flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" /> Loading…
+            </div>
+          )}
+          {!loading && convs.length === 0 && (
+            <div className="p-6 text-sm text-neutral-500" data-testid="threads-empty">
+              {debouncedSearch ? `No threads match "${debouncedSearch}".` : "No conversations yet."}
+            </div>
+          )}
+          {convs.map(c => {
+            const ts = c.updated_at || c.created_at;
+            const unread = !!c.unread;
+            return (
+              <button
+                key={c.id}
+                data-testid={`thread-${c.id}`}
+                data-unread={unread ? "1" : "0"}
+                onClick={() => setActive(c.id)}
+                className={`w-full text-left px-5 py-4 border-b border-black/10 relative ${active === c.id ? "bg-neutral-100" : "hover:bg-neutral-50"} ${unread ? "bg-blue-50/40" : ""}`}
+              >
+                {unread && (
+                  <span
+                    data-testid={`thread-unread-dot-${c.id}`}
+                    className="absolute top-4 left-1 w-2 h-2 rounded-full bg-[#002FA7]"
+                    aria-label="Unread"
+                  />
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`truncate ${unread ? "font-black" : "font-bold"}`}>{c.customer_name || "Guest"}</span>
+                  <ChannelBadge ch={c.channel} />
+                </div>
+                <div className={`text-xs font-mono truncate mt-1 ${unread ? "text-neutral-800 font-bold" : "text-neutral-600"}`}>
+                  {c.last_message_preview || "…"}
+                </div>
+                <div className="flex items-center justify-between mt-1 gap-2">
+                  <span className="text-[10px] text-neutral-500">{c.status.toUpperCase()}{unread && <span className="ml-1 text-[#002FA7]">• NEW</span>}</span>
+                  {ts && (
+                    <span
+                      data-testid={`thread-time-${c.id}`}
+                      className="text-[10px] font-mono text-neutral-500 whitespace-nowrap"
+                      title={fullDateTitle(ts)}
+                    >
+                      {formatRelative(ts)}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+          {/* Load more — hidden while searching (search lifts the limit server-side). */}
+          {!loading && hasMore && !debouncedSearch && (
+            <button
+              data-testid="load-more-btn"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="w-full text-center text-sm font-bold py-4 border-t-2 border-black bg-yellow-50 hover:bg-yellow-100 disabled:opacity-60"
+            >
+              {loadingMore ? (
+                <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</span>
+              ) : (
+                `Load ${Math.min(PAGE_SIZE, total - convs.length)} more threads (${total - convs.length} remaining)`
+              )}
             </button>
-          ))}
+          )}
+          {!loading && !hasMore && convs.length > 0 && convs.length >= PAGE_SIZE && !debouncedSearch && (
+            <div className="w-full text-center text-[11px] font-mono text-neutral-400 py-3 border-t border-black/10" data-testid="threads-end">
+              · end of list ·
+            </div>
+          )}
         </div>
       </div>
 
@@ -243,8 +393,6 @@ export default function Inbox() {
                     <div
                       data-testid="email-html-body"
                       className="email-html-body prose prose-sm max-w-none"
-                      // SAFETY: sanitizeEmailHtml passes through DOMPurify with a strict allowlist
-                      // (no script/style/iframe, no event handlers). User-controlled markup only.
                       dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(m.body_html) }}
                     />
                   ) : (

@@ -799,9 +799,17 @@ async def _push_message(conversation_id: str, vendor_id: str, role: str, content
             if v is not None:
                 msg[k] = v
     await db.messages.insert_one(msg)
+    # A customer message flips the thread to unread so the vendor sees a
+    # clear indicator; bot/agent replies leave the read-state alone.
+    conv_update: Dict[str, Any] = {
+        "updated_at": now_iso(),
+        "last_message_preview": content[:120],
+    }
+    if role == "user":
+        conv_update["unread"] = True
     await db.conversations.update_one(
         {"id": conversation_id},
-        {"$set": {"updated_at": now_iso(), "last_message_preview": content[:120]}},
+        {"$set": conv_update},
     )
     return {k: v for k, v in msg.items() if k != "_id"}
 
@@ -882,15 +890,72 @@ async def chat_poll(vendor_id: str, conversation_id: str, since: Optional[str] =
 async def list_conversations(
     channel: Optional[str] = None,
     status: Optional[str] = None,  # noqa: F811 — function param, not the fastapi import
+    q: Optional[str] = None,       # free-text search across name / contact / preview
+    limit: int = 30,
+    offset: int = 0,
     user: dict = Depends(require_vendor),
 ):
-    q: Dict[str, Any] = {"vendor_id": user["vendor_id"]}
+    """Paginated + server-side searchable conversation list.
+
+    - default `limit=30` keeps the inbox snappy on vendors with thousands of threads.
+    - `q` searches `customer_name`, `customer_contact`, `last_message_preview`, and
+      `subject` (case-insensitive). When `q` is set, the UI lifts the pagination
+      to scan the full dataset — we raise the effective limit to 200 so search feels
+      global.
+    - Returns `{items, total, has_more, unread_total}`.
+    """
+    # Hard caps to protect the DB
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+
+    mongo_q: Dict[str, Any] = {"vendor_id": user["vendor_id"]}
     if channel:
-        q["channel"] = channel
+        mongo_q["channel"] = channel
     if status:
-        q["status"] = status
-    items = await db.conversations.find(q, {"_id": 0}).sort("updated_at", -1).to_list(500)
-    return items
+        mongo_q["status"] = status
+    if q and q.strip():
+        # Escape regex metacharacters in the user's query so dots, brackets, etc. are
+        # treated literally. Still case-insensitive.
+        escaped = re.escape(q.strip())
+        mongo_q["$or"] = [
+            {"customer_name":        {"$regex": escaped, "$options": "i"}},
+            {"customer_contact":     {"$regex": escaped, "$options": "i"}},
+            {"last_message_preview": {"$regex": escaped, "$options": "i"}},
+            {"subject":              {"$regex": escaped, "$options": "i"}},
+        ]
+        # When searching, broaden the window so the result set isn't cut mid-search.
+        limit = min(max(limit, 200), 200)
+
+    total = await db.conversations.count_documents(mongo_q)
+    items = await (
+        db.conversations.find(mongo_q, {"_id": 0})
+        .sort("updated_at", -1)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
+    )
+    # Unread count respects the channel/status filters so the UI can show a
+    # badge per current view. Not affected by `offset` — it's the full count.
+    unread_q = dict(mongo_q, unread=True)
+    unread_total = await db.conversations.count_documents(unread_q)
+    return {
+        "items": items,
+        "total": total,
+        "has_more": offset + len(items) < total,
+        "unread_total": unread_total,
+    }
+
+
+@api_router.post("/conversations/{cid}/read")
+async def mark_conversation_read(cid: str, user: dict = Depends(require_vendor)):
+    """Flip a conversation from unread → read when the vendor opens it."""
+    res = await db.conversations.update_one(
+        {"id": cid, "vendor_id": user["vendor_id"]},
+        {"$set": {"unread": False}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
 
 
 @api_router.get("/conversations/{cid}")

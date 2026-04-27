@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Mail, RefreshCw, Trash2, ChevronDown, ChevronUp, ExternalLink, Loader2, Info } from "lucide-react";
+import { Mail, RefreshCw, Trash2, ChevronDown, ChevronUp, ExternalLink, Loader2, Info, Eraser } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 
@@ -21,6 +21,7 @@ export default function ConnectEmailPanel({ onChange }) {
   const [emailAddr, setEmailAddr] = useState("");
   const [password, setPassword] = useState("");
   const [aiReply, setAiReply] = useState(false);
+  const [freshStart, setFreshStart] = useState(true);
   const [showAdv, setShowAdv] = useState(false);
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState(993);
@@ -49,6 +50,7 @@ export default function ConnectEmailPanel({ onChange }) {
         email_address: emailAddr,
         password,
         ai_auto_reply: aiReply,
+        fresh_start: freshStart,
       };
       if (showAdv) {
         if (imapHost) body.imap_host = imapHost;
@@ -58,12 +60,12 @@ export default function ConnectEmailPanel({ onChange }) {
       }
       const { data } = await api.post("/email/connect", body);
       const skipped = data?.skipped_old || 0;
-      toast.success(
-        skipped > 0
-          ? `Email connected — ${skipped} existing email${skipped === 1 ? "" : "s"} skipped. Now watching for new mail.`
-          : "Email connected — watching for new mail.",
-        { duration: 6000 }
-      );
+      const cleared = data?.cleared_history || 0;
+      const bits = [];
+      if (cleared > 0) bits.push(`cleared ${cleared} old thread${cleared === 1 ? "" : "s"}`);
+      if (skipped > 0) bits.push(`marked ${skipped} existing email${skipped === 1 ? "" : "s"} as read in your inbox`);
+      const tail = bits.length ? ` (${bits.join(", ")})` : "";
+      toast.success(`Email connected. BotNira will ONLY process mail that arrives from now on${tail}.`, { duration: 9000 });
       setPassword("");
       load();
       onChange?.();
@@ -101,6 +103,27 @@ export default function ConnectEmailPanel({ onChange }) {
       load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Poll failed.");
+    } finally { setBusy(false); }
+  };
+
+  const clearHistory = async () => {
+    if (!window.confirm(
+      "Wipe every email conversation from BotNira?\n\n" +
+      "This deletes email threads and messages already ingested. Your Gmail inbox is NOT touched — only the BotNira copy.\n\n" +
+      "Use this if you connected before the 'new mail only' fix and want a clean start."
+    )) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post("/email/clear-history");
+      const d = data?.deleted || {};
+      toast.success(
+        `Cleared: ${d.conversations || 0} threads, ${d.messages || 0} messages, ${d.appointments || 0} appointments.`,
+        { duration: 7000 }
+      );
+      load();
+      onChange?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Clear failed.");
     } finally { setBusy(false); }
   };
 
@@ -175,7 +198,7 @@ export default function ConnectEmailPanel({ onChange }) {
 
           <div className="border-t-2 border-black pt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-neutral-600">Disconnecting pauses inbound + outbound email for this vendor.</div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 data-testid="email-poll-now"
                 onClick={pollNow}
@@ -183,6 +206,15 @@ export default function ConnectEmailPanel({ onChange }) {
                 className="text-sm font-bold border-2 border-black px-4 py-2 hover-lift flex items-center gap-2 bg-white disabled:opacity-60"
               >
                 <RefreshCw size={14} className={busy ? "animate-spin" : ""} /> Check now
+              </button>
+              <button
+                data-testid="email-clear-history-btn"
+                onClick={clearHistory}
+                disabled={busy}
+                className="text-sm font-bold border-2 border-black px-4 py-2 hover-lift flex items-center gap-2 bg-yellow-100 disabled:opacity-60"
+                title="Wipe all previously ingested email conversations — useful for a clean start"
+              >
+                <Eraser size={14} /> Clear history
               </button>
               <button
                 data-testid="email-disconnect-btn"
@@ -307,6 +339,22 @@ export default function ConnectEmailPanel({ onChange }) {
               Let BotNira draft and send AI replies automatically
               <span className="block text-[11px] font-mono font-normal text-neutral-500 mt-0.5">
                 Off by default — start with manual review, then flip on once you trust the drafts.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 text-sm font-bold cursor-pointer select-none">
+            <input
+              data-testid="email-toggle-fresh-start"
+              type="checkbox"
+              checked={freshStart}
+              onChange={(e) => setFreshStart(e.target.checked)}
+              className="w-4 h-4 accent-[#002FA7] mt-0.5"
+            />
+            <span className="flex-1">
+              Fresh start — wipe any previously ingested email threads before connecting
+              <span className="block text-[11px] font-mono font-normal text-neutral-500 mt-0.5">
+                Recommended. Ensures BotNira's inbox starts empty and only shows mail that arrives from this moment on. Your Gmail is NOT touched.
               </span>
             </span>
           </label>
