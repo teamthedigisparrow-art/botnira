@@ -713,9 +713,11 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
     """
     if not latest_bot_reply or not _BOOKING_KEYWORDS.search(latest_bot_reply):
         return None
-    existing = await db.appointments.find_one({"conversation_id": conversation_id})
-    if existing:
-        return None
+    # Legacy guard: "one appointment per conversation" blocked repeat bookings
+    # on long-running email / WhatsApp threads where the customer books for a
+    # second time. We now dedupe by (conversation_id, scheduled_at) AFTER we
+    # know the scheduled_at from the extractor — still protects against the
+    # same confirmation replying twice.
     if not EMERGENT_LLM_KEY:
         return None
 
@@ -754,6 +756,20 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
         data = json.loads(raw)
         if not data.get("booked"):
             return None
+        scheduled_at = data.get("scheduled_at", "") or ""
+        # Dedupe: skip if the same conversation already has an appointment
+        # for the exact same scheduled_at (prevents creating a duplicate
+        # when the vendor sends the confirmation reply twice). Empty
+        # scheduled_at falls back to the legacy one-per-convo rule.
+        if scheduled_at:
+            dup = await db.appointments.find_one({
+                "conversation_id": conversation_id,
+                "scheduled_at": scheduled_at,
+            })
+        else:
+            dup = await db.appointments.find_one({"conversation_id": conversation_id})
+        if dup:
+            return None
         # Resolve source (channel) from the conversation
         conv = await db.conversations.find_one({"id": conversation_id}, {"_id": 0, "channel": 1})
         source = (conv or {}).get("channel") or "web"
@@ -762,7 +778,7 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
             "vendor_id": vendor_id,
             "customer_name": data.get("customer_name", "Guest") or "Guest",
             "customer_contact": data.get("customer_contact", "") or "",
-            "scheduled_at": data.get("scheduled_at", "") or "",
+            "scheduled_at": scheduled_at,
             "notes": data.get("notes", "Booked via BotNira chat"),
             "status": "scheduled",
             "source": source,
@@ -1080,6 +1096,16 @@ async def agent_reply(cid: str, payload: Dict[str, str], user: dict = Depends(re
     if not delivery["ok"]:
         # Surface the delivery error so the UI can show a toast.
         raise HTTPException(status_code=502, detail=delivery["error"])
+
+    # If the vendor (or the AI draft they sent) just confirmed a booking in
+    # this reply, extract + persist the appointment. Same pathway used by
+    # every inbound channel's auto-reply — just plugged in here too so that
+    # live-agent / Generate-AI-reply sends are also captured.
+    try:
+        await _maybe_book_appointment(user["vendor_id"], cid, content)
+    except Exception as e:
+        logger.warning("[agent_reply] booking extraction failed: %s", e)
+
     return {"message": msg, "delivery": delivery}
 
 
