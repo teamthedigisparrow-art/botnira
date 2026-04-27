@@ -2,6 +2,9 @@ import { Link } from "react-router-dom";
 import { useEffect } from "react";
 import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle } from "lucide-react";
 import BrandMark from "../components/BrandMark";
+import Reviews from "../components/marketing/Reviews";
+import TrustedBy from "../components/marketing/TrustedBy";
+import { USE_CASE_PAGES } from "../data/useCases";
 
 const Nav = () => (
   <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
@@ -160,6 +163,16 @@ const USE_CASES = [
   { icon: PackageCheck, title: "Runs order tracking & e-commerce support", body: "Where's-my-order queries, returns, sizing questions — resolved instantly so your support team handles only the tricky stuff." },
 ];
 
+// Map landing-card titles → use-case detail page slugs (where one exists)
+const USECASE_SLUG_BY_TITLE = {
+  "Powers salons, spas & beauty bars": "salon",
+  "Runs a clinic front desk": "dental",
+  "Dispatches service & trade businesses": "home-services",
+  "Qualifies leads for sales teams": "real-estate",
+  "Answers queries for schools & coaching centers": "education",
+  "Runs order tracking & e-commerce support": "restaurant",
+};
+
 const UseCases = () => (
   <section id="usecases" className="border-b-2 border-black bg-white">
     <div className="max-w-7xl mx-auto px-6 py-20">
@@ -173,19 +186,49 @@ const UseCases = () => (
         </p>
       </div>
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {USE_CASES.map((u, i) => (
-          <div key={u.title} className="border-2 border-black bg-white p-6 hover-lift shadow-brutal" data-testid={`usecase-${i}`}>
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 bg-[#002FA7] text-white border-2 border-black grid place-items-center shrink-0">
-                <u.icon size={18}/>
+        {USE_CASES.map((u, i) => {
+          const slug = USECASE_SLUG_BY_TITLE[u.title];
+          const Card = (
+            <div className={`border-2 border-black bg-white p-6 hover-lift shadow-brutal ${slug ? "cursor-pointer h-full" : ""}`} data-testid={`usecase-${i}`}>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-[#002FA7] text-white border-2 border-black grid place-items-center shrink-0">
+                  <u.icon size={18}/>
+                </div>
+                <div>
+                  <div className="font-display font-black text-lg leading-tight">{u.title}</div>
+                </div>
               </div>
-              <div>
-                <div className="font-display font-black text-lg leading-tight">{u.title}</div>
-              </div>
+              <div className="mt-3 text-sm text-neutral-700 leading-relaxed">{u.body}</div>
+              {slug && (
+                <div className="mt-4 text-xs font-bold tracking-widest uppercase text-[#002FA7] inline-flex items-center gap-1">
+                  Learn more <ArrowRight size={12}/>
+                </div>
+              )}
             </div>
-            <div className="mt-3 text-sm text-neutral-700 leading-relaxed">{u.body}</div>
-          </div>
-        ))}
+          );
+          return slug ? (
+            <Link to={`/use-case/${slug}`} key={u.title} className="block">{Card}</Link>
+          ) : (
+            <div key={u.title}>{Card}</div>
+          );
+        })}
+      </div>
+
+      {/* Direct deep-links for SEO crawlers — also usable by humans */}
+      <div className="mt-10 border-t-2 border-black pt-6">
+        <div className="text-xs font-bold tracking-widest uppercase text-neutral-600 mb-3">Industry-specific guides</div>
+        <div className="flex flex-wrap gap-2">
+          {USE_CASE_PAGES.map((u) => (
+            <Link
+              key={u.slug}
+              to={`/use-case/${u.slug}`}
+              data-testid={`uc-tag-${u.slug}`}
+              className="border-2 border-black px-3 py-1 text-sm font-bold hover:bg-yellow-200"
+            >
+              AI for {u.industry} →
+            </Link>
+          ))}
+        </div>
       </div>
     </div>
   </section>

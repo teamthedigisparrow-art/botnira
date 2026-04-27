@@ -8,6 +8,7 @@ import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
+import UseCasePage from "./pages/UseCasePage";
 import VendorLayout from "./layouts/VendorLayout";
 import AdminLayout from "./layouts/AdminLayout";
 import Overview from "./pages/vendor/Overview";
@@ -44,6 +45,7 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
+            <Route path="/use-case/:slug" element={<UseCasePage />} />
 
             <Route path="/app" element={<Protected role="vendor"><VendorLayout /></Protected>}>
               <Route index element={<Overview />} />
