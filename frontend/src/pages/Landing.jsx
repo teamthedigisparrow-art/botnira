@@ -523,14 +523,54 @@ const FAQ = () => (
 );
 
 const Footer = () => (
-  <footer className="border-t-2 border-black">
-    <div className="max-w-7xl mx-auto px-6 py-8 flex flex-wrap justify-between items-center text-sm font-mono gap-4">
-      <span>© 2026 BotNira</span>
-      <div className="flex items-center gap-6">
-        <Link to="/privacy" className="hover:text-[#002FA7]" data-testid="footer-privacy">Privacy</Link>
-        <Link to="/terms" className="hover:text-[#002FA7]" data-testid="footer-terms">Terms</Link>
+  <footer className="bg-black text-white" data-testid="landing-footer">
+    <div className="max-w-7xl mx-auto px-6 py-12 grid md:grid-cols-4 gap-8">
+      <div className="md:col-span-1">
+        <div className="flex items-center gap-3">
+          <BrandMark size={32} />
+          <span className="font-display font-black text-2xl tracking-tighter">BotNira</span>
+        </div>
+        <p className="mt-3 text-sm opacity-70 leading-relaxed">
+          AI receptionist for every business. Web, WhatsApp, SMS, voice, email — answered 24/7.
+        </p>
       </div>
-      <span>Built for front desks that sleep.</span>
+      <div>
+        <div className="font-display font-bold text-xs uppercase tracking-widest opacity-60">Use cases</div>
+        <ul className="mt-3 space-y-1.5 text-sm opacity-90">
+          {USE_CASE_PAGES.slice(0, 5).map((u) => (
+            <li key={u.slug}>
+              <Link to={`/use-case/${u.slug}`} className="hover:underline" data-testid={`footer-usecase-${u.slug}`}>
+                AI for {u.industry}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <div className="font-display font-bold text-xs uppercase tracking-widest opacity-60">Product</div>
+        <ul className="mt-3 space-y-1.5 text-sm opacity-90">
+          <li><a href="#features" className="hover:underline">Features</a></li>
+          <li><a href="#channels" className="hover:underline">Channels</a></li>
+          <li><a href="#pricing" className="hover:underline">Pricing</a></li>
+          <li><a href="#faq" className="hover:underline">FAQ</a></li>
+          <li><a href="#try" className="hover:underline">Try live</a></li>
+        </ul>
+      </div>
+      <div>
+        <div className="font-display font-bold text-xs uppercase tracking-widest opacity-60">Company</div>
+        <ul className="mt-3 space-y-1.5 text-sm opacity-90">
+          <li><Link to="/login" className="hover:underline">Log in</Link></li>
+          <li><Link to="/signup" className="hover:underline">Start free trial</Link></li>
+          <li><Link to="/privacy" className="hover:underline" data-testid="footer-privacy">Privacy</Link></li>
+          <li><Link to="/terms" className="hover:underline" data-testid="footer-terms">Terms</Link></li>
+        </ul>
+      </div>
+    </div>
+    <div className="border-t border-white/10">
+      <div className="max-w-7xl mx-auto px-6 py-5 flex flex-wrap justify-between items-center gap-3 text-xs font-mono opacity-60">
+        <span>© 2026 BotNira · All rights reserved.</span>
+        <span>Built for front desks that sleep.</span>
+      </div>
     </div>
   </footer>
 );
@@ -558,7 +598,7 @@ export default function Landing() {
   }, []);
   return (
     <div data-testid="landing-page">
-      <Nav /><Hero /><TryLive /><Channels /><Features /><UseCases /><MultiLanguage /><How /><Pricing /><FAQ /><Footer />
+      <Nav /><Hero /><TryLive /><Channels /><TrustedBy /><Features /><UseCases /><MultiLanguage /><How /><Reviews /><Pricing /><FAQ /><Footer />
     </div>
   );
 }
