@@ -7,6 +7,8 @@ import { Link } from "react-router-dom";
 export default function AdminOverview() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Mount-only fetch — api is a singleton import, never changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { api.get("/admin/analytics").then(r => setData(r.data)); }, []);
   const t = data?.totals || {};
 
@@ -64,8 +66,8 @@ export default function AdminOverview() {
           <Link data-testid="admin-link-vendors" to="/admin/vendors" className="text-sm font-bold underline">Manage all</Link>
         </div>
         <div className="mt-4 space-y-2">
-          {(data?.leaderboard || []).map((l, i) => (
-            <div key={i} className="flex items-center justify-between border-b border-black/10 py-2">
+          {(data?.leaderboard || []).map((l) => (
+            <div key={l.vendor_id || l.vendor} className="flex items-center justify-between border-b border-black/10 py-2">
               <span className="font-bold">{l.vendor}</span>
               <span className="font-mono font-bold">{l.conversations} convs</span>
             </div>

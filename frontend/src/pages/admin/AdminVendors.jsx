@@ -5,6 +5,8 @@ import { toast } from "sonner";
 export default function AdminVendors() {
   const [vendors, setVendors] = useState([]);
   const load = () => api.get("/admin/vendors").then(r => setVendors(r.data));
+  // Mount-only data load. `load` is a stable closure, no other deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
   const toggle = async (v) => {
     const newStatus = v.status === "active" ? "suspended" : "active";

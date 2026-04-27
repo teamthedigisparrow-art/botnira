@@ -4,6 +4,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 export default function AdminAnalytics() {
   const [data, setData] = useState(null);
+  // Mount-only fetch — `api` is a singleton import, never changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { api.get("/admin/analytics").then(r => setData(r.data)); }, []);
   if (!data) return <div className="p-10 font-mono">Loading…</div>;
   return (

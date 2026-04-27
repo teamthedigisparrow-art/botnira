@@ -9,6 +9,8 @@ export default function AdminBilling() {
     const r = await api.get("/admin/billing");
     setData(r.data);
   };
+  // Mount-only data load.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
   if (!data) return <div className="p-10 font-mono text-sm">Loading…</div>;

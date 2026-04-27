@@ -466,7 +466,7 @@ const FAQ = () => (
       </div>
       <div className="border-2 border-black bg-white divide-y-2 divide-black" data-testid="faq-list">
         {FAQS.map((f, i) => (
-          <details key={i} className="group" data-testid={`faq-item-${i}`}>
+          <details key={f.q} className="group" data-testid={`faq-item-${i}`}>
             <summary className="cursor-pointer list-none p-5 flex items-start justify-between gap-4 hover:bg-neutral-50">
               <span className="font-display font-bold text-lg">{f.q}</span>
               <span className="font-mono text-xl transition-transform group-open:rotate-45 shrink-0">+</span>

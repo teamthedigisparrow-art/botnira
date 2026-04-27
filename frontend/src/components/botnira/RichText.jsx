@@ -5,11 +5,26 @@
  *  - clickable URLs (http / https / www.*)
  *  - basic **bold** emphasis
  *  - simple "- " bullet lists
- * No external deps; safe against HTML injection (we never dangerouslySetInnerHTML).
+ *
+ * Security: we DO NOT use dangerouslySetInnerHTML anywhere — every node is
+ * created via React JSX, so all text content is auto-escaped by React.
+ * No DOMPurify needed because raw HTML is never injected.
+ *
+ * Note: list keys use stable text-content suffixes rather than just array
+ * indices so streaming/incremental updates don't cause re-renders to drop
+ * focus or animations.
  */
 import { Fragment } from "react";
 
 const URL_RE = /\b((?:https?:\/\/|www\.)[^\s<>()]+[^\s.,;:!?<>()])/gi;
+
+// Cheap djb2-style content hash so React keys are stable across re-renders
+// even when the same string appears multiple times in a paragraph.
+function hashContent(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
 
 function renderInline(text, keyBase) {
   // 1) split into tokens alternating between **bold** and plain runs
@@ -67,25 +82,26 @@ export default function RichText({ text, className = "" }) {
     <div className={`space-y-2 leading-relaxed text-[0.92rem] ${className}`}>
       {paragraphs.map((para, pi) => {
         const lines = para.split("\n");
+        const paraKey = `p-${pi}-${hashContent(para)}`;
 
         // Detect bullet-list paragraph
         const isList = lines.length > 1 && lines.every((l) => /^\s*[-•]\s+/.test(l));
         if (isList) {
           return (
-            <ul key={pi} className="list-disc pl-5 space-y-1">
+            <ul key={paraKey} className="list-disc pl-5 space-y-1">
               {lines.map((l, li) => {
                 const content = l.replace(/^\s*[-•]\s+/, "");
-                return <li key={`${pi}-${li}`}>{renderInline(content, `${pi}-${li}`)}</li>;
+                return <li key={`${paraKey}-li-${li}-${hashContent(content)}`}>{renderInline(content, `${paraKey}-li-${li}`)}</li>;
               })}
             </ul>
           );
         }
 
         return (
-          <p key={pi} className="whitespace-normal">
+          <p key={paraKey} className="whitespace-normal">
             {lines.map((l, li) => (
-              <Fragment key={`${pi}-${li}`}>
-                {renderInline(l, `${pi}-${li}`)}
+              <Fragment key={`${paraKey}-ln-${li}-${hashContent(l)}`}>
+                {renderInline(l, `${paraKey}-ln-${li}`)}
                 {li < lines.length - 1 && <br />}
               </Fragment>
             ))}

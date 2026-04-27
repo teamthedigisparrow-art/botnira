@@ -40,11 +40,16 @@ export default function UsagePanel({ exempt }) {
       const { data } = await api.get("/billing/usage");
       setData(data);
     } catch (e) {
-      // ignore — billing page will still work
+      // Non-fatal — billing page still works without the dashboard. We log for
+      // observability so the issue isn't completely silent.
+      console.warn("UsagePanel: failed to load /billing/usage", e?.response?.status, e?.message);
     } finally {
       setBusy(false);
     }
   };
+  // We intentionally only run this once on mount. ESLint disable: load is a
+  // local async closure that doesn't depend on any state visible to the lint.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
   if (!data) {

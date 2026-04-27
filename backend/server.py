@@ -100,7 +100,7 @@ class Vendor(BaseModel):
     name: str
     slug: str
     business_description: str = ""
-    status: str = "active"  # active | suspended
+    status: str = "active"  # active | suspended  # noqa: F811 — Pydantic field name, not the fastapi import
     plan: str = "free"
     created_at: str
 
@@ -877,7 +877,7 @@ async def chat_poll(vendor_id: str, conversation_id: str, since: Optional[str] =
 @api_router.get("/conversations")
 async def list_conversations(
     channel: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[str] = None,  # noqa: F811 — function param, not the fastapi import
     user: dict = Depends(require_vendor),
 ):
     q: Dict[str, Any] = {"vendor_id": user["vendor_id"]}
@@ -1043,7 +1043,7 @@ async def create_appointment(req: AppointmentReq, user: dict = Depends(require_v
 
 class AppointmentPatchReq(BaseModel):
     attended: Optional[bool] = None
-    status: Optional[str] = None
+    status: Optional[str] = None  # noqa: F811 — Pydantic field, not the fastapi import
     notes: Optional[str] = None
 
 
@@ -2995,7 +2995,7 @@ async def _send_purchase_confirmation_email(vendor_id: str, session_id: str, txn
         "",
         f"Thanks for your purchase. {pretty_kind.capitalize()}: {pretty_name}.",
         "",
-        f"What you get:",
+        "What you get:",
         f"  • {cfg['voice_min']} voice minutes",
         f"  • {cfg['messages']:,} AI messages",
     ]
@@ -3003,7 +3003,7 @@ async def _send_purchase_confirmation_email(vendor_id: str, session_id: str, txn
         body_text_lines.append("  • All 5 channels unlocked — web, WhatsApp, voice, email, SMS")
     body_text_lines += [
         "",
-        f"Receipt:",
+        "Receipt:",
         f"  Subtotal:  ${subtotal:,.2f} USD",
         f"  HST 13%:   ${tax:,.2f} USD",
         f"  Total:     ${total:,.2f} USD",
@@ -3014,7 +3014,7 @@ async def _send_purchase_confirmation_email(vendor_id: str, session_id: str, txn
     elif receipt_url:
         body_text_lines += [f"Download receipt: {receipt_url}", ""]
     body_text_lines += [
-        f"Manage your plan: https://botnira.com/app/billing",
+        "Manage your plan: https://botnira.com/app/billing",
         "",
         "— BotNira",
     ]
@@ -3563,7 +3563,7 @@ async def voice_status_callback(request: _StripeRequest):
     form = await request.form()
     call_sid = form.get("CallSid")
     duration = form.get("CallDuration")  # seconds
-    status = form.get("CallStatus")
+    status = form.get("CallStatus")  # noqa: F811 — local var, not the fastapi import
     if call_sid:
         updates = {"status": status or "completed", "ended_at": now_iso()}
         if duration:

@@ -50,8 +50,12 @@ export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
             onError?.({ cancelled: true });
           }
         }
-      } catch {
-        /* ignore non-JSON messages */
+      } catch (err) {
+        // Defensive: postMessage often delivers non-JSON noise from third-party
+        // iframes (analytics pings, ad SDKs). Don't break the WhatsApp flow.
+        if (process.env.NODE_ENV !== "production") {
+          console.debug("WA embedded signup: ignored non-JSON postMessage", err?.message);
+        }
       }
     };
     window.addEventListener("message", handler);
