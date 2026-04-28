@@ -1174,6 +1174,11 @@ async def create_appointment(req: AppointmentReq, user: dict = Depends(require_v
         await _send_appointment_email(user["vendor_id"], appt)
     except Exception as e:
         logger.warning("appt email failed: %s", e)
+    # Customer-side confirmation (only if customer email was captured)
+    try:
+        await _send_customer_appointment_confirmation(user["vendor_id"], appt)
+    except Exception as e:
+        logger.warning("customer appt email failed: %s", e)
     return {k: v for k, v in appt.items() if k != "_id"}
 
 
