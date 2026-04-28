@@ -793,6 +793,13 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
             await _send_appointment_email(vendor_id, appt)
         except Exception as e:
             logger.warning("appt email failed: %s", e)
+        # Send the customer their own confirmation if they shared an email.
+        # Independent try/except so a customer-side failure never affects the
+        # vendor notification or the booking record itself.
+        try:
+            await _send_customer_appointment_confirmation(vendor_id, appt)
+        except Exception as e:
+            logger.warning("customer appt email failed: %s", e)
         return {k: v for k, v in appt.items() if k != "_id"}
     except Exception as e:
         logger.warning("booking extraction failed: %s", str(e)[:120])
@@ -3054,6 +3061,206 @@ async def _send_appointment_email(vendor_id: str, appt: dict):
         logger.info("Appointment email sent to %s (vendor=%s)", to_email, vendor_id)
     except Exception as e:
         logger.warning("Appointment email send failed for %s: %s", to_email, e)
+
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _extract_customer_email(appt: dict) -> Optional[str]:
+    """Sniffs a customer email out of an appointment record.
+
+    The `customer_contact` field is a free-text dump from the AI extractor —
+    sometimes it's just an email, sometimes a phone, sometimes both like
+    "+14375551234, jane@acme.com". We pull the FIRST valid-looking email."""
+    contact = (appt.get("customer_contact") or "").strip()
+    if not contact:
+        return None
+    # Quick path: the whole field is just an email
+    if _EMAIL_RE.match(contact):
+        return contact.lower()
+    # Otherwise look inside comma/space-separated fragments
+    for tok in re.split(r"[,;\s]+", contact):
+        tok = tok.strip(" .;,()<>[]")
+        if _EMAIL_RE.match(tok):
+            return tok.lower()
+    return None
+
+
+def _ics_for_appointment(appt: dict, biz_name: str) -> Optional[str]:
+    """Build a tiny RFC-5545 .ics calendar file so the email's attached event
+    appears as a one-click 'Add to calendar' button in Gmail / Outlook /
+    Apple Mail. Defaults to a 30-minute duration when only a start time is
+    known. Returns None if the scheduled_at can't be parsed."""
+    sched_raw = (appt.get("scheduled_at") or "").strip()
+    if not sched_raw:
+        return None
+    # Accept a few common formats: ISO 8601, "YYYY-MM-DDTHH:MM", "YYYY-MM-DD HH:MM"
+    candidates = [sched_raw, sched_raw.replace(" ", "T")]
+    dt_start = None
+    for c in candidates:
+        try:
+            dt_start = datetime.fromisoformat(c.replace("Z", "+00:00"))
+            break
+        except Exception:
+            continue
+    if not dt_start:
+        return None
+    if dt_start.tzinfo is None:
+        # Treat naive timestamps as the vendor's local time but stamp as UTC
+        # for the ICS — calendar clients render in the recipient's local TZ.
+        dt_start = dt_start.replace(tzinfo=timezone.utc)
+    dt_start_utc = dt_start.astimezone(timezone.utc)
+    dt_end_utc = dt_start_utc + timedelta(minutes=30)
+
+    def _fmt(d):
+        return d.strftime("%Y%m%dT%H%M%SZ")
+
+    uid = f"{appt.get('id', new_id())}@botnira.com"
+    summary = f"Appointment with {biz_name}"
+    notes = (appt.get("notes") or "").replace("\n", "\\n")
+    ics = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//BotNira//AI Receptionist//EN\r\n"
+        "CALSCALE:GREGORIAN\r\n"
+        "METHOD:PUBLISH\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"UID:{uid}\r\n"
+        f"DTSTAMP:{_fmt(datetime.now(timezone.utc))}\r\n"
+        f"DTSTART:{_fmt(dt_start_utc)}\r\n"
+        f"DTEND:{_fmt(dt_end_utc)}\r\n"
+        f"SUMMARY:{summary}\r\n"
+        f"DESCRIPTION:{notes}\r\n"
+        "STATUS:CONFIRMED\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    return ics
+
+
+async def _send_customer_appointment_confirmation(vendor_id: str, appt: dict):
+    """Send the *customer* a friendly "you're booked" email.
+
+    Skipped silently when:
+      - The customer didn't share an email (e.g. WhatsApp / SMS / voice with no email captured)
+      - SMTP isn't configured at all (no fallback)
+      - Sending fails for any reason (vendor-side flow must never break on this)
+
+    Tries to send from the vendor's CONNECTED EMAIL inbox first (so the
+    customer sees `from: hello@vendorbiz.com` — boosts trust & deliverability),
+    and only falls back to the BotNira default SMTP relay if no vendor inbox
+    is available. Includes a `.ics` calendar attachment for one-click "Add
+    to calendar" in Gmail/Outlook/Apple Mail.
+    """
+    customer_email = _extract_customer_email(appt)
+    if not customer_email:
+        return  # No email → nothing to send
+
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    if not vendor:
+        return
+    biz_name = vendor.get("name") or "Our team"
+    customer_name = (appt.get("customer_name") or "there").strip() or "there"
+    scheduled = (appt.get("scheduled_at") or "").strip() or "(time to be confirmed)"
+    notes = (appt.get("notes") or "").strip()
+
+    subject = f"You're booked with {biz_name} · {scheduled}"
+    body_text = (
+        f"Hi {customer_name},\n\n"
+        f"Thanks for booking with {biz_name}. Here are your appointment details:\n\n"
+        f"• When: {scheduled}\n"
+        f"• Where / Notes: {notes or 'See attached calendar invite'}\n\n"
+        f"Need to reschedule or have a question? Just reply to this email and "
+        f"someone from our team will get back to you.\n\n"
+        f"See you soon!\n— {biz_name}\n"
+    )
+    body_html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
+    <div style="background:#FBBC04;color:#000;padding:18px 24px;border-bottom:2px solid #000;">
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.8;">Appointment confirmed</div>
+      <div style="font-size:22px;font-weight:900;margin-top:4px;">You're booked with {biz_name}</div>
+    </div>
+    <div style="padding:24px;font-size:15px;line-height:1.6;color:#111;">
+      <p style="margin:0 0 14px 0;">Hi {customer_name},</p>
+      <p style="margin:0 0 18px 0;">Thanks for booking — here's everything you need to know:</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;width:120px;color:#666;">When</td>
+            <td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{scheduled}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;color:#666;">Booked with</td>
+            <td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{biz_name}</td></tr>
+        {('<tr><td style="padding:10px 0;color:#666;">Notes</td><td style="padding:10px 0;">' + notes + '</td></tr>') if notes else ''}
+      </table>
+      <p style="margin:24px 0 0 0;font-size:13px;color:#555;">
+        Need to reschedule? Just reply to this email and we'll get back to you.
+      </p>
+    </div>
+    <div style="background:#000;color:#999;padding:12px 24px;font-size:11px;font-family:monospace;">
+      Powered by BotNira · Your AI receptionist
+    </div>
+  </div>
+</body>
+</html>"""
+
+    # Build the email envelope
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["To"] = customer_email
+    msg.set_content(body_text)
+    msg.add_alternative(body_html, subtype="html")
+
+    # Attach the calendar invite (best-effort)
+    ics = _ics_for_appointment(appt, biz_name)
+    if ics:
+        msg.add_attachment(
+            ics.encode("utf-8"),
+            maintype="text", subtype="calendar",
+            filename="appointment.ics",
+        )
+
+    # Prefer the vendor's connected email inbox so the customer sees the
+    # vendor's real domain in their From header.
+    vendor_conn = await db.email_connections.find_one(
+        {"vendor_id": vendor_id, "enabled": True}, {"_id": 0}
+    )
+    if vendor_conn:
+        try:
+            from email_routes import _dec_password as _dec  # late import (avoid circular)
+            pwd = _dec(vendor_conn["password_encrypted"])
+            if pwd:
+                msg["From"] = f"{biz_name} <{vendor_conn['email_address']}>"
+
+                def _send_via_vendor():
+                    with smtplib.SMTP(vendor_conn["smtp_host"], vendor_conn.get("smtp_port", 587), timeout=20) as s:
+                        s.starttls()
+                        s.login(vendor_conn["email_address"], pwd)
+                        s.send_message(msg)
+                await asyncio.to_thread(_send_via_vendor)
+                logger.info("[customer-appt-email] sent via vendor SMTP to %s (vendor=%s)", customer_email, vendor_id)
+                return
+        except Exception as e:
+            logger.warning("[customer-appt-email] vendor SMTP failed (%s) — falling back to BotNira relay", e)
+
+    # Fallback: BotNira default SMTP relay
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.info("[customer-appt-email] no vendor inbox + BotNira SMTP not configured — skipping for %s", customer_email)
+        return
+    # Reset From for the fallback path
+    del msg["From"]
+    msg["From"] = f"{biz_name} via BotNira <{SMTP_USER}>"
+    msg["Reply-To"] = SMTP_USER
+
+    def _send_via_botnira():
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.send_message(msg)
+    try:
+        await asyncio.to_thread(_send_via_botnira)
+        logger.info("[customer-appt-email] sent via BotNira relay to %s (vendor=%s)", customer_email, vendor_id)
+    except Exception as e:
+        logger.warning("[customer-appt-email] send failed for %s: %s", customer_email, e)
 
 
 
