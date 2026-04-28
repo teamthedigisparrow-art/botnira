@@ -4,6 +4,7 @@ import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, 
 import BrandMark from "../components/BrandMark";
 import Reviews from "../components/marketing/Reviews";
 import TrustedBy from "../components/marketing/TrustedBy";
+import SocialIcons from "../components/marketing/SocialIcons";
 import { USE_CASE_PAGES } from "../data/useCases";
 
 const Nav = () => (
@@ -37,15 +38,15 @@ const Hero = () => (
     <div className="max-w-7xl mx-auto px-6 py-20 md:py-28 grid md:grid-cols-12 gap-10 items-center">
       <div className="md:col-span-7">
         <div className="inline-flex items-center gap-2 border-2 border-black px-3 py-1 mb-6 bg-white" data-testid="hero-badge">
-          <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">Powered by BotNira AI</span>
+          <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">AI Receptionist · AI Calling Software</span>
         </div>
         <h1 className="font-display text-5xl md:text-7xl font-black leading-[0.95] tracking-tighter">
-          The AI front desk<br/>that never<br/>
+          The AI receptionist<br/>that never<br/>
           <span className="bg-[#002FA7] text-white px-3 inline-block">clocks out.</span>
         </h1>
-        <p className="mt-6 text-lg md:text-xl max-w-xl text-neutral-700 font-medium">
-          BotNira answers phone calls, SMS &amp; WhatsApp conversations, email and chat for your business — 24/7.
-          Trained only on your own information. Multi-language, vendor-ready.
+        <p className="mt-6 text-lg md:text-xl max-w-2xl text-neutral-700 font-medium">
+          BotNira is an <strong>AI-based calling software</strong> and <strong>virtual receptionist</strong> that answers phone calls, WhatsApp, SMS, email and chat for your business — <strong>24/7</strong>.
+          Trained only on your own information. Books appointments automatically. Multi-language, vendor-ready.
         </p>
         <div className="mt-8 flex flex-wrap gap-4">
           <Link to="/signup" data-testid="hero-cta-start" className="inline-flex items-center gap-2 bg-[#002FA7] text-white font-bold px-6 py-3 border-2 border-black shadow-brutal-lg hover-lift">
@@ -55,12 +56,14 @@ const Hero = () => (
             See how it works
           </a>
         </div>
-        <div className="mt-10 flex items-center gap-6 text-xs font-mono text-neutral-600">
+        <div className="mt-10 flex flex-wrap items-center gap-4 md:gap-6 text-xs font-mono text-neutral-600">
           <span>NO CREDIT CARD</span>
-          <span>•</span>
-          <span>24/7 COVERAGE</span>
-          <span>•</span>
+          <span className="hidden md:inline">•</span>
+          <span>24/7 AI CALLING</span>
+          <span className="hidden md:inline">•</span>
           <span>MULTI-LANGUAGE</span>
+          <span className="hidden md:inline">•</span>
+          <SocialIcons variant="light" size={14} className="ml-0 md:ml-2" />
         </div>
       </div>
       <div className="md:col-span-5">
@@ -108,10 +111,10 @@ const Channels = () => (
     <div className="max-w-7xl mx-auto px-6 py-20">
       <div className="flex items-end justify-between flex-wrap gap-6 mb-10">
         <div>
-          <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Omnichannel</div>
-          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">One bot. Every channel.</h2>
+          <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Omnichannel AI Receptionist</div>
+          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">One AI. Every channel.</h2>
         </div>
-        <p className="max-w-lg text-neutral-700">Unified inbox that handles every conversation — phone, WhatsApp, email, SMS, web chat — with the same trained brain.</p>
+        <p className="max-w-lg text-neutral-700">A unified inbox that handles every conversation — <strong>AI phone calling</strong>, WhatsApp, email, SMS, web chat — all powered by the same trained brain.</p>
       </div>
       <div className="grid md:grid-cols-4 gap-0 border-2 border-black">
         {CHANNELS.map((c, i) => (
@@ -375,12 +378,12 @@ const TryLive = () => {
 const How = () => (
   <section id="how" className="border-b-2 border-black">
     <div className="max-w-7xl mx-auto px-6 py-20">
-      <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter">Three steps to a 24/7 front desk.</h2>
+      <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter">Three steps to a 24/7 AI receptionist.</h2>
       <div className="grid md:grid-cols-3 gap-6 mt-10">
         {[
-          { n: "01", title: "Sign up your business", body: "Create a vendor account. Each vendor is a fully isolated workspace." },
-          { n: "02", title: "Train BotNira", body: "Paste your business description + FAQs. Pick a tone. Done." },
-          { n: "03", title: "Plug in channels", body: "Embed the web widget and connect WhatsApp via Meta Cloud API. Email & SMS coming soon." },
+          { n: "01", title: "Sign up your business", body: "Create a vendor account. Each vendor is a fully isolated workspace with its own AI." },
+          { n: "02", title: "Train your AI receptionist", body: "Paste your business description + FAQs. Pick a tone and a voice. Done in 5 minutes." },
+          { n: "03", title: "Plug in calling & channels", body: "Buy an AI calling number, embed the web widget, connect WhatsApp / Email / SMS — all in one inbox." },
         ].map((s) => (
           <div key={s.n} className="border-2 border-black p-6 bg-white shadow-brutal">
             <div className="font-mono text-sm text-[#002FA7] font-bold">{s.n}</div>
@@ -531,8 +534,12 @@ const Footer = () => (
           <span className="font-display font-black text-2xl tracking-tighter">BotNira</span>
         </div>
         <p className="mt-3 text-sm opacity-70 leading-relaxed">
-          AI receptionist for every business. Web, WhatsApp, SMS, voice, email — answered 24/7.
+          AI receptionist &amp; AI calling software for every business. Voice, WhatsApp, SMS, email and chat — answered 24/7.
         </p>
+        <div className="mt-5">
+          <div className="text-[10px] font-bold tracking-[0.25em] uppercase opacity-60 mb-2">Follow us</div>
+          <SocialIcons variant="dark" size={16} />
+        </div>
       </div>
       <div>
         <div className="font-display font-bold text-xs uppercase tracking-widest opacity-60">Use cases</div>
@@ -568,7 +575,7 @@ const Footer = () => (
     </div>
     <div className="border-t border-white/10">
       <div className="max-w-7xl mx-auto px-6 py-5 flex flex-wrap justify-between items-center gap-3 text-xs font-mono opacity-60">
-        <span>© 2026 BotNira · All rights reserved.</span>
+        <span>© 2026 BotNira · AI Receptionist &amp; AI Calling Software · All rights reserved.</span>
         <span>Built for front desks that sleep.</span>
       </div>
     </div>
