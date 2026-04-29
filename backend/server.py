@@ -1404,13 +1404,25 @@ async def whatsapp_connect(req: WhatsAppConnectReq, user: dict = Depends(require
     # Subscribe WABA to our app's webhook + override per-phone webhook so inbound
     # messages land at BotNira even if the WABA is also shared with another app.
     base_webhook = f"{PUBLIC_BASE_URL}/api/whatsapp/webhook"
+    webhook_status = {"subscribed": False, "error": None}
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            await c.post(
+        async with httpx.AsyncClient(timeout=15) as c:
+            # Subscribe WABA to app
+            r1 = await c.post(
                 f"{GRAPH_BASE}/{req.waba_id}/subscribed_apps",
                 headers={"Authorization": f"Bearer {META_SYSTEM_USER_TOKEN}"},
             )
-            await c.post(
+            if r1.status_code >= 400:
+                error_msg = f"WABA subscription failed (HTTP {r1.status_code}): {r1.text[:200]}"
+                logger.error(error_msg)
+                webhook_status["error"] = error_msg
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"WhatsApp webhook subscription failed. Please check your WABA ID and try again. Error: {r1.text[:150]}"
+                )
+            
+            # Override webhook on phone number
+            r2 = await c.post(
                 f"{GRAPH_BASE}/{req.phone_number_id}",
                 headers={"Authorization": f"Bearer {META_SYSTEM_USER_TOKEN}"},
                 params={
@@ -1420,9 +1432,30 @@ async def whatsapp_connect(req: WhatsAppConnectReq, user: dict = Depends(require
                     })
                 },
             )
+            if r2.status_code >= 400:
+                error_msg = f"Webhook override failed (HTTP {r2.status_code}): {r2.text[:200]}"
+                logger.error(error_msg)
+                webhook_status["error"] = error_msg
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"WhatsApp webhook configuration failed. Please check your Phone Number ID and try again. Error: {r2.text[:150]}"
+                )
+            
+            webhook_status["subscribed"] = True
+            logger.info("WhatsApp webhook subscribed successfully for vendor %s", user["vendor_id"])
+    except HTTPException:
+        # Re-raise HTTP exceptions (webhook subscription failures)
+        raise
     except Exception as e:
-        logger.warning("WhatsApp connect subscription/override best-effort failed: %s", e)
-    return {"status": "connected", "connection": conn}
+        error_msg = f"Webhook subscription error: {str(e)}"
+        logger.error("WhatsApp connect subscription/override failed: %s", e)
+        webhook_status["error"] = error_msg
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to configure WhatsApp webhooks. Please verify your credentials and try again. Error: {str(e)[:150]}"
+        )
+    
+    return {"status": "connected", "connection": conn, "webhook": webhook_status}
 
 
 @api_router.post("/whatsapp/disconnect")
@@ -1617,12 +1650,22 @@ async def whatsapp_embedded_signup_exchange(
         display_phone_number = phone.get("display_phone_number", "")
 
         # 4) Subscribe our app to this WABA + override webhook on the phone
+        webhook_status = {"subscribed": False, "error": None}
         try:
-            await c.post(
+            r1 = await c.post(
                 f"{GRAPH_BASE}/{waba_id}/subscribed_apps",
                 headers={"Authorization": f"Bearer {vendor_token}"},
             )
-            await c.post(
+            if r1.status_code >= 400:
+                error_msg = f"Embedded signup WABA subscription failed: {r1.text[:200]}"
+                logger.error(error_msg)
+                webhook_status["error"] = error_msg
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to subscribe WhatsApp webhooks. Error: {r1.text[:150]}"
+                )
+            
+            r2 = await c.post(
                 f"{GRAPH_BASE}/{phone_number_id}",
                 headers={"Authorization": f"Bearer {vendor_token}"},
                 params={
@@ -1632,8 +1675,25 @@ async def whatsapp_embedded_signup_exchange(
                     })
                 },
             )
+            if r2.status_code >= 400:
+                error_msg = f"Embedded signup webhook override failed: {r2.text[:200]}"
+                logger.error(error_msg)
+                webhook_status["error"] = error_msg
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to configure WhatsApp webhook. Error: {r2.text[:150]}"
+                )
+            
+            webhook_status["subscribed"] = True
+            logger.info("Embedded signup webhook configured successfully for vendor %s", user["vendor_id"])
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.warning("Post-signup subscription best-effort failed: %s", e)
+            logger.error("Post-signup subscription failed: %s", e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Webhook configuration error: {str(e)[:150]}"
+            )
 
     # 5) Save connection for this vendor
     conn = {
@@ -1655,7 +1715,7 @@ async def whatsapp_embedded_signup_exchange(
         {"vendor_id": user["vendor_id"], "channel": "whatsapp"},
         {"$set": {"status": "connected", "updated_at": now_iso()}},
     )
-    return {"status": "connected", "connection": conn}
+    return {"status": "connected", "connection": conn, "webhook": webhook_status}
 
 
 # ============================== Billing / Stripe ============================
