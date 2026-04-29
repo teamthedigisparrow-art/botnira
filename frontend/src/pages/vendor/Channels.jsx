@@ -36,6 +36,13 @@ export default function Channels() {
   const [waTestMsg, setWaTestMsg] = useState("Hi! Testing BotNira's WhatsApp.");
   const [waBusy, setWaBusy] = useState(false);
   const [waSignupConfig, setWaSignupConfig] = useState(null);
+  const [waSetupMode, setWaSetupMode] = useState("embedded"); // "embedded" or "manual"
+  const [waManualForm, setWaManualForm] = useState({
+    phone_number_id: "",
+    waba_id: "",
+    display_phone_number: "",
+    access_token: "",
+  });
 
   const loadChannels = () => api.get("/channels").then(r => setList(r.data));
 
@@ -67,6 +74,25 @@ export default function Channels() {
   const onWaSignupError = (e) => {
     if (e?.cancelled) return;
     toast.error(e?.message || "WhatsApp signup did not complete.", { duration: 10000 });
+  };
+
+  const onWaManualConnect = async () => {
+    if (!waManualForm.phone_number_id || !waManualForm.waba_id) {
+      return toast.error("Phone Number ID and WABA ID are required.");
+    }
+    setWaBusy(true);
+    try {
+      await api.post("/whatsapp/connect", waManualForm);
+      toast.success("WhatsApp connected manually!");
+      loadWa();
+      loadChannels();
+      // Reset form
+      setWaManualForm({ phone_number_id: "", waba_id: "", display_phone_number: "", access_token: "" });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Manual connection failed.", { duration: 10000 });
+    } finally {
+      setWaBusy(false);
+    }
   };
 
   useEffect(() => { loadChannels(); loadWa(); }, []);
@@ -263,39 +289,170 @@ export default function Channels() {
           </div>
         ) : (
           <div className="p-6 space-y-5" data-testid="wa-signup-pending">
-            <div className="border-2 border-black p-5 bg-amber-50">
-              <div className="font-display font-black text-lg">Connect your WhatsApp in ~90 seconds</div>
-              <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
-                Click below to open Meta's Embedded Signup. You'll pick the Facebook Business Manager + WhatsApp
-                Business Account that owns your phone number, and BotNira auto-wires the webhook, subscribes to
-                message events, and goes live.
-              </p>
-              <div className="mt-4">
-                {waSignupConfig ? (
-                  <ConnectWhatsAppButton
-                    config={waSignupConfig}
-                    onSuccess={onWaSignupSuccess}
-                    onError={onWaSignupError}
-                  />
-                ) : (
-                  <div className="text-xs font-mono text-neutral-600">Loading Meta config…</div>
-                )}
-              </div>
-              {waSignupConfig && !waSignupConfig.config_id && (
-                <div className="mt-4 text-xs font-mono text-amber-900 bg-amber-100 border border-amber-700 px-3 py-2">
-                  ⚠ Meta App Review is still pending — the button will launch the popup as soon as approval lands.
-                  In the meantime, the BotNira superadmin can connect your WhatsApp manually.
+            {/* Setup Mode Toggle */}
+            <div className="flex gap-2 border-2 border-black p-1 bg-neutral-100 w-fit">
+              <button
+                onClick={() => setWaSetupMode("embedded")}
+                className={`px-4 py-2 font-bold text-sm transition-all ${
+                  waSetupMode === "embedded" 
+                    ? "bg-[#25D366] text-black border-2 border-black shadow-brutal" 
+                    : "bg-transparent text-neutral-600 hover:text-black"
+                }`}
+              >
+                Embedded Signup
+              </button>
+              <button
+                onClick={() => setWaSetupMode("manual")}
+                className={`px-4 py-2 font-bold text-sm transition-all ${
+                  waSetupMode === "manual" 
+                    ? "bg-[#25D366] text-black border-2 border-black shadow-brutal" 
+                    : "bg-transparent text-neutral-600 hover:text-black"
+                }`}
+              >
+                Manual Setup
+              </button>
+            </div>
+
+            {waSetupMode === "embedded" ? (
+              /* Embedded Signup Flow */
+              <>
+                <div className="border-2 border-black p-5 bg-amber-50">
+                  <div className="font-display font-black text-lg">Connect your WhatsApp in ~90 seconds</div>
+                  <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
+                    Click below to open Meta's Embedded Signup. You'll pick the Facebook Business Manager + WhatsApp
+                    Business Account that owns your phone number, and BotNira auto-wires the webhook, subscribes to
+                    message events, and goes live.
+                  </p>
+                  <div className="mt-4">
+                    {waSignupConfig ? (
+                      <ConnectWhatsAppButton
+                        config={waSignupConfig}
+                        onSuccess={onWaSignupSuccess}
+                        onError={onWaSignupError}
+                      />
+                    ) : (
+                      <div className="text-xs font-mono text-neutral-600">Loading Meta config…</div>
+                    )}
+                  </div>
+                  {waSignupConfig && !waSignupConfig.config_id && (
+                    <div className="mt-4 text-xs font-mono text-amber-900 bg-amber-100 border border-amber-700 px-3 py-2">
+                      ⚠ Meta App Review is still pending — the button will launch the popup as soon as approval lands.
+                      In the meantime, the BotNira superadmin can connect your WhatsApp manually.
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <div className="border-2 border-black p-5">
-              <div className="font-display font-bold mb-2">What you'll need during signup</div>
-              <ul className="text-sm list-disc pl-6 space-y-1 text-neutral-800">
-                <li>A Facebook account that's an admin on your Meta Business Manager.</li>
-                <li>A WhatsApp Business phone number (or an unused number you can verify via SMS/call).</li>
-                <li>Your business display name (what customers see in WhatsApp).</li>
-              </ul>
-            </div>
+                <div className="border-2 border-black p-5">
+                  <div className="font-display font-bold mb-2">What you'll need during signup</div>
+                  <ul className="text-sm list-disc pl-6 space-y-1 text-neutral-800">
+                    <li>A Facebook account that's an admin on your Meta Business Manager.</li>
+                    <li>A WhatsApp Business phone number (or an unused number you can verify via SMS/call).</li>
+                    <li>Your business display name (what customers see in WhatsApp).</li>
+                  </ul>
+                </div>
+              </>
+            ) : (
+              /* Manual Setup Flow */
+              <>
+                <div className="border-2 border-black p-5 bg-blue-50">
+                  <div className="font-display font-black text-lg">Manual WhatsApp Setup</div>
+                  <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
+                    If you've already created a WhatsApp Business Account and have your credentials from Meta, 
+                    enter them below to connect manually.
+                  </p>
+                </div>
+
+                <div className="border-2 border-black p-5 space-y-4">
+                  <div>
+                    <label className="block text-sm font-bold mb-2">
+                      Phone Number ID <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={waManualForm.phone_number_id}
+                      onChange={(e) => setWaManualForm({ ...waManualForm, phone_number_id: e.target.value })}
+                      placeholder="123456789012345"
+                      className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                      data-testid="wa-manual-phone-id"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1 font-mono">
+                      Find this in Meta Business Manager → WhatsApp Accounts → Phone Numbers
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold mb-2">
+                      WABA ID (WhatsApp Business Account ID) <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={waManualForm.waba_id}
+                      onChange={(e) => setWaManualForm({ ...waManualForm, waba_id: e.target.value })}
+                      placeholder="123456789012345"
+                      className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                      data-testid="wa-manual-waba-id"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1 font-mono">
+                      Find this in Meta Business Manager → WhatsApp Accounts → Settings
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold mb-2">
+                      Display Phone Number
+                    </label>
+                    <input
+                      type="text"
+                      value={waManualForm.display_phone_number}
+                      onChange={(e) => setWaManualForm({ ...waManualForm, display_phone_number: e.target.value })}
+                      placeholder="+1 416 555 1234"
+                      className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                      data-testid="wa-manual-display-phone"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1 font-mono">
+                      Optional: The formatted phone number customers will see
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold mb-2">
+                      Access Token
+                    </label>
+                    <textarea
+                      value={waManualForm.access_token}
+                      onChange={(e) => setWaManualForm({ ...waManualForm, access_token: e.target.value })}
+                      placeholder="EAAxxxxxxxxxxxxx..."
+                      rows={3}
+                      className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                      data-testid="wa-manual-access-token"
+                    />
+                    <p className="text-xs text-neutral-600 mt-1 font-mono">
+                      Optional: Your permanent access token from Meta. Leave empty to use BotNira's system token.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={onWaManualConnect}
+                    disabled={waBusy || !waManualForm.phone_number_id || !waManualForm.waba_id}
+                    className="w-full bg-[#25D366] text-black font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift disabled:opacity-50 disabled:cursor-not-allowed"
+                    data-testid="wa-manual-connect-btn"
+                  >
+                    {waBusy ? "Connecting..." : "Connect WhatsApp"}
+                  </button>
+                </div>
+
+                <div className="border-2 border-black p-5 bg-neutral-50">
+                  <div className="font-display font-bold mb-2">How to get your credentials</div>
+                  <ol className="text-sm list-decimal pl-6 space-y-2 text-neutral-800">
+                    <li>Go to <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className="underline font-bold">Meta Business Manager</a></li>
+                    <li>Navigate to <strong>WhatsApp Accounts</strong> in the left sidebar</li>
+                    <li>Select your WhatsApp Business Account</li>
+                    <li>Copy the <strong>WABA ID</strong> from Settings</li>
+                    <li>Go to <strong>Phone Numbers</strong> and copy the <strong>Phone Number ID</strong></li>
+                    <li>(Optional) Generate a permanent <strong>Access Token</strong> from System Users</li>
+                  </ol>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
