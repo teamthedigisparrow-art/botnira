@@ -17,7 +17,7 @@ import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://ai-receptionist-127.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://multi-channel-inbox-2.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN_EMAIL = "admin@botnira.com"
