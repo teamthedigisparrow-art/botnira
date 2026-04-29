@@ -2733,10 +2733,20 @@ async def stripe_webhook(request: _StripeRequest):
 
     elif etype == "customer.subscription.deleted":
         sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
-        await db.vendors.update_one(
-            {"stripe_subscription_id": sub_id},
-            {"$set": {"subscription_status": "canceled", "canceled_at": now_iso()}},
-        )
+        vendor = await db.vendors.find_one({"stripe_subscription_id": sub_id}, {"_id": 0})
+        if vendor:
+            vendor_id = vendor["id"]
+            await db.vendors.update_one(
+                {"id": vendor_id},
+                {"$set": {"subscription_status": "canceled", "canceled_at": now_iso()}},
+            )
+            # CRITICAL: Release Twilio phone number to stop billing
+            try:
+                released = await _release_vendor_phone_number(vendor_id)
+                if released:
+                    logger.info("Auto-released phone number for canceled subscription: vendor=%s", vendor_id)
+            except Exception as e:
+                logger.error("Failed to auto-release phone number for vendor %s: %s", vendor_id, e)
 
     elif etype == "checkout.session.async_payment_succeeded":
         # Fires for delayed-settlement methods (ACH/SEPA/etc.) once funds clear.
@@ -3887,23 +3897,41 @@ async def voice_status(user: dict = Depends(require_vendor)):
     }
 
 
-@api_router.post("/voice/deactivate")
-async def voice_deactivate(user: dict = Depends(require_vendor)):
-    conn = await db.voice_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+async def _release_vendor_phone_number(vendor_id: str) -> bool:
+    """Release a vendor's Twilio phone number to stop billing.
+    Called when vendor manually disconnects OR when subscription is cancelled.
+    Returns True if number was released, False if no number found."""
+    conn = await db.voice_connections.find_one({"vendor_id": vendor_id}, {"_id": 0})
     if not conn:
-        raise HTTPException(status_code=404, detail="No voice number to deactivate")
-    sub = await db.voice_subaccounts.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+        return False
+    
+    sub = await db.voice_subaccounts.find_one({"vendor_id": vendor_id}, {"_id": 0})
     if sub:
         try:
             sub_tw = _twilio_subaccount_client(sub["account_sid"], sub["auth_token"])
             sub_tw.incoming_phone_numbers(conn["phone_number_sid"]).delete()
+            logger.info("Released Twilio number %s for vendor %s", conn["phone_number"], vendor_id)
         except Exception as e:
-            logger.warning("Release number failed: %s", e)
-    await db.voice_connections.delete_one({"vendor_id": user["vendor_id"]})
+            logger.warning("Release number failed for vendor %s: %s", vendor_id, e)
+            return False
+    
+    await db.voice_connections.delete_one({"vendor_id": vendor_id})
     await db.channels.update_one(
-        {"vendor_id": user["vendor_id"], "channel": "voice"},
+        {"vendor_id": vendor_id, "channel": "voice"},
         {"$set": {"status": "disconnected", "updated_at": now_iso()}},
     )
+    await db.channels.update_one(
+        {"vendor_id": vendor_id, "channel": "sms"},
+        {"$set": {"status": "disconnected", "updated_at": now_iso()}},
+    )
+    return True
+
+
+@api_router.post("/voice/deactivate")
+async def voice_deactivate(user: dict = Depends(require_vendor)):
+    released = await _release_vendor_phone_number(user["vendor_id"])
+    if not released:
+        raise HTTPException(status_code=404, detail="No voice number to deactivate")
     return {"ok": True}
 
 
