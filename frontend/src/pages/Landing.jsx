@@ -297,8 +297,8 @@ const MultiLanguage = () => (
 );
 
 const TryLive = () => {
-  const PHONE = "+17822120295";
-  const PHONE_DISPLAY = "+1 (782) 212-0295";
+  const PHONE = "+18259574205";
+  const PHONE_DISPLAY = "+1 (825) 957-4205";
   const WA = "917087730721";
   const WA_DISPLAY = "+91 70877 30721";
   const prefilled = encodeURIComponent("Hi BotNira — I'd like to try the demo.");
@@ -329,7 +329,7 @@ const TryLive = () => {
               <div className="w-12 h-12 bg-[#002FA7] text-white border-2 border-black grid place-items-center"><PhoneCall size={22}/></div>
               <span className="text-[10px] font-bold tracking-widest uppercase bg-black text-white px-2 py-1 border border-black">Call us</span>
             </div>
-            <div className="mt-5 text-xs font-bold tracking-[0.2em] uppercase text-neutral-500">Phone</div>
+            <div className="mt-5 text-xs font-bold tracking-[0.2em] uppercase text-neutral-500">Phone & SMS</div>
             <div className="mt-2 font-display font-black text-2xl tracking-tight" data-testid="try-phone-display">{PHONE_DISPLAY}</div>
             <div className="mt-3 text-sm text-neutral-700 leading-snug">
               Dial this number. BotNira answers in &lt;1 second, speaks naturally, can be interrupted, and transcribes the entire call into your Inbox.
