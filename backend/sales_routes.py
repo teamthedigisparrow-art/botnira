@@ -442,15 +442,17 @@ async def sales_analytics(user: dict = Depends(_require_sales_vendor),
     # Daily series — count sends per day and opens per day
     by_day: Dict[str, Dict[str, int]] = {}
     cur_sent = _s.db.sales_campaign_recipients.find(
-        {"vendor_id": vid, "sent_at": {"$gte": since}},
-        {"_id": 0, "sent_at": 1, "opened_at": 1},
+        {"vendor_id": vid, "sent_at": {"$gte": since},
+         "status": {"$in": ["sent", "opened", "failed"]}},
+        {"_id": 0, "sent_at": 1, "opened_at": 1, "status": 1},
     )
     async for r in cur_sent:
         sa = (r.get("sent_at") or "")[:10]
         if not sa:
             continue
         slot = by_day.setdefault(sa, {"sent": 0, "opened": 0})
-        slot["sent"] += 1
+        if r.get("status") in ("sent", "opened"):
+            slot["sent"] += 1
         if r.get("opened_at"):
             slot["opened"] += 1
 
@@ -730,8 +732,16 @@ async def _sales_sender_loop():
         await asyncio.sleep(SCHEDULER_TICK_SEC)
 
 
+_SENDER_TASK_STARTED = False
+
+
 async def _start_sales_sender():
-    """FastAPI startup hook — fire-and-forget the loop."""
+    """FastAPI startup hook — fire-and-forget the loop. Module-level guard
+    prevents a duplicate loop spawning when Uvicorn hot-reloads."""
+    global _SENDER_TASK_STARTED
+    if _SENDER_TASK_STARTED:
+        return
+    _SENDER_TASK_STARTED = True
     asyncio.create_task(_sales_sender_loop())
     # Ensure useful indexes
     try:

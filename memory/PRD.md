@@ -16,6 +16,18 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Sales Assistance — outbound email marketing (v1 — 2026-05-02 iter 6)
+- **Plan-gated**: Growth + Pro (+ exempt). Starter / trial sees a "Locked — upgrade" overlay.
+- **Prospects**: CSV upload (`email,name,company`), case-insensitive merge with existing list, duplicate + invalid-email skip stats.
+- **Campaigns**: create with subject + body (text **or** HTML, sanitised), `{{name}} {{first_name}} {{company}} {{email}}` merge tags. Pause / resume / cancel state machine.
+- **Anti-spam pacing**: single asyncio loop ticks every 20 s; sends **one email at a time** per campaign, then schedules the next slot **5–45 min later** at random.
+- **Open tracking**: invisible 1×1 GIF pixel injected per recipient — first hit flips `opened_at` and increments campaign open count.
+- **Compliance**: every email auto-appends an unsubscribe footer + `List-Unsubscribe` + `List-Unsubscribe-Post: One-Click` headers. Public unsubscribe page sets prospect `status=unsubscribed`. Hard SMTP bounces flip `status=bounced`.
+- **Analytics**: KPI cards (Sent / Opened / Open Rate / Failed / Unsubscribed) + daily bar chart for last 7/30/90/365 days.
+- **Reuses** the inbox SMTP — vendor connects email **once** in Channels → Email and it powers both transactional replies and outbound campaigns.
+- Endpoints: `/api/sales/{access, prospects, prospects/upload, prospects/clear, campaigns, campaigns/{id}, campaigns/{id}/{pause|resume|cancel}, analytics, track/open/{cid}/{rid}.gif, unsubscribe/{vid}/{pid}}`.
+- Pricing: animated gradient "Sales Assistant Included" badge on Growth & Pro landing cards.
+
 ### Inbox (v3 — 2026-04-27 iter 5)
 - **Server-side pagination** — 30 threads per page, `Load more` button. `/api/conversations?limit&offset` returns `{items, total, has_more, unread_total}`.
 - **Server-side search** (debounced 280ms) — `?q=...` searches `customer_name`, `customer_contact`, `last_message_preview`, `subject` across the full dataset. Load-more hidden during search (global).
@@ -49,6 +61,7 @@ See `/app/memory/test_credentials.md`.
 - Stripe LIVE — 3 plans, 6 top-ups, 13% HST, paywall, sync recovery, purchase emails
 
 ## Changelog
+- **2026-05-02 iter 6** — Sales Assistance Phase (Email module). New `sales_routes.py` (~700 lines): prospects CSV upload (case-insensitive dedup merge), campaign create/list/pause/resume/cancel, asyncio sender loop with random 5–45 min jitter, 1×1 GIF open-pixel tracking, public CASL-compliant unsubscribe page. Plan-gated to Growth/Pro (+ exempt). Vendor portal page `/app/sales` with three tabs (Prospects · Campaigns · Analytics). Animated "Sales Assistant Included" gradient badge on Growth & Pro pricing cards. **23/23 backend pytest cases pass + frontend verified.**
 - **2026-04-27 iter 5** — Inbox pagination (30/page + Load More), debounced server-side search, unread indicator + mark-read endpoint, Fresh-start checkbox on reconnect, 3-layer UIDNEXT fallback. **41/41 pytest cases pass.**
 - **2026-04-27 iter 4** — UID watermark poller, /email/clear-history, thread timestamps.
 - **2026-04-27 iter 3** — Email module extracted to email_routes.py, collapsible sidebar, Gmail app-password guide.
@@ -66,6 +79,8 @@ See `/app/memory/test_credentials.md`.
 - Customer-facing appointment confirmation email + BCC superadmin.
 - Bing Webmaster verification meta tag (awaiting code).
 - Edit IMAP/SMTP host post-connect (currently disconnect+reconnect).
+- 24h-before appointment reminder email/SMS.
+- **Sales Assistance — Phone calls module** (next phase: outbound marketing calls via Twilio + AI bridge).
 
 ### P2
 - Vendor onboarding wizard.
