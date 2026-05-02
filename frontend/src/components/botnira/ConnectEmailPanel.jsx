@@ -22,11 +22,29 @@ export default function ConnectEmailPanel({ onChange }) {
   const [password, setPassword] = useState("");
   const [aiReply, setAiReply] = useState(false);
   const [freshStart, setFreshStart] = useState(true);
-  const [showAdv, setShowAdv] = useState(false);
+  const [provider, setProvider] = useState("gmail"); // gmail, outlook, custom
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState(993);
   const [smtpHost, setSmtpHost] = useState("");
-  const [smtpPort, setSmtpPort] = useState(587);
+  const [smtpPort, setSmtpPort] = useState(465);
+
+  // Pre-filled settings for common providers
+  const PROVIDER_SETTINGS = {
+    gmail: { imap: "imap.gmail.com", imapPort: 993, smtp: "smtp.gmail.com", smtpPort: 587 },
+    outlook: { imap: "outlook.office365.com", imapPort: 993, smtp: "smtp.office365.com", smtpPort: 587 },
+    hostinger: { imap: "imap.hostinger.com", imapPort: 993, smtp: "smtp.hostinger.com", smtpPort: 465 },
+    custom: { imap: "", imapPort: 993, smtp: "", smtpPort: 465 },
+  };
+
+  // Update server settings when provider changes
+  const handleProviderChange = (newProvider) => {
+    setProvider(newProvider);
+    const settings = PROVIDER_SETTINGS[newProvider] || PROVIDER_SETTINGS.custom;
+    setImapHost(settings.imap);
+    setImapPort(settings.imapPort);
+    setSmtpHost(settings.smtp);
+    setSmtpPort(settings.smtpPort);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -44,6 +62,12 @@ export default function ConnectEmailPanel({ onChange }) {
 
   const connect = async () => {
     if (!emailAddr || !password) return toast.error("Email and app password are required.");
+    
+    // For custom provider, validate server settings
+    if (provider === "custom" && (!imapHost || !smtpHost)) {
+      return toast.error("IMAP and SMTP hosts are required for custom servers.");
+    }
+    
     setBusy(true);
     try {
       const body = {
@@ -52,12 +76,13 @@ export default function ConnectEmailPanel({ onChange }) {
         ai_auto_reply: aiReply,
         fresh_start: freshStart,
       };
-      if (showAdv) {
-        if (imapHost) body.imap_host = imapHost;
-        if (imapPort) body.imap_port = Number(imapPort);
-        if (smtpHost) body.smtp_host = smtpHost;
-        if (smtpPort) body.smtp_port = Number(smtpPort);
-      }
+      
+      // Always send server settings (either from provider preset or custom)
+      if (imapHost) body.imap_host = imapHost;
+      if (imapPort) body.imap_port = Number(imapPort);
+      if (smtpHost) body.smtp_host = smtpHost;
+      if (smtpPort) body.smtp_port = Number(smtpPort);
+      
       const { data } = await api.post("/email/connect", body);
       const skipped = data?.skipped_old || 0;
       const cleared = data?.cleared_history || 0;
@@ -233,21 +258,127 @@ export default function ConnectEmailPanel({ onChange }) {
           <div className="border-2 border-black p-5 bg-amber-50">
             <div className="font-display font-black text-lg">Connect your inbox in ~60 seconds</div>
             <p className="mt-2 text-sm text-neutral-800 max-w-3xl">
-              Use any IMAP-enabled mailbox — Gmail, Outlook, Yahoo, Zoho or your own domain. BotNira will read, draft, and (optionally) auto-reply on your behalf.
-              You'll need an <strong>app password</strong> rather than your normal login.
+              Connect Gmail, Outlook, or any private email server (Hostinger, Namecheap, GoDaddy, cPanel, etc.).
+              You'll need an <strong>app password</strong> for Gmail/Outlook, or your regular email password for private servers.
             </p>
-            <div className="mt-3 flex flex-wrap gap-3 text-xs font-mono">
-              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="underline flex items-center gap-1" data-testid="email-help-gmail">
-                Gmail app password <ExternalLink size={10} />
-              </a>
-              <a href="https://account.live.com/proofs/Manage" target="_blank" rel="noreferrer" className="underline flex items-center gap-1">
-                Outlook app password <ExternalLink size={10} />
-              </a>
-              <a href="https://help.zoho.com/portal/en/kb/articles/generate-an-app-specific-password" target="_blank" rel="noreferrer" className="underline flex items-center gap-1">
-                Zoho app password <ExternalLink size={10} />
-              </a>
+          </div>
+
+          {/* Provider Selector */}
+          <div>
+            <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600 mb-2">Email Provider</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={() => handleProviderChange("gmail")}
+                className={`border-2 border-black px-4 py-3 font-bold text-sm transition-all ${
+                  provider === "gmail" 
+                    ? "bg-[#FBBC04] text-black shadow-brutal" 
+                    : "bg-white text-neutral-600 hover:bg-neutral-50"
+                }`}
+                data-testid="provider-gmail"
+              >
+                Gmail
+              </button>
+              <button
+                type="button"
+                onClick={() => handleProviderChange("outlook")}
+                className={`border-2 border-black px-4 py-3 font-bold text-sm transition-all ${
+                  provider === "outlook" 
+                    ? "bg-[#0078D4] text-white shadow-brutal" 
+                    : "bg-white text-neutral-600 hover:bg-neutral-50"
+                }`}
+                data-testid="provider-outlook"
+              >
+                Outlook
+              </button>
+              <button
+                type="button"
+                onClick={() => handleProviderChange("hostinger")}
+                className={`border-2 border-black px-4 py-3 font-bold text-sm transition-all ${
+                  provider === "hostinger" 
+                    ? "bg-purple-500 text-white shadow-brutal" 
+                    : "bg-white text-neutral-600 hover:bg-neutral-50"
+                }`}
+                data-testid="provider-hostinger"
+              >
+                Hostinger
+              </button>
+              <button
+                type="button"
+                onClick={() => handleProviderChange("custom")}
+                className={`border-2 border-black px-4 py-3 font-bold text-sm transition-all ${
+                  provider === "custom" 
+                    ? "bg-[#002FA7] text-white shadow-brutal" 
+                    : "bg-white text-neutral-600 hover:bg-neutral-50"
+                }`}
+                data-testid="provider-custom"
+              >
+                Custom Server
+              </button>
             </div>
           </div>
+
+          {/* Provider-specific guides */}
+          {provider === "gmail" && (
+            <div className="border-2 border-black p-4 bg-yellow-50">
+              <div className="font-bold text-sm mb-2">📧 Gmail Setup</div>
+              <p className="text-sm text-neutral-800">
+                Gmail requires an <strong>App Password</strong>. Click below for step-by-step instructions.
+              </p>
+              <a 
+                href="https://myaccount.google.com/apppasswords" 
+                target="_blank" 
+                rel="noreferrer" 
+                className="inline-flex items-center gap-1 mt-2 text-sm font-bold underline"
+              >
+                Generate Gmail App Password <ExternalLink size={12} />
+              </a>
+            </div>
+          )}
+
+          {provider === "outlook" && (
+            <div className="border-2 border-black p-4 bg-blue-50">
+              <div className="font-bold text-sm mb-2">📧 Outlook Setup</div>
+              <p className="text-sm text-neutral-800">
+                Outlook requires an <strong>App Password</strong>. 
+              </p>
+              <a 
+                href="https://account.live.com/proofs/Manage" 
+                target="_blank" 
+                rel="noreferrer" 
+                className="inline-flex items-center gap-1 mt-2 text-sm font-bold underline"
+              >
+                Generate Outlook App Password <ExternalLink size={12} />
+              </a>
+            </div>
+          )}
+
+          {provider === "hostinger" && (
+            <div className="border-2 border-black p-4 bg-purple-50">
+              <div className="font-bold text-sm mb-2">🌐 Hostinger Email Setup</div>
+              <p className="text-sm text-neutral-800 mb-2">
+                Use your regular email password (not an app password). Server settings are pre-configured:
+              </p>
+              <ul className="text-xs font-mono space-y-1 text-neutral-700">
+                <li>• IMAP: imap.hostinger.com:993 (SSL)</li>
+                <li>• SMTP: smtp.hostinger.com:465 (SSL)</li>
+              </ul>
+            </div>
+          )}
+
+          {provider === "custom" && (
+            <div className="border-2 border-black p-4 bg-blue-50">
+              <div className="font-bold text-sm mb-2">🔧 Custom Server Setup</div>
+              <p className="text-sm text-neutral-800 mb-2">
+                Enter your email provider's IMAP and SMTP settings below. Common providers:
+              </p>
+              <ul className="text-xs space-y-2 text-neutral-700">
+                <li><strong>Namecheap:</strong> mail.privateemail.com (IMAP: 993, SMTP: 465)</li>
+                <li><strong>GoDaddy:</strong> imap.secureserver.net / smtpout.secureserver.net (IMAP: 993, SMTP: 465)</li>
+                <li><strong>cPanel:</strong> Check your hosting control panel for mail server settings</li>
+              </ul>
+            </div>
+          )}
 
           {/* Step-by-step Gmail app password guide — most vendors are on Gmail */}
           <details className="group border-2 border-black bg-white" data-testid="gmail-app-pw-guide">
@@ -308,13 +439,15 @@ export default function ConnectEmailPanel({ onChange }) {
                 type="email"
                 value={emailAddr}
                 onChange={(e) => setEmailAddr(e.target.value)}
-                placeholder="hello@yourbusiness.com"
+                placeholder={provider === "custom" ? "kamal@thedigisparrow.com" : "hello@yourbusiness.com"}
                 className="w-full border-2 border-black px-3 py-2 font-mono"
                 autoComplete="username"
               />
             </label>
             <label className="block">
-              <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600 mb-1">App password</div>
+              <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600 mb-1">
+                {provider === "gmail" || provider === "outlook" ? "App Password" : "Password"}
+              </div>
               <input
                 data-testid="email-input-password"
                 type="password"
@@ -324,6 +457,11 @@ export default function ConnectEmailPanel({ onChange }) {
                 className="w-full border-2 border-black px-3 py-2 font-mono"
                 autoComplete="new-password"
               />
+              {(provider === "hostinger" || provider === "custom") && (
+                <p className="text-[10px] font-mono text-neutral-500 mt-1">
+                  Use your regular email password (not an app password)
+                </p>
+              )}
             </label>
           </div>
 
@@ -359,22 +497,70 @@ export default function ConnectEmailPanel({ onChange }) {
             </span>
           </label>
 
-          <button
-            type="button"
-            onClick={() => setShowAdv((v) => !v)}
-            className="text-xs font-bold tracking-[0.2em] uppercase flex items-center gap-1 text-neutral-700 hover:text-black"
-            data-testid="email-toggle-advanced"
-          >
-            {showAdv ? <ChevronUp size={12} /> : <ChevronDown size={12} />} Advanced (custom IMAP/SMTP)
-          </button>
+          {/* Server Settings (editable for custom) */}
+          {provider === "custom" && (
+            <div className="border-2 border-dashed border-black/40 p-4 bg-neutral-50">
+              <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600 mb-3">Server Settings</div>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">IMAP Host *</label>
+                  <input 
+                    value={imapHost} 
+                    onChange={(e) => setImapHost(e.target.value)} 
+                    placeholder="imap.yourdomain.com" 
+                    className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                    data-testid="email-imap-host"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">IMAP Port *</label>
+                  <input 
+                    value={imapPort} 
+                    onChange={(e) => setImapPort(e.target.value)} 
+                    placeholder="993" 
+                    className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                    data-testid="email-imap-port"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">SMTP Host *</label>
+                  <input 
+                    value={smtpHost} 
+                    onChange={(e) => setSmtpHost(e.target.value)} 
+                    placeholder="smtp.yourdomain.com" 
+                    className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                    data-testid="email-smtp-host"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">SMTP Port *</label>
+                  <input 
+                    value={smtpPort} 
+                    onChange={(e) => setSmtpPort(e.target.value)} 
+                    placeholder="465" 
+                    className="w-full border-2 border-black px-3 py-2 font-mono text-sm"
+                    data-testid="email-smtp-port"
+                  />
+                </div>
+              </div>
+              <p className="text-xs font-mono text-neutral-500 mt-3">
+                💡 Typical ports: IMAP uses 993 (SSL), SMTP uses 465 (SSL) or 587 (TLS)
+              </p>
+            </div>
+          )}
 
-          {showAdv && (
-            <div className="border-2 border-dashed border-black/40 p-4 grid md:grid-cols-2 gap-3 bg-neutral-50" data-testid="email-advanced-block">
-              <input value={imapHost} onChange={(e) => setImapHost(e.target.value)} placeholder="IMAP host (e.g. imap.example.com)" className="border-2 border-black px-3 py-2 font-mono text-sm" />
-              <input value={imapPort} onChange={(e) => setImapPort(e.target.value)} placeholder="IMAP port" className="border-2 border-black px-3 py-2 font-mono text-sm" />
-              <input value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="SMTP host (e.g. smtp.example.com)" className="border-2 border-black px-3 py-2 font-mono text-sm" />
-              <input value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} placeholder="SMTP port" className="border-2 border-black px-3 py-2 font-mono text-sm" />
-              <p className="md:col-span-2 text-xs font-mono text-neutral-500">Leave blank to auto-detect for Gmail / Outlook / Yahoo / Zoho / iCloud.</p>
+          {/* Show current settings for other providers */}
+          {provider !== "custom" && (
+            <div className="border-2 border-black p-4 bg-neutral-50">
+              <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600 mb-2">Server Settings (Auto-configured)</div>
+              <div className="grid md:grid-cols-2 gap-2 text-xs font-mono text-neutral-700">
+                <div>
+                  <strong>IMAP:</strong> {imapHost}:{imapPort}
+                </div>
+                <div>
+                  <strong>SMTP:</strong> {smtpHost}:{smtpPort}
+                </div>
+              </div>
             </div>
           )}
 
