@@ -281,10 +281,20 @@ def _smtp_send_email_sync(conn: dict, to_email: str, subject: str, body_text: st
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = (references + " " + in_reply_to).strip() if references else in_reply_to
         msg.set_content(body_text or "")
-        with smtplib.SMTP(conn["smtp_host"], conn.get("smtp_port", 587), timeout=20) as s:
-            s.starttls()
-            s.login(conn["email_address"], pwd)
-            s.send_message(msg)
+        
+        # Use SSL (port 465) or TLS (port 587) based on port
+        smtp_port = conn.get("smtp_port", 587)
+        if smtp_port == 465:
+            # Port 465 requires direct SSL connection
+            with smtplib.SMTP_SSL(conn["smtp_host"], smtp_port, timeout=20) as s:
+                s.login(conn["email_address"], pwd)
+                s.send_message(msg)
+        else:
+            # Port 587 (or others) use STARTTLS
+            with smtplib.SMTP(conn["smtp_host"], smtp_port, timeout=20) as s:
+                s.starttls()
+                s.login(conn["email_address"], pwd)
+                s.send_message(msg)
         return new_mid
     except Exception as e:
         _s.logger.warning("[email send] SMTP error for %s → %s: %s", conn.get("email_address"), to_email, e)
@@ -518,10 +528,18 @@ def _verify_imap_smtp_sync(email_address: str, password: str,
     except Exception as e:
         out["error"] = f"IMAP connection error: {e}"
         return out
+    
+    # SMTP verification - use SSL for port 465, STARTTLS for others
     try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as s:
-            s.starttls()
-            s.login(email_address, password)
+        if smtp_port == 465:
+            # Port 465 requires direct SSL connection
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15) as s:
+                s.login(email_address, password)
+        else:
+            # Port 587 (or others) use STARTTLS
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as s:
+                s.starttls()
+                s.login(email_address, password)
         out["smtp_ok"] = True
     except smtplib.SMTPAuthenticationError as e:
         out["error"] = f"SMTP login failed: {e.smtp_error.decode('utf-8', errors='replace') if isinstance(e.smtp_error, bytes) else e}"
