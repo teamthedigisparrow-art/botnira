@@ -639,7 +639,12 @@ Your tone: {bot.get('tone','friendly and professional')}.
 4. Never answer unrelated general-knowledge questions; politely steer back to the business.
 5. If the user wants to book an appointment, collect (one question at a time if needed): full name, phone or email, preferred date AND time, reason for the visit. Once you have all four, CONFIRM by restating the details and saying something like "You're booked for <date time>, <name>" — that confirmation is what registers the appointment.
 6. CRITICAL: Do NOT re-ask for information the user has already provided earlier in this conversation. Scan the full conversation history before asking anything. If the user already said their name, phone, date, or reason — skip that question and move to the next missing piece.
-7. If a customer asks to VIEW, CHECK, CANCEL, or RESCHEDULE their existing appointment, guide them to provide their phone number or email, then tell them: "I've found your appointment(s). To manage them, please visit: [appointment management link]. You can view, reschedule, or cancel your booking there."
+7. APPOINTMENT MANAGEMENT: If customer wants to VIEW, CANCEL, or RESCHEDULE an existing appointment:
+   a) Ask for their phone number or email if not already provided
+   b) Confirm you found their appointment (mention date/time/reason)
+   c) If CANCEL: Say "I've cancelled your appointment for [date/time]. You're all set!"
+   d) If RESCHEDULE: Ask "What new date and time works for you?" → Once provided, say "Done! Your appointment is now [new date/time]"
+   e) After any change, inform them: "The business owner has been notified of this change."
 8. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
 9. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
 10. Never use markdown tables. Use **bold** only for key details (price, date, phone).
@@ -853,6 +858,112 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
         return None
 
 
+async def _maybe_manage_appointment(vendor_id: str, conversation_id: str, latest_bot_reply: str, customer_phone: str = None):
+    """Detect if bot just cancelled or rescheduled an appointment in-chat.
+    
+    Looks for keywords like "cancelled your appointment" or "rescheduled to"
+    and extracts the action from bot's reply. Updates appointment in database
+    and notifies vendor.
+    """
+    cancel_pattern = re.compile(
+        r"(cancel+ed|removed|deleted)\s+(your|the)\s+appointment",
+        re.IGNORECASE
+    )
+    reschedule_pattern = re.compile(
+        r"(rescheduled?|moved|changed)\s+(your|the)\s+appointment|"
+        r"(appointment|it)\s+is\s+now\s+(scheduled|set|booked)\s+(for|on|at)",
+        re.IGNORECASE
+    )
+    
+    is_cancel = cancel_pattern.search(latest_bot_reply)
+    is_reschedule = reschedule_pattern.search(latest_bot_reply)
+    
+    if not is_cancel and not is_reschedule:
+        return None
+    
+    # Find customer's appointment (use phone from context or extract from convo)
+    if not customer_phone:
+        # Try to extract phone from conversation messages
+        msgs = await db.messages.find(
+            {"conversation_id": conversation_id}, {"_id": 0}
+        ).sort("created_at", -1).limit(20).to_list(20)
+        for m in msgs:
+            phone_match = re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b|\b\+\d{10,15}\b', m.get("content", ""))
+            if phone_match:
+                customer_phone = phone_match.group(0)
+                break
+    
+    if not customer_phone:
+        logger.warning("Cannot manage appointment: no customer phone found")
+        return None
+    
+    # Find most recent scheduled appointment for this customer
+    phone_clean = re.sub(r'[^\d+]', '', customer_phone)
+    appt = await db.appointments.find_one(
+        {
+            "vendor_id": vendor_id,
+            "customer_contact": {"$regex": phone_clean, "$options": "i"},
+            "status": {"$in": ["scheduled", "rescheduled_by_customer"]}
+        },
+        {"_id": 0}
+    )
+    
+    if not appt:
+        logger.info("No appointment found to manage for phone=%s", customer_phone)
+        return None
+    
+    updates = {"updated_at": now_iso()}
+    change_log = []
+    
+    if is_cancel:
+        updates["status"] = "cancelled_by_customer"
+        updates["cancelled_at"] = now_iso()
+        change_log.append("Cancelled by customer via chat")
+        logger.info("Customer cancelled appointment %s via chat", appt["id"])
+    
+    elif is_reschedule:
+        # Extract new date/time from bot reply
+        date_match = re.search(
+            r'\b(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(?::\d{2})?)\b|'
+            r'\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}(?:\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)\b|'
+            r'\b((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[,\s]+\w+\s+\d{1,2}(?:st|nd|rd|th)?\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)\b',
+            latest_bot_reply,
+            re.IGNORECASE
+        )
+        if date_match:
+            new_time = date_match.group(1) or date_match.group(2) or date_match.group(3)
+            old_time = appt.get("scheduled_at", "")
+            updates["scheduled_at"] = new_time
+            updates["status"] = "rescheduled_by_customer"
+            updates["rescheduled_at"] = now_iso()
+            change_log.append(f"Rescheduled by customer via chat from {old_time} to {new_time}")
+            logger.info("Customer rescheduled appointment %s to %s", appt["id"], new_time)
+        else:
+            logger.warning("Reschedule detected but couldn't extract new date/time")
+            return None
+    
+    # Add change log
+    if change_log:
+        updates["customer_changes"] = appt.get("customer_changes", []) + [{
+            "timestamp": now_iso(),
+            "changes": change_log,
+            "source": "chat"
+        }]
+    
+    # Update appointment
+    await db.appointments.update_one({"id": appt["id"]}, {"$set": updates})
+    
+    # Notify vendor
+    try:
+        vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+        if vendor:
+            await _send_vendor_appointment_change_notification(vendor, appt, change_log)
+    except Exception as e:
+        logger.warning("Failed to notify vendor of customer appointment change: %s", e)
+    
+    return appt
+
+
 async def _push_message(conversation_id: str, vendor_id: str, role: str, content: str, external_id: Optional[str] = None, extra: Optional[Dict[str, Any]] = None):
     msg = {
         "id": new_id(),
@@ -934,6 +1045,7 @@ async def chat_message(req: ChatMessageReq):
     bot_msg = await _push_message(conv["id"], req.vendor_id, "bot", reply)
     await _decrement_message_balance(req.vendor_id)
     await _maybe_book_appointment(req.vendor_id, conv["id"], reply)
+    await _maybe_manage_appointment(req.vendor_id, conv["id"], reply, req.customer_contact)
     return {"conversation_id": conv["id"], "reply": reply, "message": bot_msg}
 
 
@@ -1157,6 +1269,7 @@ async def agent_reply(cid: str, payload: Dict[str, str], user: dict = Depends(re
     # live-agent / Generate-AI-reply sends are also captured.
     try:
         await _maybe_book_appointment(user["vendor_id"], cid, content)
+        await _maybe_manage_appointment(user["vendor_id"], cid, content)
     except Exception as e:
         logger.warning("[agent_reply] booking extraction failed: %s", e)
 
@@ -1183,6 +1296,7 @@ async def simulate_inbound(
     await _push_message(conv["id"], user["vendor_id"], "bot", reply)
     await _decrement_message_balance(user["vendor_id"])
     await _maybe_book_appointment(user["vendor_id"], conv["id"], reply)
+    await _maybe_manage_appointment(user["vendor_id"], conv["id"], reply, req.customer_contact)
     return {"conversation_id": conv["id"], "reply": reply}
 
 

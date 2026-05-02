@@ -12,12 +12,29 @@ const SOURCE_META = {
   manual: { icon: UserPlus, label: "Manual", color: "bg-neutral-100 text-neutral-900" },
 };
 
+const STATUS_META = {
+  scheduled: { label: "Scheduled", color: "bg-blue-100 text-blue-900 border-blue-900" },
+  cancelled_by_customer: { label: "Cancelled by Customer", color: "bg-red-100 text-red-900 border-red-900" },
+  rescheduled_by_customer: { label: "Rescheduled by Customer", color: "bg-amber-100 text-amber-900 border-amber-900" },
+  cancelled: { label: "Cancelled", color: "bg-neutral-200 text-neutral-700 border-neutral-700" },
+  attended: { label: "Attended", color: "bg-green-100 text-green-900 border-green-900" },
+};
+
 function SourceBadge({ source }) {
   const meta = SOURCE_META[source] || SOURCE_META.manual;
   const Icon = meta.icon;
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-1 border border-black text-[10px] font-bold uppercase tracking-widest ${meta.color}`}>
       <Icon size={10} /> {meta.label}
+    </span>
+  );
+}
+
+function StatusBadge({ status }) {
+  const meta = STATUS_META[status] || STATUS_META.scheduled;
+  return (
+    <span className={`inline-block px-2 py-1 border text-[10px] font-bold uppercase tracking-widest ${meta.color}`}>
+      {meta.label}
     </span>
   );
 }
@@ -74,13 +91,14 @@ export default function Appointments() {
               <th className="p-3">Contact</th>
               <th className="p-3">When</th>
               <th className="p-3">Source</th>
+              <th className="p-3">Status</th>
               <th className="p-3">Notes</th>
               <th className="p-3 text-right">Attended</th>
             </tr>
           </thead>
           <tbody>
             {items.length === 0 && (
-              <tr><td colSpan={6} className="p-8 text-center text-neutral-500">
+              <tr><td colSpan={7} className="p-8 text-center text-neutral-500">
                 <CalendarDays size={20} className="inline mr-2"/> No appointments yet.
               </td></tr>
             )}
@@ -90,8 +108,14 @@ export default function Appointments() {
                 <td className="p-3 font-mono text-xs">{a.customer_contact || "—"}</td>
                 <td className="p-3 font-mono text-xs">{a.scheduled_at || "—"}</td>
                 <td className="p-3"><SourceBadge source={a.source || "manual"} /></td>
+                <td className="p-3"><StatusBadge status={a.status || "scheduled"} /></td>
                 <td className="p-3 text-neutral-700 max-w-xs">
                   <div className="truncate" title={a.notes || ""}>{a.notes || "—"}</div>
+                  {a.customer_changes && a.customer_changes.length > 0 && (
+                    <div className="mt-1 text-[10px] text-amber-700 font-bold">
+                      ⚠️ {a.customer_changes[a.customer_changes.length - 1].changes.join(', ')}
+                    </div>
+                  )}
                 </td>
                 <td className="p-3 text-right">
                   <button
