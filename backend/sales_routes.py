@@ -105,23 +105,150 @@ async def sales_access(user: dict = Depends(_s.require_vendor)):
     return _sales_enabled_for(vendor)
 
 
+# ---------------------------------------------------------------- lists ---
+# A vendor can organise prospects into named lists. A prospect is
+# *canonical* per (vendor_id, email) — the same email across lists is the
+# SAME entity (field `list_ids: List[str]`). Campaigns may target one or
+# more lists; recipients are deduped by prospect identity.
+
+async def _ensure_default_list(vid: str) -> str:
+    """Every vendor has at least one 'Main list' so prospects never live
+    orphaned. Returns its id."""
+    existing = await _s.db.sales_prospect_lists.find_one(
+        {"vendor_id": vid}, {"_id": 0, "id": 1}, sort=[("created_at", 1)]
+    )
+    if existing:
+        return existing["id"]
+    lid = _s.new_id()
+    await _s.db.sales_prospect_lists.insert_one({
+        "id": lid, "vendor_id": vid, "name": "Main list", "description": "",
+        "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
+    })
+    # Fold any legacy prospect (pre-list era) into this list
+    await _s.db.sales_prospects.update_many(
+        {"vendor_id": vid, "list_ids": {"$exists": False}},
+        {"$set": {"list_ids": [lid], "updated_at": _s.now_iso()}},
+    )
+    return lid
+
+
+class ListIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    description: Optional[str] = Field("", max_length=300)
+
+
+@router.get("/lists")
+async def list_lists(user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    await _ensure_default_list(vid)
+    cur = _s.db.sales_prospect_lists.find({"vendor_id": vid}, {"_id": 0}).sort("created_at", 1)
+    items = await cur.to_list(200)
+    # Attach counts per list (single aggregate)
+    pipeline = [
+        {"$match": {"vendor_id": vid}},
+        {"$unwind": "$list_ids"},
+        {"$group": {"_id": {"list_id": "$list_ids", "status": "$status"}, "n": {"$sum": 1}}},
+    ]
+    agg = await _s.db.sales_prospects.aggregate(pipeline).to_list(5000)
+    counts: Dict[str, Dict[str, int]] = {}
+    for row in agg:
+        lid = row["_id"]["list_id"]
+        st = row["_id"]["status"] or "active"
+        counts.setdefault(lid, {"active": 0, "unsubscribed": 0, "bounced": 0})
+        if st in counts[lid]:
+            counts[lid][st] += row["n"]
+    for it in items:
+        c = counts.get(it["id"], {"active": 0, "unsubscribed": 0, "bounced": 0})
+        it["counts"] = c
+        it["total"] = c["active"] + c["unsubscribed"] + c["bounced"]
+    return {"items": items}
+
+
+@router.post("/lists")
+async def create_list(payload: ListIn, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    lid = _s.new_id()
+    doc = {
+        "id": lid, "vendor_id": vid,
+        "name": payload.name.strip(),
+        "description": (payload.description or "").strip(),
+        "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
+    }
+    await _s.db.sales_prospect_lists.insert_one(doc.copy())
+    return {"list": doc}
+
+
+@router.patch("/lists/{lid}")
+async def update_list(lid: str, payload: ListIn, user: dict = Depends(_require_sales_vendor)):
+    res = await _s.db.sales_prospect_lists.update_one(
+        {"id": lid, "vendor_id": user["vendor_id"]},
+        {"$set": {"name": payload.name.strip(),
+                    "description": (payload.description or "").strip(),
+                    "updated_at": _s.now_iso()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="List not found")
+    return {"ok": True}
+
+
+@router.delete("/lists/{lid}")
+async def delete_list(lid: str, user: dict = Depends(_require_sales_vendor)):
+    """Hard delete a list. Prospects that belong ONLY to this list are
+    deleted as well; prospects that also belong to other lists stay (the
+    list is simply removed from their memberships)."""
+    vid = user["vendor_id"]
+    target = await _s.db.sales_prospect_lists.find_one({"id": lid, "vendor_id": vid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="List not found")
+
+    # 1. Delete prospects whose ONLY membership is this list
+    deleted_prospects = await _s.db.sales_prospects.delete_many(
+        {"vendor_id": vid, "list_ids": [lid]}
+    )
+    # 2. Remove the list from prospects that have multiple memberships
+    updated_prospects = await _s.db.sales_prospects.update_many(
+        {"vendor_id": vid, "list_ids": lid},
+        {"$pull": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}},
+    )
+    # 3. Delete the list metadata
+    await _s.db.sales_prospect_lists.delete_one({"id": lid, "vendor_id": vid})
+    # 4. Guarantee at least one list exists for the vendor
+    await _ensure_default_list(vid)
+    return {
+        "deleted": True,
+        "prospects_deleted": deleted_prospects.deleted_count,
+        "prospects_kept_in_other_lists": updated_prospects.modified_count,
+    }
+
+
 # ---------------------------------------------------------------- prospects ---
 class ProspectIn(BaseModel):
     email: EmailStr
     name: Optional[str] = ""
     company: Optional[str] = ""
+    list_id: Optional[str] = None
+
+
+class ProspectPatch(BaseModel):
+    email: Optional[EmailStr] = None
+    name: Optional[str] = None
+    company: Optional[str] = None
 
 
 @router.get("/prospects")
 async def list_prospects(
     user: dict = Depends(_require_sales_vendor),
+    list_id: Optional[str] = None,
     q: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     vid = user["vendor_id"]
+    await _ensure_default_list(vid)
     flt: Dict[str, Any] = {"vendor_id": vid}
+    if list_id:
+        flt["list_ids"] = list_id
     if status in ("active", "unsubscribed", "bounced"):
         flt["status"] = status
     if q:
@@ -130,10 +257,13 @@ async def list_prospects(
     total = await _s.db.sales_prospects.count_documents(flt)
     cur = _s.db.sales_prospects.find(flt, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
     items = await cur.to_list(limit)
+    vendor_filter = {"vendor_id": vid}
+    if list_id:
+        vendor_filter["list_ids"] = list_id
     counts = {
-        "active": await _s.db.sales_prospects.count_documents({"vendor_id": vid, "status": "active"}),
-        "unsubscribed": await _s.db.sales_prospects.count_documents({"vendor_id": vid, "status": "unsubscribed"}),
-        "bounced": await _s.db.sales_prospects.count_documents({"vendor_id": vid, "status": "bounced"}),
+        "active": await _s.db.sales_prospects.count_documents({**vendor_filter, "status": "active"}),
+        "unsubscribed": await _s.db.sales_prospects.count_documents({**vendor_filter, "status": "unsubscribed"}),
+        "bounced": await _s.db.sales_prospects.count_documents({**vendor_filter, "status": "bounced"}),
     }
     return {"items": items, "total": total, "limit": limit, "offset": offset, "counts": counts}
 
@@ -141,18 +271,33 @@ async def list_prospects(
 @router.post("/prospects")
 async def add_prospect(p: ProspectIn, user: dict = Depends(_require_sales_vendor)):
     vid = user["vendor_id"]
+    lid = p.list_id or await _ensure_default_list(vid)
+    # Confirm list belongs to vendor
+    target_list = await _s.db.sales_prospect_lists.find_one({"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1})
+    if not target_list:
+        raise HTTPException(status_code=404, detail="List not found")
+
     em = _norm_email(p.email)
     if not _EMAIL_RE.match(em):
         raise HTTPException(status_code=400, detail="Invalid email")
     existing = await _s.db.sales_prospects.find_one({"vendor_id": vid, "email": em}, {"_id": 0})
     if existing:
+        # Add to this list if not already a member
+        if lid not in (existing.get("list_ids") or []):
+            await _s.db.sales_prospects.update_one(
+                {"id": existing["id"]},
+                {"$addToSet": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}},
+            )
+            existing["list_ids"] = list(set((existing.get("list_ids") or []) + [lid]))
         return {"prospect": existing, "duplicate": True}
+
     doc = {
         "id": _s.new_id(),
         "vendor_id": vid,
         "email": em,
         "name": (p.name or "").strip(),
         "company": (p.company or "").strip(),
+        "list_ids": [lid],
         "status": "active",
         "source": "manual",
         "created_at": _s.now_iso(),
@@ -162,31 +307,104 @@ async def add_prospect(p: ProspectIn, user: dict = Depends(_require_sales_vendor
     return {"prospect": doc, "duplicate": False}
 
 
-@router.delete("/prospects/{pid}")
-async def delete_prospect(pid: str, user: dict = Depends(_require_sales_vendor)):
-    res = await _s.db.sales_prospects.delete_one({"id": pid, "vendor_id": user["vendor_id"]})
-    if res.deleted_count == 0:
+@router.patch("/prospects/{pid}")
+async def update_prospect(pid: str, payload: ProspectPatch, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    current = await _s.db.sales_prospects.find_one({"id": pid, "vendor_id": vid}, {"_id": 0})
+    if not current:
         raise HTTPException(status_code=404, detail="Prospect not found")
-    return {"ok": True}
+    updates: Dict[str, Any] = {"updated_at": _s.now_iso()}
+    if payload.email is not None:
+        new_em = _norm_email(payload.email)
+        if not _EMAIL_RE.match(new_em):
+            raise HTTPException(status_code=400, detail="Invalid email")
+        if new_em != current["email"]:
+            clash = await _s.db.sales_prospects.find_one(
+                {"vendor_id": vid, "email": new_em, "id": {"$ne": pid}}, {"_id": 0, "id": 1}
+            )
+            if clash:
+                raise HTTPException(status_code=409, detail=f"Another prospect already has {new_em}")
+            updates["email"] = new_em
+    if payload.name is not None:
+        updates["name"] = payload.name.strip()
+    if payload.company is not None:
+        updates["company"] = payload.company.strip()
+    await _s.db.sales_prospects.update_one({"id": pid, "vendor_id": vid}, {"$set": updates})
+    refreshed = await _s.db.sales_prospects.find_one({"id": pid, "vendor_id": vid}, {"_id": 0})
+    return {"prospect": refreshed}
+
+
+@router.delete("/prospects/{pid}")
+async def delete_prospect(
+    pid: str,
+    user: dict = Depends(_require_sales_vendor),
+    list_id: Optional[str] = None,
+):
+    """If `list_id` is provided, the prospect is only removed from THAT
+    list — they remain reachable through any other lists they belong to.
+    If the list_id was the prospect's only membership, the prospect is
+    hard-deleted. Without list_id, the prospect is fully removed from
+    every list."""
+    vid = user["vendor_id"]
+    current = await _s.db.sales_prospects.find_one({"id": pid, "vendor_id": vid}, {"_id": 0})
+    if not current:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    if list_id:
+        lists = current.get("list_ids") or []
+        if list_id not in lists:
+            raise HTTPException(status_code=400, detail="Prospect is not in that list")
+        if len(lists) == 1:
+            await _s.db.sales_prospects.delete_one({"id": pid, "vendor_id": vid})
+            return {"deleted": True, "removed_from_list": True}
+        await _s.db.sales_prospects.update_one(
+            {"id": pid, "vendor_id": vid},
+            {"$pull": {"list_ids": list_id}, "$set": {"updated_at": _s.now_iso()}},
+        )
+        return {"deleted": False, "removed_from_list": True}
+    await _s.db.sales_prospects.delete_one({"id": pid, "vendor_id": vid})
+    return {"deleted": True, "removed_from_list": False}
 
 
 @router.post("/prospects/clear")
-async def clear_prospects(user: dict = Depends(_require_sales_vendor)):
-    res = await _s.db.sales_prospects.delete_many({"vendor_id": user["vendor_id"]})
-    return {"deleted": res.deleted_count}
+async def clear_prospects(
+    user: dict = Depends(_require_sales_vendor),
+    list_id: Optional[str] = None,
+):
+    """With `list_id`: clears prospects belonging ONLY to that list (and
+    removes the list from prospects that also belong to other lists).
+    Without `list_id`: deletes every prospect in the vendor workspace."""
+    vid = user["vendor_id"]
+    if list_id:
+        deleted = await _s.db.sales_prospects.delete_many(
+            {"vendor_id": vid, "list_ids": [list_id]}
+        )
+        await _s.db.sales_prospects.update_many(
+            {"vendor_id": vid, "list_ids": list_id},
+            {"$pull": {"list_ids": list_id}, "$set": {"updated_at": _s.now_iso()}},
+        )
+        return {"deleted": deleted.deleted_count, "scope": "list"}
+    res = await _s.db.sales_prospects.delete_many({"vendor_id": vid})
+    return {"deleted": res.deleted_count, "scope": "all"}
 
 
 @router.post("/prospects/upload")
 async def upload_prospects(
     file: UploadFile = File(...),
+    list_id: Optional[str] = None,
     user: dict = Depends(_require_sales_vendor),
 ):
-    """Accepts a CSV with header row containing (email, name, company).
-    Header names are case-insensitive; extra columns ignored.
-    Merges with existing list — duplicates (by email) are skipped, NOT
-    overwritten.
+    """Accepts a CSV with a header row (`email, name, company` — case
+    insensitive; extra columns ignored) and uploads prospects into the
+    target `list_id`. If the list is omitted, the vendor's default
+    'Main list' is used. If a prospect email already exists (same
+    vendor), we simply add the list membership — no overwrite, no dupe.
     """
     vid = user["vendor_id"]
+    lid = list_id or await _ensure_default_list(vid)
+    target_list = await _s.db.sales_prospect_lists.find_one({"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1})
+    if not target_list:
+        raise HTTPException(status_code=404, detail="List not found")
+
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -200,7 +418,6 @@ async def upload_prospects(
     if not rows:
         raise HTTPException(status_code=400, detail="CSV has no rows")
 
-    # Header detect — first row with an "email"-like column wins
     header = [h.strip().lower() for h in rows[0]]
     has_header = any(h in {"email", "e-mail", "email address"} for h in header)
     if has_header:
@@ -209,20 +426,23 @@ async def upload_prospects(
         idx_company = next((i for i, h in enumerate(header) if h in {"company", "organization", "business"}), -1)
         data_rows = rows[1:]
     else:
-        # Heuristic: first column is email, second name, third company
         idx_email, idx_name, idx_company = 0, 1, 2
         data_rows = rows
 
-    existing_emails = set()
-    cur = _s.db.sales_prospects.find({"vendor_id": vid}, {"_id": 0, "email": 1})
+    # Pull all existing prospects for this vendor so we can merge (add list_id)
+    existing_by_email: Dict[str, dict] = {}
+    cur = _s.db.sales_prospects.find({"vendor_id": vid}, {"_id": 0, "id": 1, "email": 1, "list_ids": 1})
     async for d in cur:
-        existing_emails.add(d["email"])
+        existing_by_email[d["email"]] = d
 
     inserted = 0
-    duplicates = 0
+    merged_into_list = 0  # already-on-other-list prospects added to this list
+    already_in_list = 0
     invalid = 0
     seen_in_file: set = set()
     docs_to_insert: List[dict] = []
+    ids_to_add_list: List[str] = []
+
     for r in data_rows:
         if idx_email >= len(r):
             invalid += 1
@@ -231,18 +451,27 @@ async def upload_prospects(
         if not _EMAIL_RE.match(em):
             invalid += 1
             continue
-        if em in existing_emails or em in seen_in_file:
-            duplicates += 1
+        if em in seen_in_file:
             continue
         seen_in_file.add(em)
         nm = r[idx_name].strip() if 0 <= idx_name < len(r) else ""
         co = r[idx_company].strip() if 0 <= idx_company < len(r) else ""
+        existing = existing_by_email.get(em)
+        if existing:
+            lists = existing.get("list_ids") or []
+            if lid in lists:
+                already_in_list += 1
+            else:
+                ids_to_add_list.append(existing["id"])
+                merged_into_list += 1
+            continue
         docs_to_insert.append({
             "id": _s.new_id(),
             "vendor_id": vid,
             "email": em,
             "name": nm,
             "company": co,
+            "list_ids": [lid],
             "status": "active",
             "source": "csv",
             "created_at": _s.now_iso(),
@@ -252,10 +481,16 @@ async def upload_prospects(
 
     if docs_to_insert:
         await _s.db.sales_prospects.insert_many([d.copy() for d in docs_to_insert])
+    if ids_to_add_list:
+        await _s.db.sales_prospects.update_many(
+            {"id": {"$in": ids_to_add_list}, "vendor_id": vid},
+            {"$addToSet": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}},
+        )
 
     return {
         "inserted": inserted,
-        "duplicates_skipped": duplicates,
+        "duplicates_skipped": already_in_list,  # already in THIS list
+        "merged_into_list": merged_into_list,   # existed elsewhere, added to this list
         "invalid_skipped": invalid,
         "total_in_file": len(data_rows),
     }
@@ -267,6 +502,8 @@ class CampaignIn(BaseModel):
     subject: str = Field(..., min_length=1, max_length=240)
     body_type: str = Field("text", description="'text' or 'html'")
     body: str = Field(..., min_length=1)
+    list_ids: List[str] = Field(default_factory=list,
+                                 description="Target list IDs. Empty = all lists.")
     start_now: bool = True
     scheduled_at: Optional[str] = None  # ISO; only used if start_now=False
 
@@ -298,17 +535,27 @@ async def create_campaign(payload: CampaignIn, user: dict = Depends(_require_sal
             detail="Connect your email server in Channels → Email before launching a campaign.",
         )
 
-    # Snapshot current ACTIVE prospects into a campaign roster
+    # Snapshot ACTIVE prospects from the selected list(s) (union, deduped
+    # by prospect identity since each email is one entity per vendor).
+    prospect_filter: Dict[str, Any] = {"vendor_id": vid, "status": "active"}
+    target_list_ids = list(payload.list_ids or [])
+    if target_list_ids:
+        # Validate lists belong to vendor
+        valid_lists = await _s.db.sales_prospect_lists.count_documents(
+            {"vendor_id": vid, "id": {"$in": target_list_ids}}
+        )
+        if valid_lists != len(target_list_ids):
+            raise HTTPException(status_code=400, detail="One or more selected lists don't exist")
+        prospect_filter["list_ids"] = {"$in": target_list_ids}
+
     prospects: List[dict] = []
-    cur = _s.db.sales_prospects.find(
-        {"vendor_id": vid, "status": "active"}, {"_id": 0}
-    ).sort("created_at", 1)
+    cur = _s.db.sales_prospects.find(prospect_filter, {"_id": 0}).sort("created_at", 1)
     async for p in cur:
         prospects.append(p)
     if not prospects:
         raise HTTPException(
             status_code=400,
-            detail="No active prospects to email. Upload a CSV first.",
+            detail="No active prospects in the selected list(s). Upload a CSV first.",
         )
 
     cid = _s.new_id()
@@ -334,6 +581,7 @@ async def create_campaign(payload: CampaignIn, user: dict = Depends(_require_sal
         "body_type": payload.body_type,
         "body": payload.body,
         "from_email": conn["email_address"],
+        "list_ids": target_list_ids,
         "status": status,
         "total": len(prospects),
         "sent_count": 0,
@@ -747,9 +995,21 @@ async def _start_sales_sender():
     try:
         await _s.db.sales_prospects.create_index([("vendor_id", 1), ("email", 1)], unique=True)
         await _s.db.sales_prospects.create_index([("vendor_id", 1), ("status", 1)])
+        await _s.db.sales_prospects.create_index([("vendor_id", 1), ("list_ids", 1)])
+        await _s.db.sales_prospect_lists.create_index([("vendor_id", 1), ("created_at", 1)])
         await _s.db.sales_campaigns.create_index([("vendor_id", 1), ("created_at", -1)])
         await _s.db.sales_campaigns.create_index([("status", 1), ("next_send_at", 1)])
         await _s.db.sales_campaign_recipients.create_index([("campaign_id", 1), ("status", 1)])
         await _s.db.sales_campaign_recipients.create_index([("vendor_id", 1), ("sent_at", -1)])
+        await _s.db.sales_campaign_recipients.create_index([("vendor_id", 1), ("email", 1), ("sent_at", -1)])
     except Exception as e:
         _s.logger.warning("[sales] index create warning: %s", e)
+    # One-time migration for pre-list prospects
+    try:
+        distinct_vendors = await _s.db.sales_prospects.distinct(
+            "vendor_id", {"list_ids": {"$exists": False}}
+        )
+        for vid in distinct_vendors:
+            await _ensure_default_list(vid)
+    except Exception as e:
+        _s.logger.warning("[sales] migration warning: %s", e)

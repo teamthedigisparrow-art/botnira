@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import {
   Megaphone, Mail, Users, BarChart3, Upload, Sparkles, Lock,
   Play, Pause, X, Trash2, ShieldCheck, Clock, Check, AlertTriangle,
-  Eye, Send,
+  Eye, Send, Plus, Pencil, ListPlus, Folder,
 } from "lucide-react";
 
 const TABS = [
@@ -38,19 +38,6 @@ function LockedScreen({ reason }) {
           <p className="mt-3 text-neutral-700">
             {reason || "Upgrade to Growth or Pro to unlock outbound email campaigns."}
           </p>
-          <div className="mt-6 grid sm:grid-cols-2 gap-3 max-w-lg mx-auto text-left">
-            {[
-              "Upload prospect lists (CSV) — duplicates auto-merged",
-              "Personalised emails with {{name}}/{{company}} merge tags",
-              "Anti-spam pacing: 5–45 min random delay per send",
-              "Open tracking + CASL/CAN-SPAM unsubscribe footer",
-            ].map((f, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                <Check size={14} className="mt-0.5 text-green-700" />
-                <span>{f}</span>
-              </div>
-            ))}
-          </div>
           <Link to="/app/billing"
                 data-testid="sales-upgrade-btn"
                 className="mt-7 inline-block bg-[#002FA7] text-white border-2 border-black shadow-brutal px-6 py-3 font-bold hover-lift">
@@ -62,49 +49,239 @@ function LockedScreen({ reason }) {
   );
 }
 
+// ---------------------------------------------------------- list manager ---
+function ListSidebar({ lists, activeId, onSelect, onCreated, onRenamed, onDeleted }) {
+  const [editing, setEditing] = useState(null); // list obj being renamed
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ name: "", description: "" });
+
+  const saveCreate = async () => {
+    if (!form.name.trim()) return toast.error("Name required");
+    try {
+      const { data } = await api.post("/sales/lists", form);
+      toast.success(`List "${data.list.name}" created`);
+      setCreating(false); setForm({ name: "", description: "" });
+      onCreated(data.list.id);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Create failed"); }
+  };
+
+  const saveRename = async () => {
+    if (!form.name.trim()) return toast.error("Name required");
+    try {
+      await api.patch(`/sales/lists/${editing.id}`, form);
+      toast.success("List renamed");
+      setEditing(null); setForm({ name: "", description: "" });
+      onRenamed();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Rename failed"); }
+  };
+
+  const del = async (list) => {
+    const warn = `Delete list "${list.name}"?\n\nThis will remove it and permanently delete prospects that exist ONLY in this list.\nProspects also belonging to other lists stay put.`;
+    if (!window.confirm(warn)) return;
+    try {
+      const { data } = await api.delete(`/sales/lists/${list.id}`);
+      toast.success(`List deleted · ${data.prospects_deleted} prospects removed, ${data.prospects_kept_in_other_lists} kept`);
+      onDeleted(list.id);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Delete failed"); }
+  };
+
+  return (
+    <aside className="w-60 shrink-0 border-2 border-black bg-white shadow-brutal" data-testid="sales-lists-sidebar">
+      <div className="px-3 py-2 border-b-2 border-black flex items-center justify-between">
+        <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-600">
+          <Folder size={11} className="inline -mt-0.5 mr-1" /> Lists
+        </div>
+        <button
+          onClick={() => { setCreating(true); setForm({ name: "", description: "" }); }}
+          className="border border-black px-1.5 py-0.5 text-[11px] font-bold hover-lift bg-white"
+          data-testid="sales-new-list-btn"
+          title="New list"
+        >
+          <Plus size={11} className="inline -mt-0.5" /> New
+        </button>
+      </div>
+      <div className="divide-y divide-black/10 max-h-[70vh] overflow-y-auto">
+        {lists.map((l) => (
+          <div
+            key={l.id}
+            onClick={() => onSelect(l.id)}
+            data-testid={`sales-list-row-${l.id}`}
+            className={`group px-3 py-2.5 cursor-pointer ${activeId === l.id ? "bg-[#002FA7] text-white" : "hover:bg-neutral-50"}`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-sm truncate">{l.name}</div>
+                <div className={`text-[10px] font-mono ${activeId === l.id ? "text-white/80" : "text-neutral-500"}`}>
+                  {l.counts?.active || 0} active · {l.total || 0} total
+                </div>
+              </div>
+              <div className={`flex gap-1 ${activeId === l.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"} transition-opacity`}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setEditing(l); setForm({ name: l.name, description: l.description || "" }); }}
+                  className={`p-1 ${activeId === l.id ? "hover:bg-white/20" : "hover:bg-black/10"}`}
+                  title="Rename"
+                  data-testid={`sales-list-rename-${l.id}`}
+                ><Pencil size={11} /></button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); del(l); }}
+                  className={`p-1 ${activeId === l.id ? "hover:bg-white/20" : "hover:bg-red-100 text-red-700"}`}
+                  title="Delete"
+                  data-testid={`sales-list-delete-${l.id}`}
+                ><Trash2 size={11} /></button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {(creating || editing) && (
+        <ListFormModal
+          editing={!!editing}
+          form={form}
+          setForm={setForm}
+          onCancel={() => { setCreating(false); setEditing(null); }}
+          onSave={editing ? saveRename : saveCreate}
+        />
+      )}
+    </aside>
+  );
+}
+
+function ListFormModal({ editing, form, setForm, onCancel, onSave }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" data-testid="list-form-modal">
+      <div className="bg-white border-2 border-black shadow-brutal w-full max-w-md">
+        <div className="px-5 py-3 border-b-2 border-black flex items-center justify-between">
+          <h3 className="font-display font-black text-xl">{editing ? "Rename list" : "New prospect list"}</h3>
+          <button onClick={onCancel} className="border-2 border-black p-1"><X size={13} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest">Name</label>
+            <input
+              autoFocus
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. April dental outreach"
+              className="w-full border-2 border-black px-3 py-2 mt-1"
+              data-testid="list-form-name"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest">Description <span className="text-neutral-400">(optional)</span></label>
+            <input
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="Who's on this list?"
+              className="w-full border-2 border-black px-3 py-2 mt-1"
+              data-testid="list-form-description"
+            />
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t-2 border-black flex justify-end gap-2 bg-neutral-50">
+          <button onClick={onCancel} className="border-2 border-black px-4 py-2 text-sm font-bold bg-white">Cancel</button>
+          <button onClick={onSave} className="border-2 border-black px-4 py-2 text-sm font-bold bg-[#002FA7] text-white shadow-brutal hover-lift" data-testid="list-form-save">
+            {editing ? "Save" : "Create list"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------- prospect editor ---
+function ProspectEditModal({ prospect, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    email: prospect.email, name: prospect.name || "", company: prospect.company || "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.patch(`/sales/prospects/${prospect.id}`, form);
+      toast.success("Prospect updated");
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Update failed");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" data-testid="prospect-edit-modal">
+      <div className="bg-white border-2 border-black shadow-brutal w-full max-w-md">
+        <div className="px-5 py-3 border-b-2 border-black flex items-center justify-between">
+          <h3 className="font-display font-black text-xl">Edit prospect</h3>
+          <button onClick={onClose} className="border-2 border-black p-1"><X size={13} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {["email", "name", "company"].map((k) => (
+            <div key={k}>
+              <label className="text-xs font-bold uppercase tracking-widest">{k}</label>
+              <input
+                value={form[k]}
+                onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+                className="w-full border-2 border-black px-3 py-2 mt-1 font-mono text-sm"
+                data-testid={`prospect-edit-${k}`}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-3 border-t-2 border-black flex justify-end gap-2 bg-neutral-50">
+          <button onClick={onClose} className="border-2 border-black px-4 py-2 text-sm font-bold bg-white">Cancel</button>
+          <button onClick={save} disabled={saving} className="border-2 border-black px-4 py-2 text-sm font-bold bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-60" data-testid="prospect-edit-save">
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------- prospects panel ---
-function ProspectsPanel() {
+function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
   const [data, setData] = useState({ items: [], total: 0, counts: { active: 0, unsubscribed: 0, bounced: 0 } });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [editing, setEditing] = useState(null);
   const fileRef = useRef(null);
+  const activeList = lists.find((l) => l.id === activeListId);
 
   const load = async () => {
+    if (!activeListId) return;
     setLoading(true);
     try {
-      const params = { limit: 200 };
+      const params = { list_id: activeListId, limit: 200 };
       if (search) params.q = search;
       if (statusFilter) params.status = statusFilter;
       const { data: d } = await api.get("/sales/prospects", { params });
       setData(d);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to load prospects");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeListId, statusFilter]);
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
-      toast.error("Please upload a .csv file");
-      return;
+      toast.error("Please upload a .csv file"); return;
     }
     const fd = new FormData();
     fd.append("file", file);
     setUploading(true);
     try {
-      const { data: r } = await api.post("/sales/prospects/upload", fd, {
+      const { data: r } = await api.post(`/sales/prospects/upload?list_id=${activeListId}`, fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       toast.success(
-        `Added ${r.inserted} prospects · ${r.duplicates_skipped} duplicates skipped${r.invalid_skipped ? ` · ${r.invalid_skipped} invalid` : ""}`,
+        `Added ${r.inserted} new · ${r.merged_into_list} merged from other lists · ${r.duplicates_skipped} already in list${r.invalid_skipped ? ` · ${r.invalid_skipped} invalid` : ""}`,
       );
-      await load();
+      await Promise.all([load(), reloadLists()]);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
@@ -113,50 +290,89 @@ function ProspectsPanel() {
     }
   };
 
-  const remove = async (pid) => {
-    if (!window.confirm("Remove this prospect?")) return;
+  const remove = async (prospect) => {
+    const inMultiple = (prospect.list_ids || []).length > 1;
+    const msg = inMultiple
+      ? `This prospect is in ${prospect.list_ids.length} lists. Remove from "${activeList?.name}" only? (they remain in other lists)`
+      : `Permanently remove ${prospect.email}?`;
+    if (!window.confirm(msg)) return;
     try {
-      await api.delete(`/sales/prospects/${pid}`);
-      await load();
+      await api.delete(`/sales/prospects/${prospect.id}?list_id=${activeListId}`);
+      await Promise.all([load(), reloadLists()]);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Delete failed");
     }
   };
 
-  const clearAll = async () => {
-    if (!window.confirm(`Permanently delete ALL ${data.total} prospects? This cannot be undone.`)) return;
-    try {
-      const { data: r } = await api.post("/sales/prospects/clear");
-      toast.success(`Deleted ${r.deleted} prospects`);
-      await load();
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Clear failed");
-    }
-  };
-
   return (
-    <div className="space-y-5" data-testid="sales-prospects-panel">
-      {/* Helper banner */}
-      <div className="border-2 border-black bg-amber-50 p-4 flex gap-3 items-start" data-testid="sales-csv-helper">
-        <ShieldCheck size={18} className="mt-0.5 text-amber-700 shrink-0" />
-        <div className="text-sm">
-          <strong className="font-bold">Upload a CSV with columns:</strong>{" "}
-          <code className="bg-white border border-black px-1 font-mono text-xs">email, name, company</code>.{" "}
-          When you upload again, BotNira merges with your current list and
-          automatically removes duplicates — your old prospects stay safe.
-        </div>
-      </div>
+    <div className="flex gap-4" data-testid="sales-prospects-panel">
+      <ListSidebar
+        lists={lists}
+        activeId={activeListId}
+        onSelect={setActiveListId}
+        onCreated={(id) => { reloadLists(); setActiveListId(id); }}
+        onRenamed={reloadLists}
+        onDeleted={(removedId) => {
+          reloadLists();
+          if (removedId === activeListId) {
+            const fallback = lists.find((l) => l.id !== removedId);
+            setActiveListId(fallback?.id || null);
+          }
+        }}
+      />
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <div className="flex gap-2 items-center">
+      <div className="flex-1 min-w-0 space-y-4">
+        {/* Helper banner */}
+        <div className="border-2 border-black bg-amber-50 p-4 flex gap-3 items-start">
+          <ShieldCheck size={18} className="mt-0.5 text-amber-700 shrink-0" />
+          <div className="text-sm">
+            <strong>CSV columns:</strong>{" "}
+            <code className="bg-white border border-black px-1 font-mono text-xs">email, name, company</code>.{" "}
+            Duplicates are merged automatically — same email in a different
+            list is treated as the <strong>same person</strong>, so campaigns
+            touching multiple lists still deliver one email per prospect.
+          </div>
+        </div>
+
+        {/* List header */}
+        {activeList && (
+          <div className="border-2 border-black bg-white shadow-brutal p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">
+                  <Folder size={10} className="inline -mt-0.5 mr-1" /> List
+                </div>
+                <h2 className="font-display font-black text-2xl">{activeList.name}</h2>
+                {activeList.description && <p className="text-sm text-neutral-600 mt-0.5">{activeList.description}</p>}
+                <div className="text-[11px] font-mono text-neutral-600 mt-1">
+                  {activeList.counts?.active || 0} active · {activeList.counts?.unsubscribed || 0} unsubscribed · {activeList.counts?.bounced || 0} bounced
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={onUpload} className="hidden" data-testid="sales-prospects-upload-input" />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  data-testid="sales-prospects-upload-btn"
+                  className="text-sm font-bold border-2 border-black px-4 py-2 bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-60"
+                >
+                  <Upload size={14} className="inline -mt-0.5 mr-1" />
+                  {uploading ? "Uploading…" : "Upload CSV"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Toolbar */}
+        <div className="flex gap-2 items-center flex-wrap">
           <input
             data-testid="sales-prospects-search"
             placeholder="Search email, name, company"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && load()}
-            className="border-2 border-black px-3 py-2 text-sm w-72"
+            className="border-2 border-black px-3 py-2 text-sm w-64"
           />
           <select
             data-testid="sales-prospects-status-filter"
@@ -165,128 +381,120 @@ function ProspectsPanel() {
             className="border-2 border-black px-3 py-2 text-sm"
           >
             <option value="">All statuses</option>
-            <option value="active">Active ({data.counts.active})</option>
-            <option value="unsubscribed">Unsubscribed ({data.counts.unsubscribed})</option>
-            <option value="bounced">Bounced ({data.counts.bounced})</option>
+            <option value="active">Active</option>
+            <option value="unsubscribed">Unsubscribed</option>
+            <option value="bounced">Bounced</option>
           </select>
-          <button
-            onClick={load}
-            data-testid="sales-prospects-refresh"
-            className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-white"
-          >
-            Apply
-          </button>
+          <button onClick={load} className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-white">Apply</button>
         </div>
-        <div className="flex gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={onUpload}
-            className="hidden"
-            data-testid="sales-prospects-upload-input"
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={uploading}
-            data-testid="sales-prospects-upload-btn"
-            className="text-sm font-bold border-2 border-black px-4 py-2 bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-60"
-          >
-            <Upload size={14} className="inline -mt-0.5 mr-1" />
-            {uploading ? "Uploading…" : "Upload CSV"}
-          </button>
-          {data.total > 0 && (
-            <button
-              onClick={clearAll}
-              data-testid="sales-prospects-clear-btn"
-              className="text-sm font-bold border-2 border-red-700 text-red-700 px-3 py-2 hover-lift"
-              title="Delete all prospects"
-            >
-              Clear all
-            </button>
+
+        {/* Table */}
+        <div className="border-2 border-black bg-white shadow-brutal overflow-hidden">
+          <div className="grid grid-cols-[1fr_180px_180px_110px_90px] text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2">
+            <div>Email</div><div>Name</div><div>Company</div><div>Status</div><div className="text-right">Actions</div>
+          </div>
+          {loading ? (
+            <div className="p-10 text-center text-sm text-neutral-500">Loading…</div>
+          ) : data.items.length === 0 ? (
+            <div className="p-10 text-center text-sm text-neutral-500">
+              No prospects in this list. Upload a CSV to get started.
+            </div>
+          ) : (
+            data.items.map((p) => (
+              <div key={p.id}
+                   data-testid={`prospect-row-${p.email}`}
+                   className="grid grid-cols-[1fr_180px_180px_110px_90px] px-4 py-2.5 text-sm border-t border-black/10 items-center">
+                <div className="font-mono text-xs truncate">
+                  {p.email}
+                  {(p.list_ids?.length || 0) > 1 && (
+                    <span className="ml-1.5 text-[9px] font-bold bg-neutral-200 border border-black px-1" title="In multiple lists">
+                      ×{p.list_ids.length}
+                    </span>
+                  )}
+                </div>
+                <div className="truncate">{p.name || "—"}</div>
+                <div className="truncate text-neutral-600">{p.company || "—"}</div>
+                <div>
+                  <span className={`inline-block text-[10px] px-2 py-0.5 border border-black font-bold uppercase ${
+                    p.status === "active" ? "bg-green-100" :
+                    p.status === "unsubscribed" ? "bg-yellow-100" : "bg-red-100"
+                  }`}>{p.status}</span>
+                </div>
+                <div className="flex gap-1 justify-end">
+                  <button onClick={() => setEditing(p)} title="Edit"
+                          data-testid={`prospect-edit-${p.email}`}
+                          className="text-neutral-600 hover:text-[#002FA7] p-1">
+                    <Pencil size={13} />
+                  </button>
+                  <button onClick={() => remove(p)} title="Remove"
+                          data-testid={`prospect-remove-${p.email}`}
+                          className="text-neutral-500 hover:text-red-700 p-1">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))
           )}
         </div>
-      </div>
 
-      {/* List */}
-      <div className="border-2 border-black bg-white shadow-brutal overflow-hidden">
-        <div className="grid grid-cols-[1fr_180px_180px_120px_60px] text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2">
-          <div>Email</div><div>Name</div><div>Company</div><div>Status</div><div></div>
-        </div>
-        {loading ? (
-          <div className="p-10 text-center text-sm text-neutral-500">Loading…</div>
-        ) : data.items.length === 0 ? (
-          <div className="p-10 text-center text-sm text-neutral-500">
-            No prospects yet. Upload a CSV to get started.
-          </div>
-        ) : (
-          data.items.map((p) => (
-            <div key={p.id}
-                 data-testid={`prospect-row-${p.email}`}
-                 className="grid grid-cols-[1fr_180px_180px_120px_60px] px-4 py-2.5 text-sm border-t border-black/10 items-center">
-              <div className="font-mono text-xs truncate">{p.email}</div>
-              <div className="truncate">{p.name || "—"}</div>
-              <div className="truncate text-neutral-600">{p.company || "—"}</div>
-              <div>
-                <span className={`inline-block text-[10px] px-2 py-0.5 border border-black font-bold uppercase ${
-                  p.status === "active" ? "bg-green-100" :
-                  p.status === "unsubscribed" ? "bg-yellow-100" : "bg-red-100"
-                }`}>{p.status}</span>
-              </div>
-              <button
-                onClick={() => remove(p.id)}
-                title="Remove"
-                data-testid={`prospect-remove-${p.email}`}
-                className="text-neutral-500 hover:text-red-700 justify-self-end"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))
+        {editing && (
+          <ProspectEditModal
+            prospect={editing}
+            onClose={() => setEditing(null)}
+            onSaved={load}
+          />
         )}
       </div>
-      {data.total > data.items.length && (
-        <div className="text-xs text-neutral-500 text-center">
-          Showing first {data.items.length} of {data.total}. Use search to narrow down.
-        </div>
-      )}
     </div>
   );
 }
 
 // ---------------------------------------------------------- composer modal ---
-function ComposerModal({ open, onClose, onCreated, defaultProspectCount }) {
+function ComposerModal({ open, onClose, onCreated, lists }) {
   const [form, setForm] = useState({
-    name: "", subject: "", body_type: "html", body: "",
+    name: "", subject: "", body_type: "html", body: "", list_ids: [],
   });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!open) setForm({ name: "", subject: "", body_type: "html", body: "" });
-  }, [open]);
+    if (open) {
+      // Preselect all lists by default
+      setForm({ name: "", subject: "", body_type: "html", body: "",
+                list_ids: lists.filter((l) => (l.counts?.active || 0) > 0).map((l) => l.id) });
+    }
+  }, [open, lists]);
 
   if (!open) return null;
 
+  const toggleList = (id) => {
+    setForm((f) => ({
+      ...f,
+      list_ids: f.list_ids.includes(id) ? f.list_ids.filter((x) => x !== id) : [...f.list_ids, id],
+    }));
+  };
+
+  const targetCount = lists
+    .filter((l) => form.list_ids.includes(l.id))
+    .reduce((s, l) => s + (l.counts?.active || 0), 0);
+
   const submit = async () => {
     if (!form.name.trim() || !form.subject.trim() || !form.body.trim()) {
-      toast.error("Name, subject and body are required");
-      return;
+      return toast.error("Name, subject and body are required");
     }
+    if (form.list_ids.length === 0) return toast.error("Pick at least one list");
     setSubmitting(true);
     try {
       const { data } = await api.post("/sales/campaigns", {
         name: form.name, subject: form.subject,
         body_type: form.body_type, body: form.body,
-        start_now: true,
+        list_ids: form.list_ids, start_now: true,
       });
       toast.success(`Campaign launched → ${data.campaign.total} prospects queued`);
       onCreated();
       onClose();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to launch campaign");
-    } finally {
-      setSubmitting(false);
-    }
+    } finally { setSubmitting(false); }
   };
 
   return (
@@ -303,15 +511,48 @@ function ComposerModal({ open, onClose, onCreated, defaultProspectCount }) {
         </div>
 
         <div className="p-5 space-y-4">
-          {/* Helper banner */}
           <div className="border-2 border-black bg-blue-50 p-3 flex gap-2 items-start text-sm">
             <Clock size={16} className="mt-0.5 text-blue-800 shrink-0" />
             <div>
               <strong>BotNira sends one email at a time</strong>, with a random
               <strong> 5–45 minute</strong> gap between each — keeping your
               domain warm, your inbox safe, and your prospects un-bothered.
-              An <strong>unsubscribe link</strong> is auto-added for CASL/CAN-SPAM
-              compliance.
+              An <strong>unsubscribe link</strong> is auto-added for CASL/CAN-SPAM compliance.
+            </div>
+          </div>
+
+          {/* List picker */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest mb-1 flex items-center gap-1">
+              <ListPlus size={12} /> Send to these lists
+            </label>
+            <div className="border-2 border-black bg-neutral-50 p-3 space-y-1.5 max-h-48 overflow-y-auto">
+              {lists.length === 0 ? (
+                <div className="text-xs text-neutral-500">No lists yet.</div>
+              ) : lists.map((l) => {
+                const checked = form.list_ids.includes(l.id);
+                const active = l.counts?.active || 0;
+                return (
+                  <label key={l.id}
+                         data-testid={`composer-list-${l.id}`}
+                         className={`flex items-center gap-2 p-1.5 cursor-pointer ${active === 0 ? "opacity-50" : ""} hover:bg-white`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={active === 0}
+                      onChange={() => toggleList(l.id)}
+                      className="w-4 h-4 accent-[#002FA7]"
+                    />
+                    <span className="font-bold text-sm">{l.name}</span>
+                    <span className="text-[11px] font-mono text-neutral-500 ml-auto">
+                      {active} active
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="text-[11px] text-neutral-600 mt-1">
+              Up to <strong>{targetCount}</strong> recipients selected (prospects in multiple lists get one email each).
             </div>
           </div>
 
@@ -371,7 +612,7 @@ function ComposerModal({ open, onClose, onCreated, defaultProspectCount }) {
 
         <div className="border-t-2 border-black px-5 py-3 flex items-center justify-between bg-neutral-50">
           <div className="text-sm text-neutral-700">
-            <strong>{defaultProspectCount}</strong> active prospects will receive this email.
+            <strong>{targetCount}</strong> max recipients across {form.list_ids.length} list{form.list_ids.length === 1 ? "" : "s"}.
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="border-2 border-black px-4 py-2 text-sm font-bold bg-white hover-lift">Cancel</button>
@@ -392,10 +633,13 @@ function ComposerModal({ open, onClose, onCreated, defaultProspectCount }) {
 }
 
 // ---------------------------------------------------------- campaigns panel ---
-function CampaignsPanel({ activeProspectCount }) {
+function CampaignsPanel({ lists }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showComposer, setShowComposer] = useState(false);
+  const [expanded, setExpanded] = useState(null); // campaign id whose recipients are shown
+  const [recipients, setRecipients] = useState([]);
+  const totalActive = lists.reduce((s, l) => s + (l.counts?.active || 0), 0);
 
   const load = async () => {
     setLoading(true);
@@ -407,14 +651,21 @@ function CampaignsPanel({ activeProspectCount }) {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
-
-  // Refresh every 15s when there are sending/scheduled campaigns
   useEffect(() => {
     const hasLive = items.some((c) => ["sending", "scheduled"].includes(c.status));
     if (!hasLive) return;
     const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, [items]);
+
+  const loadRecipients = async (cid) => {
+    if (expanded === cid) { setExpanded(null); return; }
+    try {
+      const { data } = await api.get(`/sales/campaigns/${cid}`);
+      setRecipients(data.recipients);
+      setExpanded(cid);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
 
   const action = async (cid, kind) => {
     try {
@@ -432,14 +683,13 @@ function CampaignsPanel({ activeProspectCount }) {
     <div className="space-y-4" data-testid="sales-campaigns-panel">
       <div className="flex items-center justify-between">
         <p className="text-sm text-neutral-700">
-          {activeProspectCount} active prospects in your list.
+          {totalActive} active prospects across {lists.length} list{lists.length === 1 ? "" : "s"}.
         </p>
         <button
           onClick={() => setShowComposer(true)}
-          disabled={activeProspectCount === 0}
+          disabled={totalActive === 0}
           data-testid="sales-new-campaign-btn"
           className="text-sm font-bold border-2 border-black px-4 py-2 bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-50"
-          title={activeProspectCount === 0 ? "Upload prospects first" : ""}
         >
           <Sparkles size={14} className="inline -mt-0.5 mr-1" />
           New campaign
@@ -459,6 +709,7 @@ function CampaignsPanel({ activeProspectCount }) {
           {items.map((c) => {
             const pct = c.total ? Math.round((c.sent_count / c.total) * 100) : 0;
             const openPct = c.sent_count ? Math.round((c.opened_count / c.sent_count) * 100) : 0;
+            const targetListNames = (c.list_ids || []).map((id) => lists.find((l) => l.id === id)?.name).filter(Boolean);
             return (
               <div key={c.id}
                    data-testid={`campaign-row-${c.id}`}
@@ -466,14 +717,17 @@ function CampaignsPanel({ activeProspectCount }) {
                 <div className="flex flex-wrap items-start gap-3 justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`inline-block text-[10px] px-2 py-0.5 border border-black font-bold uppercase ${STATUS_BADGE[c.status] || "bg-neutral-200"}`}>
-                        {c.status}
-                      </span>
+                      <span className={`inline-block text-[10px] px-2 py-0.5 border border-black font-bold uppercase ${STATUS_BADGE[c.status] || "bg-neutral-200"}`}>{c.status}</span>
                       <h4 className="font-display font-black text-lg truncate">{c.name}</h4>
                     </div>
                     <p className="text-sm text-neutral-700 mt-1 truncate">
                       <span className="text-neutral-500">Subject:</span> {c.subject}
                     </p>
+                    {targetListNames.length > 0 && (
+                      <p className="text-[11px] font-mono text-neutral-600 mt-0.5">
+                        <Folder size={10} className="inline -mt-0.5 mr-0.5" /> {targetListNames.join(" · ")}
+                      </p>
+                    )}
                     <p className="text-xs font-mono text-neutral-500 mt-0.5">
                       Created {fmtDate(c.created_at)}
                       {c.last_send_at && ` · Last sent ${fmtDate(c.last_send_at)}`}
@@ -482,30 +736,31 @@ function CampaignsPanel({ activeProspectCount }) {
                   </div>
                   <div className="flex gap-2 shrink-0">
                     {c.status === "sending" && (
-                      <button onClick={() => action(c.id, "pause")}
-                              data-testid={`campaign-pause-${c.id}`}
+                      <button onClick={() => action(c.id, "pause")} data-testid={`campaign-pause-${c.id}`}
                               className="text-xs font-bold border-2 border-black px-3 py-1.5 bg-yellow-200 hover-lift">
                         <Pause size={12} className="inline -mt-0.5 mr-1" />Pause
                       </button>
                     )}
                     {c.status === "paused" && (
-                      <button onClick={() => action(c.id, "resume")}
-                              data-testid={`campaign-resume-${c.id}`}
+                      <button onClick={() => action(c.id, "resume")} data-testid={`campaign-resume-${c.id}`}
                               className="text-xs font-bold border-2 border-black px-3 py-1.5 bg-green-200 hover-lift">
                         <Play size={12} className="inline -mt-0.5 mr-1" />Resume
                       </button>
                     )}
                     {!["completed", "canceled"].includes(c.status) && (
-                      <button onClick={() => action(c.id, "cancel")}
-                              data-testid={`campaign-cancel-${c.id}`}
+                      <button onClick={() => action(c.id, "cancel")} data-testid={`campaign-cancel-${c.id}`}
                               className="text-xs font-bold border-2 border-red-700 text-red-700 px-3 py-1.5 hover-lift">
                         <X size={12} className="inline -mt-0.5 mr-1" />Cancel
                       </button>
                     )}
+                    <button
+                      onClick={() => loadRecipients(c.id)}
+                      data-testid={`campaign-toggle-${c.id}`}
+                      className="text-xs font-bold border-2 border-black px-3 py-1.5 bg-white hover-lift"
+                    >{expanded === c.id ? "Hide details" : "Details"}</button>
                   </div>
                 </div>
 
-                {/* Progress bar */}
                 <div className="mt-4">
                   <div className="flex justify-between text-[11px] font-mono text-neutral-600">
                     <span>Sent {c.sent_count}/{c.total}</span>
@@ -516,13 +771,42 @@ function CampaignsPanel({ activeProspectCount }) {
                   </div>
                 </div>
 
-                {/* Stats row */}
                 <div className="mt-3 grid grid-cols-4 gap-2 text-center">
                   <Stat label="Sent" value={c.sent_count} icon={Send} />
                   <Stat label="Opened" value={c.opened_count} extra={`${openPct}%`} icon={Eye} />
                   <Stat label="Failed" value={c.failed_count} icon={AlertTriangle} />
                   <Stat label="Total" value={c.total} icon={Users} />
                 </div>
+
+                {expanded === c.id && (
+                  <div className="mt-4 border-2 border-black bg-neutral-50" data-testid={`campaign-recipients-${c.id}`}>
+                    <div className="grid grid-cols-[1fr_120px_160px_1fr] text-[10px] font-bold uppercase tracking-widest bg-black text-white px-3 py-1.5">
+                      <div>Email</div><div>Status</div><div>Sent / Opened</div><div>Error</div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {recipients.map((r) => (
+                        <div key={r.id} className="grid grid-cols-[1fr_120px_160px_1fr] px-3 py-1.5 text-xs border-t border-black/10">
+                          <div className="font-mono truncate">{r.email}</div>
+                          <div>
+                            <span className={`inline-block text-[9px] px-1.5 py-0.5 border border-black font-bold uppercase ${
+                              r.status === "opened" ? "bg-green-200" :
+                              r.status === "sent" ? "bg-blue-100" :
+                              r.status === "bounced" || r.status === "failed" ? "bg-red-100" :
+                              r.status === "skipped" ? "bg-neutral-200" : "bg-white"
+                            }`}>{r.status}</span>
+                          </div>
+                          <div className="font-mono text-[10px] text-neutral-600">
+                            {r.sent_at ? new Date(r.sent_at).toLocaleString() : "—"}
+                            {r.opened_at && <span className="text-green-700"> · opened</span>}
+                          </div>
+                          <div className="font-mono text-[10px] text-red-700 truncate" title={r.error || ""}>
+                            {r.error || (r.status === "bounced" ? (r.bounce_reason || "Bounced") : "")}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -533,7 +817,7 @@ function CampaignsPanel({ activeProspectCount }) {
         open={showComposer}
         onClose={() => setShowComposer(false)}
         onCreated={load}
-        defaultProspectCount={activeProspectCount}
+        lists={lists}
       />
     </div>
   );
@@ -578,16 +862,25 @@ function AnalyticsPanel() {
     <div className="space-y-5" data-testid="sales-analytics-panel">
       <div className="flex items-center justify-between">
         <h3 className="font-display font-black text-2xl">Outbound performance</h3>
-        <select
-          value={days} onChange={(e) => setDays(Number(e.target.value))}
-          data-testid="sales-analytics-days"
-          className="border-2 border-black px-3 py-1.5 text-sm"
-        >
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))}
+                data-testid="sales-analytics-days"
+                className="border-2 border-black px-3 py-1.5 text-sm">
           <option value={7}>Last 7 days</option>
           <option value={30}>Last 30 days</option>
           <option value={90}>Last 90 days</option>
           <option value={365}>Last year</option>
         </select>
+      </div>
+
+      <div className="border-2 border-black bg-amber-50 p-3 text-xs flex gap-2 items-start">
+        <AlertTriangle size={14} className="mt-0.5 text-amber-700 shrink-0" />
+        <div>
+          <strong>Opens</strong> are tracked via an invisible pixel in the
+          email. If your recipient's mail client blocks images (many do by
+          default), the open won't register — so <strong>real open rates are
+          usually higher than what's shown here</strong>. For accurate tracking
+          the pixel endpoint must be reachable at your public domain.
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -606,16 +899,12 @@ function AnalyticsPanel() {
           <div className="mt-4 grid items-end gap-1" style={{ gridTemplateColumns: `repeat(${chart.length}, minmax(20px, 1fr))`, minHeight: 180 }}>
             {chart.map((s) => (
               <div key={s.date} className="flex flex-col items-center gap-1 group">
-                <div className="text-[9px] font-mono text-neutral-500 opacity-0 group-hover:opacity-100">
-                  {s.opened}/{s.sent}
-                </div>
+                <div className="text-[9px] font-mono text-neutral-500 opacity-0 group-hover:opacity-100">{s.opened}/{s.sent}</div>
                 <div className="relative w-full bg-neutral-100 border-2 border-black" style={{ height: 140 }}>
                   <div className="absolute bottom-0 inset-x-0 bg-[#002FA7]/30" style={{ height: `${s.sentPct}%` }} />
                   <div className="absolute bottom-0 inset-x-0 bg-[#002FA7]" style={{ height: `${s.openedPct}%` }} />
                 </div>
-                <div className="text-[9px] font-mono text-neutral-500 -rotate-45 origin-top-left whitespace-nowrap">
-                  {s.date.slice(5)}
-                </div>
+                <div className="text-[9px] font-mono text-neutral-500 -rotate-45 origin-top-left whitespace-nowrap">{s.date.slice(5)}</div>
               </div>
             ))}
           </div>
@@ -644,7 +933,8 @@ export default function SalesAssistant() {
   const [tab, setTab] = useState("prospects");
   const [access, setAccess] = useState(null);
   const [loadingAccess, setLoadingAccess] = useState(true);
-  const [activeProspectCount, setActiveProspectCount] = useState(0);
+  const [lists, setLists] = useState([]);
+  const [activeListId, setActiveListId] = useState(null);
 
   useEffect(() => {
     api.get("/sales/access")
@@ -653,13 +943,17 @@ export default function SalesAssistant() {
       .finally(() => setLoadingAccess(false));
   }, []);
 
-  // Once enabled, fetch active prospect count for the campaign builder
+  const reloadLists = async () => {
+    try {
+      const { data } = await api.get("/sales/lists");
+      setLists(data.items);
+      if (!activeListId && data.items.length > 0) setActiveListId(data.items[0].id);
+    } catch (e) { /* ignore */ }
+  };
   useEffect(() => {
-    if (!access?.enabled) return;
-    api.get("/sales/prospects", { params: { status: "active", limit: 1 } })
-      .then(({ data }) => setActiveProspectCount(data.counts?.active || 0))
-      .catch(() => {});
-  }, [access?.enabled, tab]);
+    if (access?.enabled) reloadLists();
+    // eslint-disable-next-line
+  }, [access?.enabled]);
 
   if (loadingAccess) return <div className="p-10 font-mono text-sm">Loading…</div>;
   if (!access?.enabled) return <LockedScreen reason={access?.reason} />;
@@ -674,12 +968,11 @@ export default function SalesAssistant() {
           Outbound email marketing
         </h1>
         <p className="text-sm text-neutral-600 mt-1">
-          Reach prospects with personalised emails — paced safely so you stay
-          out of spam folders. Available on the {access.plan_label === "exempt" ? "Exempt" : access.plan_label === "pro" ? "Pro" : "Growth"} plan.
+          Organise prospects into lists, then launch multi-list campaigns —
+          paced safely so you stay out of spam folders.
         </p>
       </header>
 
-      {/* Tabs */}
       <div className="border-b-2 border-black flex gap-0">
         {TABS.map((t) => {
           const Icon = t.icon;
@@ -700,8 +993,15 @@ export default function SalesAssistant() {
         })}
       </div>
 
-      {tab === "prospects" && <ProspectsPanel />}
-      {tab === "campaigns" && <CampaignsPanel activeProspectCount={activeProspectCount} />}
+      {tab === "prospects" && (
+        <ProspectsPanel
+          lists={lists}
+          activeListId={activeListId}
+          setActiveListId={setActiveListId}
+          reloadLists={reloadLists}
+        />
+      )}
+      {tab === "campaigns" && <CampaignsPanel lists={lists} />}
       {tab === "analytics" && <AnalyticsPanel />}
     </div>
   );

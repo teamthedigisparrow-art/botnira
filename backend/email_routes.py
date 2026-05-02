@@ -308,6 +308,87 @@ async def _email_send_async(conn: dict, to_email: str, subject: str, body_text: 
     )
 
 
+_BOUNCE_FROM_RE = _re_email.compile(r"(mailer-daemon|postmaster|mail-daemon)", _re_email.I)
+_BOUNCE_SUBJECT_RE = _re_email.compile(
+    r"(mail delivery failed|undeliver|delivery status notification|"
+    r"returned mail|failure notice|could not be delivered|rejected)",
+    _re_email.I,
+)
+_FAILED_ADDR_RE = _re_email.compile(
+    r"(?:failed(?:\s+address)?|rcpt\s*to|recipient(?:\s+address)?|"
+    r"could not be delivered to|bounced address)[:\s<]*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})",
+    _re_email.I,
+)
+_ANY_EMAIL_RE = _re_email.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", _re_email.I)
+
+
+async def _maybe_record_sales_bounce(vendor_id: str, parsed: dict) -> bool:
+    """Detect a DSN bounce from the inbound email, flag the matching
+    sales campaign recipient as 'bounced', and return True if handled
+    (so the caller skips persisting it in the vendor inbox).
+
+    Matching is best-effort: find the most recent sent recipient for
+    this vendor whose email appears in the bounce body within the last
+    14 days."""
+    from_email = (parsed.get("from_email") or "").lower()
+    subject = parsed.get("subject") or ""
+    body = parsed.get("body") or parsed.get("body_html") or ""
+    looks_like_bounce = (
+        _BOUNCE_FROM_RE.search(from_email) is not None
+        or _BOUNCE_SUBJECT_RE.search(subject) is not None
+    )
+    if not looks_like_bounce:
+        return False
+
+    # Try to extract the failed recipient
+    failed = None
+    m = _FAILED_ADDR_RE.search(body)
+    if m:
+        failed = m.group(1).lower()
+    else:
+        # Fallback — any email address in the body that isn't the vendor's own
+        from_parts = [a.lower() for a in _ANY_EMAIL_RE.findall(body)]
+        vendor_conn = await _s.db.email_connections.find_one(
+            {"vendor_id": vendor_id}, {"_id": 0, "email_address": 1}
+        )
+        own = (vendor_conn or {}).get("email_address", "").lower()
+        for a in from_parts:
+            if a != own and not a.endswith(".example") and "noreply" not in a:
+                failed = a
+                break
+
+    if not failed:
+        _s.logger.info("[sales bounce] detected DSN but no target email extracted (vendor=%s)", vendor_id)
+        return True  # still consume it — vendor doesn't need bounce notices in inbox
+
+    # Flag recent campaign recipient
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    recent = await _s.db.sales_campaign_recipients.find_one(
+        {"vendor_id": vendor_id, "email": failed, "status": {"$in": ["sent", "opened"]},
+         "sent_at": {"$gte": since}},
+        {"_id": 0}, sort=[("sent_at", -1)],
+    )
+    if recent:
+        await _s.db.sales_campaign_recipients.update_one(
+            {"id": recent["id"]},
+            {"$set": {"status": "bounced", "bounced_at": _s.now_iso(),
+                      "bounce_reason": (subject[:200] or "DSN received")}},
+        )
+        await _s.db.sales_campaigns.update_one(
+            {"id": recent["campaign_id"]},
+            {"$inc": {"sent_count": -1, "failed_count": 1},
+             "$set": {"updated_at": _s.now_iso()}},
+        )
+    # Always mark the prospect itself as bounced going forward
+    await _s.db.sales_prospects.update_one(
+        {"vendor_id": vendor_id, "email": failed},
+        {"$set": {"status": "bounced", "updated_at": _s.now_iso()}},
+    )
+    _s.logger.info("[sales bounce] vendor=%s flagged %s as bounced", vendor_id, failed)
+    return True
+
+
 async def _process_inbound_email(conn: dict, parsed: dict):
     """Persist one inbound email + optionally generate AI reply."""
     vendor_id = conn["vendor_id"]
@@ -315,6 +396,12 @@ async def _process_inbound_email(conn: dict, parsed: dict):
     if not from_email or from_email == conn["email_address"].lower():
         return  # ignore self-sends / bounces with no sender
     msg_id = parsed.get("message_id") or ""
+
+    # If this is a Delivery Status Notification (bounce), flag the
+    # corresponding sales-campaign recipient and DO NOT surface it in the
+    # vendor's inbox (reduces noise).
+    if await _maybe_record_sales_bounce(vendor_id, parsed):
+        return
 
     # Idempotency — already saved this Message-ID for this vendor?
     if msg_id:
