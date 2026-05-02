@@ -639,10 +639,11 @@ Your tone: {bot.get('tone','friendly and professional')}.
 4. Never answer unrelated general-knowledge questions; politely steer back to the business.
 5. If the user wants to book an appointment, collect (one question at a time if needed): full name, phone or email, preferred date AND time, reason for the visit. Once you have all four, CONFIRM by restating the details and saying something like "You're booked for <date time>, <name>" — that confirmation is what registers the appointment.
 6. CRITICAL: Do NOT re-ask for information the user has already provided earlier in this conversation. Scan the full conversation history before asking anything. If the user already said their name, phone, date, or reason — skip that question and move to the next missing piece.
-7. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
-8. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
-9. Never use markdown tables. Use **bold** only for key details (price, date, phone).
-10. When you share a URL, phone number, or email, output it as plain text — the UI will auto-link it.
+7. If a customer asks to VIEW, CHECK, CANCEL, or RESCHEDULE their existing appointment, guide them to provide their phone number or email, then tell them: "I've found your appointment(s). To manage them, please visit: [appointment management link]. You can view, reschedule, or cancel your booking there."
+8. Keep replies short and scannable (1-3 short paragraphs). Use a blank line between paragraphs.
+9. When listing 3+ items (services, hours, steps), use "- " bullet points on separate lines.
+10. Never use markdown tables. Use **bold** only for key details (price, date, phone).
+11. When you share a URL, phone number, or email, output it as plain text — the UI will auto-link it.
 """
 
 
@@ -657,17 +658,63 @@ async def get_ai_reply(vendor_id: str, conversation_id: str, user_text: str) -> 
         return bot.get("fallback_message", "I'm not able to respond right now.")
 
     system_prompt = build_system_prompt(bot, vendor)
+    
+    # CRITICAL FIX: Fetch MORE history to prevent context loss during multi-turn
+    # conversations (e.g., appointment booking where customer provides info across
+    # 10-15 messages). Previous limit of 40 caused bot to forget phone numbers.
     history = await db.messages.find(
         {"conversation_id": conversation_id}, {"_id": 0}
-    ).sort("created_at", 1).to_list(50)
+    ).sort("created_at", 1).to_list(100)  # Increased from 50 to 100
+    
+    # Extract key conversation facts to always include in context
+    # (prevents loss of critical info like phone number, name, email)
+    context_facts = []
+    customer_name = None
+    customer_phone = None
+    customer_email = None
+    
+    for m in history:
+        content = m.get("content", "").lower()
+        # Extract phone number if mentioned
+        phone_match = re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b|\b\+\d{10,15}\b', m.get("content", ""))
+        if phone_match and not customer_phone:
+            customer_phone = phone_match.group(0)
+        # Extract email if mentioned
+        email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', m.get("content", ""))
+        if email_match and not customer_email:
+            customer_email = email_match.group(0)
+        # Extract name from "my name is X" or "I'm X" patterns
+        name_match = re.search(r"(?:my name is|i'?m|call me)\s+([a-z]{2,})", content)
+        if name_match and not customer_name and m.get("role") == "user":
+            customer_name = name_match.group(1).capitalize()
+    
+    # Build context facts string
+    if customer_name:
+        context_facts.append(f"Customer name: {customer_name}")
+    if customer_phone:
+        context_facts.append(f"Customer phone: {customer_phone}")
+    if customer_email:
+        context_facts.append(f"Customer email: {customer_email}")
+    
+    # Use last 60 messages (up from 40) to maintain more context
     history_txt = "\n".join(
-        [f"{m['role'].upper()}: {m['content']}" for m in history[-40:]]
+        [f"{m['role'].upper()}: {m['content']}" for m in history[-60:]]
     )
-    composed = (
-        f"Recent conversation:\n{history_txt}\n\nCUSTOMER: {user_text}\nASSISTANT:"
-        if history_txt
-        else user_text
-    )
+    
+    # Prepend extracted facts to ensure they're always in context
+    if context_facts:
+        facts_str = "CONTEXT INFO: " + ", ".join(context_facts)
+        composed = (
+            f"{facts_str}\n\nRecent conversation:\n{history_txt}\n\nCUSTOMER: {user_text}\nASSISTANT:"
+            if history_txt
+            else f"{facts_str}\n\nCUSTOMER: {user_text}\nASSISTANT:"
+        )
+    else:
+        composed = (
+            f"Recent conversation:\n{history_txt}\n\nCUSTOMER: {user_text}\nASSISTANT:"
+            if history_txt
+            else user_text
+        )
 
     # Try providers in order; auto-fallback if one is down.
     # NOTE: OpenAI GPT-5.2 proxy had a 502 outage — Claude Sonnet 4.5 is
@@ -1212,6 +1259,91 @@ async def update_appointment(appt_id: str, req: AppointmentPatchReq, user: dict 
     updated = await db.appointments.find_one(
         {"id": appt_id, "vendor_id": user["vendor_id"]}, {"_id": 0}
     )
+    return updated
+
+
+# ------------------------------ Customer Appointment Management --------------
+class CustomerAppointmentLookupReq(BaseModel):
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+
+@api_router.post("/public/appointments/lookup")
+async def customer_lookup_appointments(req: CustomerAppointmentLookupReq, vendor_id: str):
+    """Allow customers to view their appointments by providing phone or email.
+    Public endpoint (no auth required) - customers access via chat or link."""
+    if not req.phone and not req.email:
+        raise HTTPException(status_code=400, detail="Phone or email required")
+    
+    query = {"vendor_id": vendor_id}
+    if req.phone:
+        # Normalize phone number for matching (strip spaces, dashes)
+        phone_clean = re.sub(r'[^\d+]', '', req.phone)
+        query["customer_contact"] = {"$regex": phone_clean, "$options": "i"}
+    elif req.email:
+        query["customer_contact"] = {"$regex": re.escape(req.email), "$options": "i"}
+    
+    appointments = await db.appointments.find(
+        query, {"_id": 0}
+    ).sort("scheduled_at", -1).to_list(50)
+    
+    return {"appointments": appointments}
+
+
+class CustomerAppointmentUpdateReq(BaseModel):
+    scheduled_at: Optional[str] = None
+    notes: Optional[str] = None
+    action: Optional[str] = None  # "cancel" or "reschedule"
+
+
+@api_router.patch("/public/appointments/{appt_id}")
+async def customer_update_appointment(appt_id: str, req: CustomerAppointmentUpdateReq):
+    """Allow customers to update or cancel their appointments.
+    Public endpoint - customers access via confirmation email link."""
+    appt = await db.appointments.find_one({"id": appt_id}, {"_id": 0})
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    
+    updates = {"updated_at": now_iso()}
+    change_log = []
+    
+    if req.action == "cancel":
+        updates["status"] = "cancelled_by_customer"
+        updates["cancelled_at"] = now_iso()
+        change_log.append("Cancelled by customer")
+    elif req.action == "reschedule" and req.scheduled_at:
+        old_time = appt.get("scheduled_at", "")
+        updates["scheduled_at"] = req.scheduled_at
+        updates["status"] = "rescheduled_by_customer"
+        updates["rescheduled_at"] = now_iso()
+        change_log.append(f"Rescheduled by customer from {old_time} to {req.scheduled_at}")
+    
+    if req.notes:
+        old_notes = appt.get("notes", "")
+        updates["notes"] = f"{old_notes}\n[Customer update]: {req.notes}" if old_notes else req.notes
+        change_log.append(f"Customer added note: {req.notes}")
+    
+    if not updates or len(updates) == 1:  # Only has updated_at
+        return appt
+    
+    # Add change log to appointment
+    if change_log:
+        updates["customer_changes"] = appt.get("customer_changes", []) + [{
+            "timestamp": now_iso(),
+            "changes": change_log
+        }]
+    
+    await db.appointments.update_one({"id": appt_id}, {"$set": updates})
+    
+    # Notify vendor about customer change
+    try:
+        vendor = await db.vendors.find_one({"id": appt["vendor_id"]}, {"_id": 0})
+        if vendor and vendor.get("email"):
+            await _send_vendor_appointment_change_notification(vendor, appt, change_log)
+    except Exception as e:
+        logger.warning("Failed to notify vendor of customer appointment change: %s", e)
+    
+    updated = await db.appointments.find_one({"id": appt_id}, {"_id": 0})
     return updated
 
 
@@ -3337,6 +3469,91 @@ async def _send_customer_appointment_confirmation(vendor_id: str, appt: dict):
     except Exception as e:
         logger.warning("[customer-appt-email] send failed for %s: %s", customer_email, e)
 
+
+
+async def _send_vendor_appointment_change_notification(vendor: dict, appt: dict, changes: list):
+    """Notify vendor when customer updates/cancels their appointment."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("SMTP not configured — skipping vendor notification")
+        return
+    
+    owner = await db.users.find_one(
+        {"vendor_id": vendor["id"], "role": "vendor"}, {"_id": 0, "email": 1, "full_name": 1}
+    )
+    if not owner or not owner.get("email"):
+        return
+    
+    to_email = owner["email"]
+    biz_name = vendor.get("name") or "your business"
+    customer = appt.get("customer_name") or "Guest"
+    contact = appt.get("customer_contact") or "(not provided)"
+    scheduled = appt.get("scheduled_at") or "TBD"
+    
+    changes_text = "\n".join(f"• {change}" for change in changes)
+    
+    subject = f"Appointment update — {customer} · {biz_name}"
+    body_text = (
+        f"A customer has updated their appointment\n\n"
+        f"Customer: {customer}\n"
+        f"Contact: {contact}\n"
+        f"Scheduled: {scheduled}\n\n"
+        f"Changes:\n{changes_text}\n\n"
+        f"View details: https://botnira.com/app/appointments\n\n"
+        f"— BotNira"
+    )
+    
+    body_html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
+    <div style="background:#ff6b00;color:#fff;padding:18px 24px;border-bottom:2px solid #000;">
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.8;">BotNira · Appointment Update</div>
+      <div style="font-size:22px;font-weight:900;margin-top:4px;">Customer changed their appointment</div>
+    </div>
+    <div style="padding:24px;">
+      <div style="background:#fff3cd;border:2px solid #ff6b00;padding:12px;margin-bottom:16px;font-size:14px;">
+        <strong>⚠️ Action Required:</strong> A customer has updated their booking.
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;width:140px;color:#666;">Customer</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{customer}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;color:#666;">Contact</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;font-family:monospace;">{contact}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;color:#666;">Scheduled</td><td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{scheduled}</td></tr>
+      </table>
+      <div style="margin-top:20px;background:#f8f9fa;border-left:4px solid #ff6b00;padding:12px;">
+        <div style="font-weight:bold;margin-bottom:8px;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:.1em;">Changes Made:</div>
+        {' '.join(f'<div style="margin:4px 0;">• {change}</div>' for change in changes)}
+      </div>
+      <div style="margin-top:20px;">
+        <a href="https://botnira.com/app/appointments" style="display:inline-block;background:#002FA7;color:#fff;text-decoration:none;padding:12px 20px;border:2px solid #000;font-weight:bold;box-shadow:4px 4px 0 #000;">
+          View Appointment →
+        </a>
+      </div>
+    </div>
+    <div style="background:#000;color:#999;padding:12px 24px;font-size:11px;font-family:monospace;">
+      © 2026 BotNira · Customer self-service appointment management
+    </div>
+  </div>
+</body>
+</html>"""
+    
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+    msg["To"] = to_email
+    msg.set_content(body_text)
+    msg.add_alternative(body_html, subtype="html")
+    
+    def _send_sync():
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.send_message(msg)
+    
+    try:
+        await asyncio.to_thread(_send_sync)
+        logger.info("Appointment change notification sent to %s (vendor=%s)", to_email, vendor["id"])
+    except Exception as e:
+        logger.warning("Vendor notification email failed: %s", e)
 
 
 async def _send_purchase_confirmation_email(vendor_id: str, session_id: str, txn_type: str, plan_or_pack: str):
