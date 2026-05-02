@@ -380,13 +380,16 @@ async def _maybe_record_sales_bounce(vendor_id: str, parsed: dict) -> bool:
             {"$inc": {"sent_count": -1, "failed_count": 1},
              "$set": {"updated_at": _s.now_iso()}},
         )
-    # Always mark the prospect itself as bounced going forward
-    await _s.db.sales_prospects.update_one(
-        {"vendor_id": vendor_id, "email": failed},
-        {"$set": {"status": "bounced", "updated_at": _s.now_iso()}},
-    )
-    _s.logger.info("[sales bounce] vendor=%s flagged %s as bounced", vendor_id, failed)
-    return True
+        # Always mark the prospect itself as bounced going forward
+        await _s.db.sales_prospects.update_one(
+            {"vendor_id": vendor_id, "email": failed},
+            {"$set": {"status": "bounced", "updated_at": _s.now_iso()}},
+        )
+        _s.logger.info("[sales bounce] vendor=%s flagged %s as bounced", vendor_id, failed)
+        return True
+    # No matching recipient — let the DSN flow into the inbox so the vendor
+    # can see legitimate postmaster mail they might want to read.
+    return False
 
 
 async def _process_inbound_email(conn: dict, parsed: dict):

@@ -538,7 +538,8 @@ async def create_campaign(payload: CampaignIn, user: dict = Depends(_require_sal
     # Snapshot ACTIVE prospects from the selected list(s) (union, deduped
     # by prospect identity since each email is one entity per vendor).
     prospect_filter: Dict[str, Any] = {"vendor_id": vid, "status": "active"}
-    target_list_ids = list(payload.list_ids or [])
+    # Dedupe incoming list_ids to protect the count check below.
+    target_list_ids = list(dict.fromkeys(payload.list_ids or []))
     if target_list_ids:
         # Validate lists belong to vendor
         valid_lists = await _s.db.sales_prospect_lists.count_documents(
@@ -687,22 +688,24 @@ async def sales_analytics(user: dict = Depends(_require_sales_vendor),
     unsub_total = await _s.db.sales_prospects.count_documents(
         {"vendor_id": vid, "status": "unsubscribed"})
 
-    # Daily series — count sends per day and opens per day
+    # Daily series — count sends/opens/failed/bounced per day
     by_day: Dict[str, Dict[str, int]] = {}
     cur_sent = _s.db.sales_campaign_recipients.find(
         {"vendor_id": vid, "sent_at": {"$gte": since},
-         "status": {"$in": ["sent", "opened", "failed"]}},
+         "status": {"$in": ["sent", "opened", "failed", "bounced"]}},
         {"_id": 0, "sent_at": 1, "opened_at": 1, "status": 1},
     )
     async for r in cur_sent:
         sa = (r.get("sent_at") or "")[:10]
         if not sa:
             continue
-        slot = by_day.setdefault(sa, {"sent": 0, "opened": 0})
+        slot = by_day.setdefault(sa, {"sent": 0, "opened": 0, "bounced": 0})
         if r.get("status") in ("sent", "opened"):
             slot["sent"] += 1
         if r.get("opened_at"):
             slot["opened"] += 1
+        if r.get("status") == "bounced":
+            slot["bounced"] += 1
 
     series = [{"date": d, **v} for d, v in sorted(by_day.items())]
     open_rate = round((opened_total / sent_total) * 100, 1) if sent_total else 0.0
@@ -1011,5 +1014,10 @@ async def _start_sales_sender():
         )
         for vid in distinct_vendors:
             await _ensure_default_list(vid)
+        # Legacy campaigns predate multi-list — backfill empty list_ids so
+        # the API always returns the field.
+        await _s.db.sales_campaigns.update_many(
+            {"list_ids": {"$exists": False}}, {"$set": {"list_ids": []}},
+        )
     except Exception as e:
         _s.logger.warning("[sales] migration warning: %s", e)

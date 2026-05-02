@@ -172,7 +172,7 @@ class TestProspects:
         assert r.status_code == 200
         d = r.json()
         assert d["inserted"] == 1  # dan only
-        assert d["duplicates_skipped"] == 2  # bob (existing) + BOB upper-case dup-in-file or vs existing
+        assert d["duplicates_skipped"] == 1  # TEST_bob already in this list (the uppercase dup is silently collapsed by seen_in_file)
 
     def test_list_with_filters(self, exempt_client):
         r = exempt_client.get(f"{API}/sales/prospects", params={"q": "alice"}, timeout=20)
