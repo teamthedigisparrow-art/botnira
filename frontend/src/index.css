@@ -103,3 +103,36 @@ h1, h2, h3, h4, h5, .font-display {
   padding: 2px 6px;
   border: 1px solid #0a0a0b;
 }
+
+
+/* Sales Assistant — eye-catching animated pricing badge */
+.sales-assistant-badge {
+  position: absolute;
+  top: -14px;
+  right: -10px;
+  display: inline-flex;
+  align-items: center;
+  font-family: "Cabinet Grotesk", "Satoshi", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  padding: 6px 12px;
+  color: #fff;
+  background: linear-gradient(120deg, #002FA7 0%, #6f3bff 50%, #ff5c8a 100%);
+  background-size: 200% 200%;
+  border: 2px solid #0a0a0b;
+  box-shadow: 4px 4px 0 0 #0a0a0b;
+  transform: rotate(3deg);
+  animation: salesBadgeShine 3.4s ease-in-out infinite,
+             salesBadgePulse 2.4s ease-in-out infinite;
+  z-index: 2;
+}
+@keyframes salesBadgeShine {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+@keyframes salesBadgePulse {
+  0%, 100% { box-shadow: 4px 4px 0 0 #0a0a0b, 0 0 0 0 rgba(111, 59, 255, 0.55); }
+  50%      { box-shadow: 4px 4px 0 0 #0a0a0b, 0 0 22px 4px rgba(111, 59, 255, 0.55); }
+}

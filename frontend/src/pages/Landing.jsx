@@ -398,8 +398,8 @@ const How = () => (
 
 const PLAN_DATA = [
   { id: "starter", name: "Starter", price: 49, min: 100, msg: 2000, tagline: "Solo & side-hustle receptionists" },
-  { id: "growth", name: "Growth", price: 149, min: 500, msg: 8000, tagline: "Most businesses pick this", featured: true },
-  { id: "pro", name: "Pro", price: 399, min: 1500, msg: 25000, tagline: "Clinics, agencies, multi-location" },
+  { id: "growth", name: "Growth", price: 149, min: 500, msg: 8000, tagline: "Most businesses pick this", featured: true, salesAssistant: true },
+  { id: "pro", name: "Pro", price: 399, min: 1500, msg: 25000, tagline: "Clinics, agencies, multi-location", salesAssistant: true },
 ];
 
 const Pricing = () => (
@@ -419,8 +419,14 @@ const Pricing = () => (
           <div
             key={p.id}
             data-testid={`landing-plan-${p.id}`}
-            className={`border-2 border-black p-7 shadow-brutal bg-white ${p.featured ? "ring-4 ring-[#002FA7]" : ""}`}
+            className={`relative border-2 border-black p-7 shadow-brutal bg-white ${p.featured ? "ring-4 ring-[#002FA7]" : ""}`}
           >
+            {p.salesAssistant && (
+              <div data-testid={`sales-assistant-badge-${p.id}`} className="sales-assistant-badge">
+                <Sparkles size={11} className="inline -mt-0.5 mr-1" />
+                Sales Assistant Included
+              </div>
+            )}
             {p.featured && <div className="inline-block bg-[#002FA7] text-white text-[10px] font-bold uppercase tracking-widest px-2 py-1 border border-black mb-3">Most popular</div>}
             <div className="font-display font-black text-3xl">{p.name}</div>
             <div className="text-sm text-neutral-600 mt-1">{p.tagline}</div>
@@ -436,6 +442,11 @@ const Pricing = () => (
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Live agent override (inbox)</li>
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Hard-stop at zero — no bill shocks</li>
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Top-up packs never expire</li>
+              {p.salesAssistant && (
+                <li className="flex items-center gap-2 font-bold text-[#002FA7]">
+                  <Sparkles size={14}/> AI Sales Assistant — outbound email campaigns
+                </li>
+              )}
             </ul>
             <Link
               to="/signup"

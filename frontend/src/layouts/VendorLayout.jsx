@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
-import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard, PanelLeftClose, PanelLeftOpen, Megaphone } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import PaywallGuard from "../components/PaywallGuard";
 import BrandMark from "../components/BrandMark";
@@ -11,6 +11,7 @@ const links = [
   { to: "/app/bot", label: "Bot Studio", icon: Bot, tid: "nav-bot" },
   { to: "/app/channels", label: "Channels", icon: Cable, tid: "nav-channels" },
   { to: "/app/appointments", label: "Appointments", icon: CalendarDays, tid: "nav-appointments" },
+  { to: "/app/sales", label: "Sales Assistant", icon: Megaphone, tid: "nav-sales" },
   { to: "/app/analytics", label: "Analytics", icon: BarChart3, tid: "nav-analytics" },
   { to: "/app/billing", label: "Billing", icon: CreditCard, tid: "nav-billing" },
   { to: "/app/settings", label: "Settings", icon: SettingsIcon, tid: "nav-settings" },

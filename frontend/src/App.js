@@ -19,6 +19,7 @@ import Appointments from "./pages/vendor/Appointments";
 import Analytics from "./pages/vendor/Analytics";
 import Billing from "./pages/vendor/Billing";
 import Settings from "./pages/vendor/Settings";
+import SalesAssistant from "./pages/vendor/SalesAssistant";
 import AdminOverview from "./pages/admin/AdminOverview";
 import AdminVendors from "./pages/admin/AdminVendors";
 import AdminBilling from "./pages/admin/AdminBilling";
@@ -53,6 +54,7 @@ function App() {
               <Route path="bot" element={<BotStudio />} />
               <Route path="channels" element={<Channels />} />
               <Route path="appointments" element={<Appointments />} />
+              <Route path="sales" element={<SalesAssistant />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="billing" element={<Billing />} />
               <Route path="settings" element={<Settings />} />

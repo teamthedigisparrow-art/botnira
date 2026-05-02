@@ -4937,6 +4937,11 @@ from email_routes import router as _email_router, _start_email_poller as _email_
 api_router.include_router(_email_router, prefix="/email")
 app.add_event_handler("startup", _email_start)
 
+# Sales Assistance — outbound email marketing (Growth/Pro plan-gated)
+from sales_routes import router as _sales_router, _start_sales_sender as _sales_start  # noqa: E402
+api_router.include_router(_sales_router, prefix="/sales")
+app.add_event_handler("startup", _sales_start)
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,

@@ -1,0 +1,44 @@
+{
+  "summary": "Sales Assistance (outbound email marketing) — first end-to-end review. 23/23 backend pytest cases pass covering plan gating, prospects CRUD + CSV upload (case-insensitive dedup, header detection), campaign lifecycle (create/list/get/pause/resume/cancel + 400 negatives), analytics shape, and public tracking pixel + unsubscribe. Frontend verified on kamal@thedigisparrow.com: Sales Assistant nav appears, /app/sales loads three tabs, upload input data-testid present, New campaign button works, Analytics renders KPI cards + daily bar chart. Landing page #pricing shows the animated 'Sales Assistant Included' badge ONLY on Growth and Pro cards (not Starter) with correct data-testids. No critical bugs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/sales/prospects/upload", "issue": "CSV with no header row falls into heuristic mode (idx_email=0) but the heuristic NEVER triggers in practice because EmailStr-validated rows of pure data with email in col 0 are still parsed correctly only when has_header is False — currently has_header is detected purely on header keywords, so a header-less CSV with email in the first column works but a CSV whose first row is something like 'foo,bar,baz' (non-email, non-header) will be treated as data and increment invalid_skipped. Document or fail explicitly."},
+      {"endpoint": "GET /api/sales/track/open/{cid}/{rid}.gif", "issue": "Returns 200 even for non-existent ids by design (correct per spec) — but the no-cache headers do not include 'X-Robots-Tag: noindex' which would be cleaner for a tracking pixel. Cosmetic only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Vendor layout (any page after login)", "issues": ["React hydration console warning: 'In HTML, <span> cannot be a child of <option>' — likely originating from a Select where an icon span is wrapped inside <option>. Browsers strip unknown children from <option>, so this is a non-blocking warning but appears on every navigation in dev mode."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_assistance.py",
+    "/app/test_reports/pytest/iter6_sales.xml"
+  ],
+  "action_items": [
+    "Investigate React hydration warning (<span> inside <option>) — search VendorLayout.jsx / SalesAssistant.jsx select elements and remove the icon span from option children, or use a custom Select.",
+    "(Optional) Tighten CSV header detection in sales_routes.upload_prospects to fail loudly when first row has no recognisable email column AND isn't itself a valid email."
+  ],
+  "critical_code_review_comments": [
+    "sales_routes.py _process_one_campaign line ~636: when a prospect is unsubscribed/bounced, we set the recipient status to 'skipped' AND set sent_at=now — sent_at is overloaded for both 'when sent' and 'when processed'. The analytics totals filter `status in ['sent','opened']` so skipped won't inflate the sent count, but daily series at line ~444 counts every recipient with `sent_at>=since` regardless of status, so skipped recipients DO show up in the daily-sent series. Either exclude status='skipped' from the series query or move skip-marking to a separate 'skipped_at' field.",
+    "sales_routes.py _replace_merge_tags uses double-curly tokens {{name}} but the problem statement and frontend hints document SINGLE curly merge tags ({name}, {first_name}, {company}, {email}). Vendors writing single-curly tags will see them rendered verbatim in emails. Either accept both forms or update frontend documentation to {{double}} to match.",
+    "sales_routes.py line 367 inserts roster docs but each dict is mutated by insert_many (Mongo adds _id). The list-comp uses .copy() so original dicts in `roster` stay clean — good.",
+    "sales_routes.py upload_prospects existing_emails set is loaded into memory per upload — fine for SMB scale but a 100k-row vendor would balloon RAM. Consider a Mongo-side $in chunked check or rely solely on the unique index + insert_many ordered=False.",
+    "sales_routes.py _start_sales_sender creates the asyncio task on EVERY FastAPI startup, including hot-reloads — in dev with reload=True you'd get duplicate sender loops. Guard with a module-level flag or use FastAPI's lifespan context for stricter once-per-process semantics.",
+    "sales_routes.py _public_base() reads PUBLIC_BASE_URL=https://botnira.com — tracking pixel + unsubscribe links in delivered emails point to production even when sent from the preview/staging vendor account. Fine for prod, but means staging campaigns leave production-pointing URLs in real customer inboxes. Document or override with a TESTING flag.",
+    "sales_routes.py pause_campaign correctly returns 400 for already-paused campaigns (status filter restricts to sending/scheduled). But resume after cancel is also 400 — there's no 'undo cancel' path, which may be intentional (matches spec).",
+    "Plan gating in _sales_enabled_for: if vendor.subscription_status='trialing' AND plan='growth', returns disabled with 'trial' label. That's stricter than typical SaaS where trial-of-Growth should preview the feature. Confirm with PM whether this is desired.",
+    "frontend SalesAssistant.jsx (per file ref) — verify toast on launch + status badge re-renders are tied to a refresh of GET /campaigns rather than optimistic local state, otherwise paused→sending status flip from server side won't appear without a manual reload."
+  ],
+  "updated_files": ["/app/backend/tests/test_sales_assistance.py"],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "100% — landing badges, nav entry, three tabs, upload input, New campaign button, KPI cards all verified"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu (exempt — sales enabled). demo@botnira.com / demo123 (trial — verified API 403). Frontend test confined to kamal account; demo account hits global PaywallGuard before reaching /app/sales as documented in request.",
+  "seed_data_creation": "Test created and cleaned up (autouse fixture) the following @example.com prospects on kamal's account: TEST_alice, TEST_bob, TEST_carol, TEST_dan, TEST_kill, TEST_camp, TEST_flow, TEST_unsub. Two TEST_ campaigns (TEST_Campaign1, TEST_FlowCampaign) were created and IMMEDIATELY cancelled before the 20-second sender tick — no real emails dispatched. Cleanup fixture cancels any remaining TEST_ campaigns and deletes any leftover @example.com prospects.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file lives at /app/backend/tests/test_sales_assistance.py and uses session-scoped autouse cleanup so it's safe to re-run repeatedly without polluting kamal's prospect list. The sender loop (_sales_sender_loop) ticks every 20s — when creating a campaign in tests, ALWAYS call /cancel within ~15s. The tests intentionally use @example.com addresses so even if a tick slips through SMTP returns 5xx and the recipient is marked 'failed' without burning real reputation. The frontend hydration warning (span-in-option) is pre-existing and unrelated to this feature — observed on every vendor page. Landing page anchor scrolling works at /#pricing. Sales nav entry only appears for vendors where GET /api/sales/access returns enabled=true (kamal, growth, pro accounts). Merge-tag mismatch ({} vs {{}}) is the most user-visible code bug — confirm with main agent which form is supported.",
+  "rca_of_the_issue": "N/A — no functional bugs. The code-review comments above flag improvements (merge-tag syntax mismatch, skipped-recipient analytics double-count, hot-reload double sender loop, hardcoded PUBLIC_BASE_URL in non-prod) but every documented endpoint behaves to spec under test. Plan gating, CSV dedup logic (case-insensitive via _norm_email), unique index (vendor_id+email), pause/resume/cancel state machine, public tracking pixel content-type and unsubscribe HTML response codes (200/404) all match the request."
+}
