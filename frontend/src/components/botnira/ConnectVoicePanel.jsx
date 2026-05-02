@@ -105,6 +105,14 @@ export default function ConnectVoicePanel({ onChange }) {
               <div className="mt-3 border-2 border-black bg-amber-50 px-3 py-2 text-xs font-mono leading-relaxed" data-testid="voice-sms-info">
                 <strong>Heads up:</strong> Customers can <strong>call</strong> AND <strong>text</strong> this number — both inbound calls and SMS reach your BotNira inbox. <strong>SMS is US &amp; Canada only</strong> at launch — international SMS is silently rejected.
               </div>
+              <div className="mt-3 border-2 border-black bg-blue-50 px-3 py-2 text-xs leading-relaxed" data-testid="voice-forwarding-helper">
+                <strong>Already have a business number?</strong> Set call
+                forwarding on it (under any condition — always, on busy, or
+                no-answer) to your BotNira phone number above. Every call
+                that reaches your existing number will be routed to
+                BotNira, and BotNira will answer for you — your callers
+                keep dialling the number they already know.
+              </div>
             </div>
             <div className="border-2 border-black p-4">
               <div className="text-xs font-bold tracking-[0.2em] uppercase text-neutral-600">This month</div>
