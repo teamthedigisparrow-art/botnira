@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
-import { Plus, CalendarDays, Globe, MessageCircle, Mail, MessageSquare, Phone, UserPlus, Check, X } from "lucide-react";
+import { Plus, CalendarDays, Globe, MessageCircle, Mail, MessageSquare, Phone, UserPlus, Check, X, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 
 const SOURCE_META = {
   web: { icon: Globe, label: "Web", color: "bg-blue-100 text-blue-900" },
@@ -41,12 +41,41 @@ function StatusBadge({ status }) {
 
 export default function Appointments() {
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(30);
   const [open, setOpen] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [form, setForm] = useState({ customer_name: "", customer_contact: "", scheduled_at: "", notes: "" });
+  const [filters, setFilters] = useState({
+    date_from: "",
+    date_to: "",
+    source: "all",
+    status: "all",
+    attended: "all",
+  });
   const [busy, setBusy] = useState("");
 
-  const load = () => api.get("/appointments").then(r => setItems(r.data));
-  useEffect(() => { load(); }, []);
+  const load = () => {
+    const params = new URLSearchParams({
+      limit,
+      offset: (page - 1) * limit,
+    });
+    
+    // Add filters to params
+    if (filters.date_from) params.append("date_from", filters.date_from);
+    if (filters.date_to) params.append("date_to", filters.date_to);
+    if (filters.source !== "all") params.append("source", filters.source);
+    if (filters.status !== "all") params.append("status", filters.status);
+    if (filters.attended !== "all") params.append("attended", filters.attended === "yes");
+    
+    api.get(`/appointments?${params.toString()}`).then(r => {
+      setItems(r.data.items);
+      setTotal(r.data.total);
+    });
+  };
+  
+  useEffect(() => { load(); }, [page, filters]);
 
   const create = async () => {
     try {
@@ -70,6 +99,20 @@ export default function Appointments() {
     } finally { setBusy(""); }
   };
 
+  const resetFilters = () => {
+    setFilters({
+      date_from: "",
+      date_to: "",
+      source: "all",
+      status: "all",
+      attended: "all",
+    });
+    setPage(1);
+  };
+
+  const totalPages = Math.ceil(total / limit);
+  const hasActiveFilters = filters.date_from || filters.date_to || filters.source !== "all" || filters.status !== "all" || filters.attended !== "all";
+
   return (
     <div className="p-8" data-testid="appointments-page">
       <div className="flex items-end justify-between flex-wrap gap-4">
@@ -78,12 +121,115 @@ export default function Appointments() {
           <h1 className="font-display text-4xl font-black tracking-tighter">Appointments</h1>
           <p className="text-sm text-neutral-600 mt-1">Track where each booking came from and whether the customer showed up.</p>
         </div>
-        <button data-testid="new-appt-btn" onClick={() => setOpen(true)} className="bg-[#002FA7] text-white font-bold px-4 py-2 border-2 border-black shadow-brutal hover-lift flex items-center gap-2">
-          <Plus size={16}/> New
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`border-2 border-black px-4 py-2 font-bold flex items-center gap-2 shadow-brutal hover-lift ${
+              hasActiveFilters ? "bg-amber-100" : "bg-white"
+            }`}
+          >
+            <Filter size={16}/> Filters {hasActiveFilters && <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">{
+              [filters.date_from, filters.date_to, filters.source !== "all", filters.status !== "all", filters.attended !== "all"].filter(Boolean).length
+            }</span>}
+          </button>
+          <button data-testid="new-appt-btn" onClick={() => setOpen(true)} className="bg-[#002FA7] text-white font-bold px-4 py-2 border-2 border-black shadow-brutal hover-lift flex items-center gap-2">
+            <Plus size={16}/> New
+          </button>
+        </div>
       </div>
 
-      <div className="border-2 border-black bg-white mt-6 overflow-x-auto">
+      {/* Filters Panel */}
+      {showFilters && (
+        <div className="mt-6 border-2 border-black bg-neutral-50 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-display font-bold text-lg">Filter Appointments</div>
+            {hasActiveFilters && (
+              <button onClick={resetFilters} className="text-xs font-bold text-neutral-600 hover:text-black underline">
+                Clear All
+              </button>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            {/* Date From */}
+            <div>
+              <label className="block text-xs font-bold mb-1">From Date</label>
+              <input
+                type="date"
+                value={filters.date_from}
+                onChange={(e) => { setFilters({...filters, date_from: e.target.value}); setPage(1); }}
+                className="w-full border-2 border-black px-3 py-2 text-sm"
+              />
+            </div>
+
+            {/* Date To */}
+            <div>
+              <label className="block text-xs font-bold mb-1">To Date</label>
+              <input
+                type="date"
+                value={filters.date_to}
+                onChange={(e) => { setFilters({...filters, date_to: e.target.value}); setPage(1); }}
+                className="w-full border-2 border-black px-3 py-2 text-sm"
+              />
+            </div>
+
+            {/* Source Filter */}
+            <div>
+              <label className="block text-xs font-bold mb-1">Source</label>
+              <select
+                value={filters.source}
+                onChange={(e) => { setFilters({...filters, source: e.target.value}); setPage(1); }}
+                className="w-full border-2 border-black px-3 py-2 text-sm font-bold"
+              >
+                <option value="all">All Sources</option>
+                <option value="web">Web</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">Email</option>
+                <option value="sms">SMS</option>
+                <option value="voice">Phone Call</option>
+                <option value="manual">Manual</option>
+              </select>
+            </div>
+
+            {/* Status Filter */}
+            <div>
+              <label className="block text-xs font-bold mb-1">Status</label>
+              <select
+                value={filters.status}
+                onChange={(e) => { setFilters({...filters, status: e.target.value}); setPage(1); }}
+                className="w-full border-2 border-black px-3 py-2 text-sm font-bold"
+              >
+                <option value="all">All Statuses</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="cancelled_by_customer">Cancelled by Customer</option>
+                <option value="rescheduled_by_customer">Rescheduled by Customer</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+
+            {/* Attended Filter */}
+            <div>
+              <label className="block text-xs font-bold mb-1">Attended</label>
+              <select
+                value={filters.attended}
+                onChange={(e) => { setFilters({...filters, attended: e.target.value}); setPage(1); }}
+                className="w-full border-2 border-black px-3 py-2 text-sm font-bold"
+              >
+                <option value="all">All</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results Summary */}
+      <div className="mt-4 text-sm text-neutral-600">
+        Showing {items.length > 0 ? (page - 1) * limit + 1 : 0} - {Math.min(page * limit, total)} of {total} appointments
+      </div>
+
+      <div className="border-2 border-black bg-white mt-3 overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
           <thead className="bg-black text-white text-left">
             <tr className="text-xs uppercase tracking-widest">
@@ -135,6 +281,63 @@ export default function Appointments() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between flex-wrap gap-4">
+          <div className="text-sm text-neutral-600">
+            Page {page} of {totalPages}
+          </div>
+          
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="border-2 border-black px-4 py-2 font-bold flex items-center gap-2 bg-white disabled:opacity-30 disabled:cursor-not-allowed hover-lift"
+            >
+              <ChevronLeft size={16}/> Previous
+            </button>
+            
+            {/* Page Numbers */}
+            <div className="flex gap-1">
+              {[...Array(Math.min(5, totalPages))].map((_, i) => {
+                let pageNum;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (page <= 3) {
+                  pageNum = i + 1;
+                } else if (page >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = page - 2 + i;
+                }
+                
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={`w-10 h-10 border-2 border-black font-bold text-sm ${
+                      page === pageNum 
+                        ? "bg-[#002FA7] text-white" 
+                        : "bg-white hover:bg-neutral-100"
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+            
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="border-2 border-black px-4 py-2 font-bold flex items-center gap-2 bg-white disabled:opacity-30 disabled:cursor-not-allowed hover-lift"
+            >
+              Next <ChevronRight size={16}/>
+            </button>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50" data-testid="appt-modal">

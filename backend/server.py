@@ -1302,11 +1302,62 @@ async def simulate_inbound(
 
 # ------------------------------ Appointments ---------------------------------
 @api_router.get("/appointments")
-async def list_appointments(user: dict = Depends(require_vendor)):
+async def list_appointments(
+    user: dict = Depends(require_vendor),
+    limit: int = 30,
+    offset: int = 0,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    source: Optional[str] = None,
+    appt_status: Optional[str] = None,
+    attended: Optional[bool] = None,
+):
+    """List appointments with pagination, sorting, and filters.
+    
+    Filters:
+    - date_from/date_to: ISO date strings for scheduled_at range
+    - source: web, whatsapp, email, sms, voice, manual
+    - appt_status: scheduled, cancelled_by_customer, rescheduled_by_customer, cancelled, attended
+    - attended: true/false
+    """
+    query = {"vendor_id": user["vendor_id"]}
+    
+    # Date range filter
+    if date_from or date_to:
+        query["scheduled_at"] = {}
+        if date_from:
+            query["scheduled_at"]["$gte"] = date_from
+        if date_to:
+            # Add 23:59:59 to include the entire end date
+            query["scheduled_at"]["$lte"] = f"{date_to}T23:59:59"
+    
+    # Source filter
+    if source and source != "all":
+        query["source"] = source
+    
+    # Status filter
+    if appt_status and appt_status != "all":
+        query["status"] = appt_status
+    
+    # Attended filter
+    if attended is not None:
+        query["attended"] = attended
+    
+    # Get total count for pagination
+    total = await db.appointments.count_documents(query)
+    
+    # Fetch paginated results, sorted by scheduled_at descending (latest first)
     items = await db.appointments.find(
-        {"vendor_id": user["vendor_id"]}, {"_id": 0}
-    ).sort("scheduled_at", 1).to_list(1000)
-    return items
+        query, {"_id": 0}
+    ).sort("scheduled_at", -1).skip(offset).limit(limit).to_list(limit)
+    
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < total,
+    }
 
 
 @api_router.post("/appointments")
