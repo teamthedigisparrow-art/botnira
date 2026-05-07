@@ -63,7 +63,10 @@ export default function Channels() {
     if (!payload?.code) return toast.error("Meta didn't return an authorisation code.");
     setWaBusy(true);
     try {
-      await api.post("/whatsapp/embedded-signup/exchange", { code: payload.code });
+      await api.post("/whatsapp/embedded-signup/exchange", {
+        code: payload.code,
+        session_info: payload.session_info || null,
+      });
       toast.success("WhatsApp connected!");
       loadWa();
       loadChannels();

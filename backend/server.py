@@ -1888,6 +1888,10 @@ async def whatsapp_embedded_signup_config(user: dict = Depends(require_vendor)):
 
 class EmbeddedSignupExchangeReq(BaseModel):
     code: str
+    # Optional fallback Meta posts via JS postMessage — contains
+    # waba_id + phone_number_id directly. Used when Graph API's
+    # debug_token comes back without granular_scopes (some rollouts).
+    session_info: Optional[Dict[str, Any]] = None
 
 
 @api_router.post("/whatsapp/embedded-signup/exchange")
@@ -1930,8 +1934,20 @@ async def whatsapp_embedded_signup_exchange(
             if g.get("scope") == "whatsapp_business_management":
                 waba_ids = g.get("target_ids", [])
                 break
+        # Fallback — Meta sometimes returns granular_scopes without WABA
+        # targets even when authorisation succeeded. The frontend's
+        # session_info captures waba_id directly from the popup.
+        if not waba_ids and req.session_info:
+            si = req.session_info
+            if si.get("waba_id"):
+                waba_ids = [si["waba_id"]]
+                logger.info("[wa embedded signup] using session_info fallback waba_id=%s", si["waba_id"])
         if not waba_ids:
-            raise HTTPException(status_code=400, detail="No WhatsApp Business Account was authorised in this signup.")
+            raise HTTPException(
+                status_code=400,
+                detail=("No WhatsApp Business Account was authorised in this signup. "
+                        "Make sure you select your business + the WABA + the phone number on every step of the popup."),
+            )
         waba_id = waba_ids[0]
 
         # 3) Find the phone number inside that WABA

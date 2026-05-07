@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
   const [loading, setLoading] = useState(false);
   const sdkReady = useRef(false);
+  const sessionInfoRef = useRef(null); // captured from postMessage FINISH event
 
   // Inject Facebook SDK once
   useEffect(() => {
@@ -37,7 +38,11 @@ export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
     document.body.appendChild(s);
   }, [config.app_id, config.graph_version]);
 
-  // Receive the message that Meta's popup posts to the opener window
+  // Capture the session-info postMessage Meta sends when the user finishes
+  // the Embedded Signup. We DO NOT call onSuccess from here — the OAuth
+  // `code` arrives separately via the FB.login callback. We just stash
+  // {waba_id, phone_number_id} so we can pass it as a fallback to the
+  // backend (in case Graph API's granular_scopes lookup comes back empty).
   useEffect(() => {
     const handler = (event) => {
       if (event.origin !== "https://www.facebook.com" && event.origin !== "https://web.facebook.com") return;
@@ -45,14 +50,13 @@ export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (data && data.type === "WA_EMBEDDED_SIGNUP") {
           if (data.event === "FINISH") {
-            onSuccess?.(data.data);
+            sessionInfoRef.current = data.data || null;
           } else if (data.event === "CANCEL") {
+            sessionInfoRef.current = null;
             onError?.({ cancelled: true });
           }
         }
       } catch (err) {
-        // Defensive: postMessage often delivers non-JSON noise from third-party
-        // iframes (analytics pings, ad SDKs). Don't break the WhatsApp flow.
         if (process.env.NODE_ENV !== "production") {
           console.debug("WA embedded signup: ignored non-JSON postMessage", err?.message);
         }
@@ -60,7 +64,7 @@ export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [onSuccess, onError]);
+  }, [onError]);
 
   const launch = () => {
     if (!config.config_id) {
@@ -74,6 +78,7 @@ export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
       onError?.({ message: "Facebook SDK not loaded yet — try again in a moment." });
       return;
     }
+    sessionInfoRef.current = null;
     setLoading(true);
     window.FB.login(
       (response) => {
@@ -83,7 +88,12 @@ export default function ConnectWhatsAppButton({ config, onSuccess, onError }) {
           return;
         }
         // The `code` is short-lived; backend exchanges it for a durable token.
-        onSuccess?.({ code: response.authResponse.code });
+        // Pass session_info too so the backend can fall back to it when the
+        // debug_token granular_scopes lookup is empty.
+        onSuccess?.({
+          code: response.authResponse.code,
+          session_info: sessionInfoRef.current || null,
+        });
       },
       {
         config_id: config.config_id,
