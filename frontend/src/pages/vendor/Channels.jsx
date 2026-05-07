@@ -37,6 +37,8 @@ export default function Channels() {
   const [waBusy, setWaBusy] = useState(false);
   const [waSignupConfig, setWaSignupConfig] = useState(null);
   const [waSetupMode, setWaSetupMode] = useState("embedded"); // "embedded" or "manual"
+  const [waPhoneStatus, setWaPhoneStatus] = useState(null);
+  const [waPin, setWaPin] = useState("");
   const [waManualForm, setWaManualForm] = useState({
     phone_number_id: "",
     waba_id: "",
@@ -51,6 +53,14 @@ export default function Channels() {
     try {
       const { data } = await api.get("/whatsapp/status");
       setWa(data);
+      if (data?.connection?.status === "active") {
+        try {
+          const v = await api.get("/whatsapp/phone-verification");
+          setWaPhoneStatus(v.data);
+        } catch (e) { setWaPhoneStatus(null); }
+      } else {
+        setWaPhoneStatus(null);
+      }
     } catch (e) { /* ignore */ }
     finally { setWaLoading(false); }
     try {
@@ -72,6 +82,19 @@ export default function Channels() {
       loadChannels();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not finish WhatsApp connection.", { duration: 10000 });
+    } finally { setWaBusy(false); }
+  };
+
+  const registerPhone = async () => {
+    if (!/^\d{6}$/.test(waPin)) return toast.error("Enter the 6-digit PIN you set on Meta WhatsApp Manager (Two-step verification).");
+    setWaBusy(true);
+    try {
+      await api.post("/whatsapp/register-phone", { pin: waPin });
+      toast.success("Number activated for Cloud API messaging — try sending now.");
+      setWaPin("");
+      await loadWa();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Activation failed", { duration: 12000 });
     } finally { setWaBusy(false); }
   };
   const onWaSignupError = (e) => {
@@ -224,6 +247,58 @@ export default function Channels() {
                 <div className="text-xs font-mono text-neutral-600 mt-1 break-all">/api/whatsapp/webhook</div>
               </div>
             </div>
+
+            {/* Cloud-API registration banner: surfaces when Meta reports
+                code_verification_status != VERIFIED. Without this step,
+                outbound goes to one tick and inbound never arrives. */}
+            {waPhoneStatus?.needs_registration && (
+              <div className="border-2 border-black bg-amber-50 p-4 space-y-3" data-testid="wa-register-banner">
+                <div className="flex items-start gap-2">
+                  <div className="font-display font-black text-lg">⚠ One last step — activate messaging</div>
+                </div>
+                <div className="text-sm leading-relaxed">
+                  Meta reports this number's Cloud API registration as
+                  <span className="font-mono font-bold mx-1 px-1 border border-black bg-white">
+                    {waPhoneStatus.code_verification_status || "NOT_VERIFIED"}
+                  </span>.
+                  WhatsApp won't actually deliver messages until we register
+                  it. Enter the 6-digit two-step verification PIN you set on
+                  Meta WhatsApp Manager and we'll activate the number now.
+                </div>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    data-testid="wa-register-pin"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="6-digit PIN"
+                    value={waPin}
+                    onChange={(e) => setWaPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    className="border-2 border-black px-3 py-2 font-mono w-40 tracking-widest text-center"
+                  />
+                  <button
+                    data-testid="wa-register-btn"
+                    onClick={registerPhone}
+                    disabled={waBusy}
+                    className="border-2 border-black px-5 py-2 font-bold bg-black text-[#25D366] shadow-brutal hover-lift disabled:opacity-60"
+                  >
+                    {waBusy ? "Activating…" : "Activate messaging"}
+                  </button>
+                  <a
+                    href="https://business.facebook.com/wa/manage/phone-numbers/"
+                    target="_blank" rel="noreferrer"
+                    className="text-xs underline text-neutral-700"
+                  >Forgot PIN? Change it on Meta →</a>
+                </div>
+              </div>
+            )}
+
+            {waPhoneStatus?.registered && (
+              <div className="border-2 border-black bg-green-50 px-4 py-2 text-sm" data-testid="wa-registered-banner">
+                ✓ Number is registered & active for Cloud API messaging
+                {waPhoneStatus.messaging_limit_tier && <span className="ml-2 text-xs font-mono text-neutral-600">· {waPhoneStatus.messaging_limit_tier}</span>}
+                {waPhoneStatus.quality_rating && <span className="ml-2 text-xs font-mono text-neutral-600">· quality {waPhoneStatus.quality_rating}</span>}
+              </div>
+            )}
 
             <div className="border-2 border-black p-4 bg-neutral-50">
               <div className="font-display font-bold mb-2">Send a test message</div>

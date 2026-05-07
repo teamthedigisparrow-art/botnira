@@ -1670,6 +1670,74 @@ async def whatsapp_status(user: dict = Depends(require_vendor)):
     return {"connection": wc, "ready_to_connect": bool(META_APP_ID and META_SYSTEM_USER_TOKEN)}
 
 
+@api_router.get("/whatsapp/phone-verification")
+async def whatsapp_phone_verification(user: dict = Depends(require_vendor)):
+    """Live-check the phone number's Cloud API registration state. Runs a
+    Graph API lookup so vendors see real-time `code_verification_status`
+    (VERIFIED / EXPIRED / NOT_VERIFIED). Used by the Channels page to
+    decide whether to show the 'Activate messaging' button."""
+    wc = await db.whatsapp_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not wc:
+        raise HTTPException(status_code=404, detail="WhatsApp not connected")
+    token = wc.get("access_token") or META_SYSTEM_USER_TOKEN
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(
+            f"{GRAPH_BASE}/{wc['phone_number_id']}",
+            params={"fields": "display_phone_number,verified_name,quality_rating,"
+                              "code_verification_status,name_status,messaging_limit_tier,status"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Meta returned {r.status_code}: {r.text[:200]}")
+    data = r.json()
+    cvs = (data.get("code_verification_status") or "").upper()
+    return {
+        "phone_number_id": wc["phone_number_id"],
+        "display_phone_number": data.get("display_phone_number"),
+        "verified_name": data.get("verified_name"),
+        "quality_rating": data.get("quality_rating"),
+        "code_verification_status": data.get("code_verification_status"),
+        "name_status": data.get("name_status"),
+        "messaging_limit_tier": data.get("messaging_limit_tier"),
+        "needs_registration": cvs in {"EXPIRED", "NOT_VERIFIED", ""},
+        "registered": cvs == "VERIFIED",
+    }
+
+
+class WhatsAppRegisterReq(BaseModel):
+    pin: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+@api_router.post("/whatsapp/register-phone")
+async def whatsapp_register_phone(req: WhatsAppRegisterReq, user: dict = Depends(require_vendor)):
+    """Activate the connected WhatsApp phone for Cloud API messaging.
+    Calls `POST /{phone_number_id}/register` with the vendor's 6-digit
+    two-step verification PIN — without this, Meta accepts outbound
+    messages but won't actually deliver them, and inbound messages stay
+    on a single tick. Run by the vendor after Embedded Signup."""
+    wc = await db.whatsapp_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not wc:
+        raise HTTPException(status_code=404, detail="Connect WhatsApp before activating messaging.")
+    token = wc.get("access_token") or META_SYSTEM_USER_TOKEN
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.post(
+            f"{GRAPH_BASE}/{wc['phone_number_id']}/register",
+            params={"messaging_product": "whatsapp", "pin": req.pin},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if r.status_code >= 400:
+        # Meta returns very actionable messages — surface them straight to the vendor
+        try:
+            err = r.json().get("error", {})
+            msg = err.get("error_user_msg") or err.get("message") or r.text[:200]
+        except Exception:
+            msg = r.text[:200]
+        raise HTTPException(status_code=400, detail=f"Meta rejected the PIN: {msg}")
+    logger.info("[wa register] phone %s registered for vendor %s",
+                wc["phone_number_id"], user["vendor_id"])
+    return {"ok": True, "registered": True}
+
+
 class WhatsAppConnectReq(BaseModel):
     phone_number_id: str
     waba_id: str
