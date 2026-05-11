@@ -292,6 +292,53 @@ export default function Channels() {
               </div>
             )}
 
+            {/* Number is verified but Meta hasn't completed the Cloud API
+                hand-off (status=PENDING + platform_type=NOT_APPLICABLE).
+                The fix is on the user's side — uninstall WhatsApp from the
+                physical SIM that owns this number. */}
+            {waPhoneStatus?.needs_release && (
+              <div className="border-2 border-black bg-amber-50 p-4 space-y-3" data-testid="wa-release-banner">
+                <div className="font-display font-black text-lg">⚠ Release the number from your phone</div>
+                <div className="text-sm leading-relaxed space-y-2">
+                  <p>
+                    Meta has verified the PIN but the number is stuck at
+                    <span className="font-mono font-bold mx-1 px-1 border border-black bg-white">
+                      status: {waPhoneStatus.status || "PENDING"}
+                    </span>
+                    <span className="font-mono font-bold mx-1 px-1 border border-black bg-white">
+                      platform: {waPhoneStatus.platform_type || "NOT_APPLICABLE"}
+                    </span>
+                    because this SIM is still in use by a regular WhatsApp / WhatsApp Business app on a physical phone.
+                  </p>
+                  <p>To finish the hand-off:</p>
+                  <ol className="list-decimal ml-5 space-y-1">
+                    <li>On the phone holding the SIM, open <strong>WhatsApp</strong> (or <strong>WhatsApp Business</strong>).</li>
+                    <li>Go to <strong>Settings → Account → Delete my account</strong>, confirm with the SIM number, and uninstall the app.</li>
+                    <li>Wait 5 minutes, then click <strong>Re-register</strong> below. The status will flip to <span className="font-mono">CONNECTED</span> and messaging will start working immediately.</li>
+                  </ol>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    data-testid="wa-rerelease-pin"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="6-digit PIN"
+                    value={waPin}
+                    onChange={(e) => setWaPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    className="border-2 border-black px-3 py-2 font-mono w-40 tracking-widest text-center"
+                  />
+                  <button
+                    data-testid="wa-rerelease-btn"
+                    onClick={registerPhone}
+                    disabled={waBusy}
+                    className="border-2 border-black px-5 py-2 font-bold bg-black text-[#25D366] shadow-brutal hover-lift disabled:opacity-60"
+                  >
+                    {waBusy ? "Re-registering…" : "Re-register"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {waPhoneStatus?.registered && (
               <div className="border-2 border-black bg-green-50 px-4 py-2 text-sm" data-testid="wa-registered-banner">
                 ✓ Number is registered & active for Cloud API messaging

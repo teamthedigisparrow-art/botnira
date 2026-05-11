@@ -1691,6 +1691,11 @@ async def whatsapp_phone_verification(user: dict = Depends(require_vendor)):
         raise HTTPException(status_code=502, detail=f"Meta returned {r.status_code}: {r.text[:200]}")
     data = r.json()
     cvs = (data.get("code_verification_status") or "").upper()
+    phone_status = (data.get("status") or "").upper()
+    platform = (data.get("platform_type") or "").upper()
+    is_registered = cvs == "VERIFIED"
+    is_cloud_ready = is_registered and phone_status == "CONNECTED" and platform == "CLOUD_API"
+    needs_release = is_registered and not is_cloud_ready
     return {
         "phone_number_id": wc["phone_number_id"],
         "display_phone_number": data.get("display_phone_number"),
@@ -1699,8 +1704,11 @@ async def whatsapp_phone_verification(user: dict = Depends(require_vendor)):
         "code_verification_status": data.get("code_verification_status"),
         "name_status": data.get("name_status"),
         "messaging_limit_tier": data.get("messaging_limit_tier"),
+        "status": data.get("status"),
+        "platform_type": data.get("platform_type"),
         "needs_registration": cvs in {"EXPIRED", "NOT_VERIFIED", ""},
-        "registered": cvs == "VERIFIED",
+        "needs_release": needs_release,
+        "registered": is_cloud_ready,
     }
 
 
