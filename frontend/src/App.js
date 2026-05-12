@@ -1,5 +1,6 @@
 import "./App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import Landing from "./pages/Landing";
@@ -25,6 +26,22 @@ import AdminVendors from "./pages/admin/AdminVendors";
 import AdminBilling from "./pages/admin/AdminBilling";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
 
+// Fires Meta Pixel + Google Analytics PageView on every SPA route change.
+// Without this, gtag/fbq would only count the very first page load.
+function RouteAnalytics() {
+  const { pathname, search } = useLocation();
+  useEffect(() => {
+    const url = pathname + search;
+    if (typeof window.fbq === "function") {
+      window.fbq("track", "PageView");
+    }
+    if (typeof window.gtag === "function") {
+      window.gtag("event", "page_view", { page_path: url });
+    }
+  }, [pathname, search]);
+  return null;
+}
+
 function Protected({ role, children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-10 font-mono">Loading…</div>;
@@ -39,6 +56,7 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Toaster position="top-right" />
+          <RouteAnalytics />
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
