@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle } from "lucide-react";
 import BrandMark from "../components/BrandMark";
 import Reviews from "../components/marketing/Reviews";
@@ -22,6 +22,7 @@ const Nav = () => (
         <a href="#usecases" className="hover:text-[#002FA7]" data-testid="nav-usecases">Use cases</a>
         <a href="#pricing" className="hover:text-[#002FA7]" data-testid="nav-pricing">Pricing</a>
         <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
+        <a href="#contact" className="hover:text-[#002FA7]" data-testid="nav-contact">Contact</a>
       </div>
       <div className="flex items-center gap-3">
         <Link to="/login" className="text-sm font-bold hover:underline" data-testid="nav-login">Log in</Link>
@@ -536,6 +537,178 @@ const FAQ = () => (
   </section>
 );
 
+const Contact = () => {
+  const [form, setForm] = useState({
+    name: "", business_name: "", email: "", phone: "", message: "", website: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.email.trim() || !form.message.trim()) return;
+    setSubmitting(true);
+    try {
+      const base = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${base}/api/sales/inquiry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || "Submission failed");
+      }
+      setDone(true);
+      if (window.fbq) window.fbq("track", "Lead");
+      setForm({ name: "", business_name: "", email: "", phone: "", message: "", website: "" });
+    } catch (err) {
+      alert(err.message || "Could not send your inquiry — please email us instead.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section id="contact" className="border-b-2 border-black bg-[#fafafa]" data-testid="landing-contact">
+      <div className="max-w-7xl mx-auto px-6 py-20">
+        <div className="text-xs font-bold tracking-[0.25em] uppercase text-[#002FA7]">Get in touch</div>
+        <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Talk to a human at BotNira.</h2>
+        <p className="text-neutral-700 mt-3 max-w-2xl">
+          Have a question, want a custom demo, or curious if BotNira fits your business? Reach us directly — or drop your details and our team will follow up within one business day.
+        </p>
+
+        <div className="mt-10 grid md:grid-cols-[1fr_1.4fr] gap-6">
+          {/* Team contact card */}
+          <div className="border-2 border-black bg-white shadow-brutal p-7 flex flex-col gap-5" data-testid="contact-team-card">
+            <div>
+              <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-neutral-600">Team contact</div>
+              <h3 className="font-display font-black text-2xl tracking-tight mt-1">Reach us directly</h3>
+            </div>
+
+            <a
+              href="https://wa.me/15485773855"
+              target="_blank" rel="noreferrer"
+              data-testid="contact-whatsapp"
+              className="flex items-center gap-3 border-2 border-black p-4 hover-lift bg-[#25D366]/10"
+            >
+              <div className="w-11 h-11 border-2 border-black bg-[#25D366] flex items-center justify-center shrink-0">
+                <MessageSquare size={20} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold tracking-widest uppercase text-neutral-600">WhatsApp</div>
+                <div className="font-display font-black text-lg">+1 (548) 577 3855</div>
+                <div className="text-xs text-neutral-600">Fastest — usually replies within minutes</div>
+              </div>
+            </a>
+
+            <a
+              href="mailto:kamal@botnira.com"
+              data-testid="contact-email"
+              className="flex items-center gap-3 border-2 border-black p-4 hover-lift bg-white"
+            >
+              <div className="w-11 h-11 border-2 border-black bg-[#002FA7] text-white flex items-center justify-center shrink-0">
+                <Mail size={20} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold tracking-widest uppercase text-neutral-600">Email</div>
+                <div className="font-display font-black text-lg break-all">kamal@botnira.com</div>
+                <div className="text-xs text-neutral-600">For partnerships, demos & detailed questions</div>
+              </div>
+            </a>
+
+            <div className="mt-auto pt-3 text-xs font-mono text-neutral-500 leading-relaxed">
+              Hours: Mon–Sat 9am–7pm (ET) · Outside hours, BotNira itself answers — try the chat widget bottom-right.
+            </div>
+          </div>
+
+          {/* Inquiry form */}
+          <form
+            onSubmit={submit}
+            data-testid="contact-form"
+            className="border-2 border-black bg-white shadow-brutal p-7 space-y-4"
+          >
+            <div>
+              <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-neutral-600">Send us a message</div>
+              <h3 className="font-display font-black text-2xl tracking-tight mt-1">Tell us about your business</h3>
+              {done && (
+                <div className="mt-4 border-2 border-black bg-green-100 p-3 text-sm font-bold" data-testid="contact-success">
+                  ✓ Thanks! We got your inquiry — we'll be in touch within one business day.
+                </div>
+              )}
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3">
+              <input
+                required
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="Your name *"
+                data-testid="contact-name"
+                className="border-2 border-black px-3 py-2 w-full"
+              />
+              <input
+                value={form.business_name}
+                onChange={(e) => setForm((f) => ({ ...f, business_name: e.target.value }))}
+                placeholder="Business name"
+                data-testid="contact-business"
+                className="border-2 border-black px-3 py-2 w-full"
+              />
+            </div>
+            <div className="grid md:grid-cols-2 gap-3">
+              <input
+                required
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                placeholder="Email address *"
+                data-testid="contact-email-input"
+                className="border-2 border-black px-3 py-2 w-full"
+              />
+              <input
+                type="tel"
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                placeholder="Mobile number"
+                data-testid="contact-phone"
+                className="border-2 border-black px-3 py-2 w-full font-mono"
+              />
+            </div>
+            <textarea
+              required
+              rows={5}
+              value={form.message}
+              onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
+              placeholder="Tell us what you'd like BotNira to handle for you — receptionist, bookings, after-hours, lead capture… *"
+              data-testid="contact-message"
+              className="border-2 border-black px-3 py-2 w-full"
+            />
+            {/* Honeypot — hidden from humans, bots will fill it */}
+            <input
+              type="text"
+              name="website"
+              tabIndex={-1}
+              autoComplete="off"
+              value={form.website}
+              onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))}
+              style={{ position: "absolute", left: "-10000px", height: 0, width: 0, opacity: 0 }}
+              aria-hidden="true"
+            />
+            <button
+              type="submit"
+              disabled={submitting}
+              data-testid="contact-submit"
+              className="border-2 border-black px-6 py-3 font-bold bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-60"
+            >
+              {submitting ? "Sending…" : "Send inquiry →"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 const Footer = () => (
   <footer className="bg-black text-white" data-testid="landing-footer">
     <div className="max-w-7xl mx-auto px-6 py-12 grid md:grid-cols-4 gap-8">
@@ -571,6 +744,7 @@ const Footer = () => (
           <li><a href="#channels" className="hover:underline">Channels</a></li>
           <li><a href="#pricing" className="hover:underline">Pricing</a></li>
           <li><a href="#faq" className="hover:underline">FAQ</a></li>
+          <li><a href="#contact" className="hover:underline">Contact</a></li>
           <li><a href="#try" className="hover:underline">Try live</a></li>
         </ul>
       </div>
@@ -616,7 +790,7 @@ export default function Landing() {
   }, []);
   return (
     <div data-testid="landing-page">
-      <Nav /><Hero /><TryLive /><Channels /><TrustedBy /><Features /><UseCases /><MultiLanguage /><How /><Reviews /><Pricing /><FAQ /><Footer />
+      <Nav /><Hero /><TryLive /><Channels /><TrustedBy /><Features /><UseCases /><MultiLanguage /><How /><Reviews /><Pricing /><FAQ /><Contact /><Footer />
     </div>
   );
 }

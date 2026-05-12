@@ -192,7 +192,7 @@ function ListFormModal({ editing, form, setForm, onCancel, onSave }) {
 // ---------------------------------------------------------- prospect editor ---
 function ProspectEditModal({ prospect, onClose, onSaved }) {
   const [form, setForm] = useState({
-    email: prospect.email, name: prospect.name || "", company: prospect.company || "",
+    email: prospect.email, name: prospect.name || "", company: prospect.company || "", phone: prospect.phone || "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -216,7 +216,7 @@ function ProspectEditModal({ prospect, onClose, onSaved }) {
           <button onClick={onClose} className="border-2 border-black p-1"><X size={13} /></button>
         </div>
         <div className="p-5 space-y-3">
-          {["email", "name", "company"].map((k) => (
+          {["email", "name", "phone", "company"].map((k) => (
             <div key={k}>
               <label className="text-xs font-bold uppercase tracking-widest">{k}</label>
               <input
@@ -227,6 +227,12 @@ function ProspectEditModal({ prospect, onClose, onSaved }) {
               />
             </div>
           ))}
+          {prospect.notes && (
+            <div>
+              <label className="text-xs font-bold uppercase tracking-widest">Inquiry message</label>
+              <div className="mt-1 border-2 border-black bg-amber-50 p-3 text-xs whitespace-pre-wrap font-mono">{prospect.notes}</div>
+            </div>
+          )}
         </div>
         <div className="px-5 py-3 border-t-2 border-black flex justify-end gap-2 bg-neutral-50">
           <button onClick={onClose} className="border-2 border-black px-4 py-2 text-sm font-bold bg-white">Cancel</button>
@@ -390,8 +396,8 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
 
         {/* Table */}
         <div className="border-2 border-black bg-white shadow-brutal overflow-hidden">
-          <div className="grid grid-cols-[1fr_180px_180px_110px_90px] text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2">
-            <div>Email</div><div>Name</div><div>Company</div><div>Status</div><div className="text-right">Actions</div>
+          <div className="grid grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px] text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2">
+            <div>Email</div><div>Name</div><div>Phone</div><div>Company</div><div>Status</div><div className="text-right">Actions</div>
           </div>
           {loading ? (
             <div className="p-10 text-center text-sm text-neutral-500">Loading…</div>
@@ -403,7 +409,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
             data.items.map((p) => (
               <div key={p.id}
                    data-testid={`prospect-row-${p.email}`}
-                   className="grid grid-cols-[1fr_180px_180px_110px_90px] px-4 py-2.5 text-sm border-t border-black/10 items-center">
+                   className="grid grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px] px-4 py-2.5 text-sm border-t border-black/10 items-center">
                 <div className="font-mono text-xs truncate">
                   {p.email}
                   {(p.list_ids?.length || 0) > 1 && (
@@ -411,8 +417,14 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
                       ×{p.list_ids.length}
                     </span>
                   )}
+                  {p.source === "landing_inquiry" && (
+                    <span className="ml-1.5 text-[9px] font-bold bg-amber-200 border border-black px-1" title="Came from website Contact form">
+                      INQUIRY
+                    </span>
+                  )}
                 </div>
                 <div className="truncate">{p.name || "—"}</div>
+                <div className="font-mono text-xs truncate">{p.phone || "—"}</div>
                 <div className="truncate text-neutral-600">{p.company || "—"}</div>
                 <div>
                   <span className={`inline-block text-[10px] px-2 py-0.5 border border-black font-bold uppercase ${

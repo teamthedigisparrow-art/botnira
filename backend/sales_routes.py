@@ -98,6 +98,11 @@ def _norm_email(s: str) -> str:
     return (s or "").strip().lower()
 
 
+# Email of the BotNira-internal vendor that receives landing-page contact form
+# submissions. We funnel every public inquiry into THIS vendor's "Main list".
+_BOTNIRA_INTAKE_VENDOR_EMAIL = "kamal@thedigisparrow.com"
+
+
 # ---------------------------------------------------------------- access ---
 @router.get("/access")
 async def sales_access(user: dict = Depends(_s.require_vendor)):
@@ -233,6 +238,7 @@ class ProspectPatch(BaseModel):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     company: Optional[str] = None
+    phone: Optional[str] = None
 
 
 @router.get("/prospects")
@@ -329,6 +335,8 @@ async def update_prospect(pid: str, payload: ProspectPatch, user: dict = Depends
         updates["name"] = payload.name.strip()
     if payload.company is not None:
         updates["company"] = payload.company.strip()
+    if payload.phone is not None:
+        updates["phone"] = payload.phone.strip()
     await _s.db.sales_prospects.update_one({"id": pid, "vendor_id": vid}, {"$set": updates})
     refreshed = await _s.db.sales_prospects.find_one({"id": pid, "vendor_id": vid}, {"_id": 0})
     return {"prospect": refreshed}
@@ -763,6 +771,109 @@ async def unsubscribe_page(vendor_id: str, prospect_id: str):
     return HTMLResponse(content=body, status_code=200 if ok else 404)
 
 
+# ------------------------------------------------- public landing inquiry ---
+class InquiryIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    business_name: Optional[str] = Field("", max_length=160)
+    email: EmailStr
+    phone: Optional[str] = Field("", max_length=40)
+    message: str = Field(..., min_length=1, max_length=4000)
+    # Honeypot field — bots fill it, real humans never see it. Submissions
+    # with anything in this field are silently dropped.
+    website: Optional[str] = ""
+
+
+@router.post("/inquiry")
+async def submit_inquiry(payload: InquiryIn):
+    """Public endpoint (no auth) hit by the landing-page Contact Us form.
+    Every submission is funneled into BotNira's own internal Sales
+    Assistant pipeline (the exempt account's 'Main list') so the team
+    can run cold outreach against it later."""
+    # Spam honeypot — bots almost always fill hidden fields
+    if (payload.website or "").strip():
+        _s.logger.info("[inquiry] honeypot triggered, dropping submission")
+        return {"ok": True}  # lie politely so bots think they succeeded
+
+    # Resolve the internal intake vendor via the `users` collection.
+    # (The `vendors` collection stores the BUSINESS name; the login email
+    # lives on `users`.)
+    intake_user = await _s.db.users.find_one(
+        {"email": _BOTNIRA_INTAKE_VENDOR_EMAIL}, {"_id": 0, "vendor_id": 1}
+    )
+    vid = (intake_user or {}).get("vendor_id")
+    if not vid:
+        _s.logger.error("[inquiry] intake user %s not found", _BOTNIRA_INTAKE_VENDOR_EMAIL)
+        raise HTTPException(status_code=500, detail="Inquiry intake is unavailable. Please email us directly.")
+    list_id = await _ensure_default_list(vid)
+    em = _norm_email(payload.email)
+    if not _EMAIL_RE.match(em):
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    now = _s.now_iso()
+    # 1) Upsert the prospect (merge into Main list, dedupe by email)
+    existing = await _s.db.sales_prospects.find_one(
+        {"vendor_id": vid, "email": em}, {"_id": 0}
+    )
+    if existing:
+        update: Dict[str, Any] = {"updated_at": now}
+        if payload.name:
+            update["name"] = payload.name.strip()
+        if payload.business_name:
+            update["company"] = payload.business_name.strip()
+        if payload.phone:
+            update["phone"] = payload.phone.strip()
+        if payload.message:
+            update["notes"] = payload.message.strip()
+        if existing.get("status") != "active":
+            update["status"] = "active"
+        await _s.db.sales_prospects.update_one(
+            {"id": existing["id"]},
+            {"$set": update, "$addToSet": {"list_ids": list_id}},
+        )
+    else:
+        await _s.db.sales_prospects.insert_one({
+            "id": _s.new_id(),
+            "vendor_id": vid,
+            "email": em,
+            "name": (payload.name or "").strip(),
+            "company": (payload.business_name or "").strip(),
+            "phone": (payload.phone or "").strip(),
+            "notes": (payload.message or "").strip(),
+            "list_ids": [list_id],
+            "status": "active",
+            "source": "landing_inquiry",
+            "created_at": now,
+            "updated_at": now,
+        })
+
+    # 2) Log the full inquiry (so multiple submissions don't overwrite)
+    await _s.db.sales_inquiries.insert_one({
+        "id": _s.new_id(),
+        "vendor_id": vid,
+        "email": em,
+        "name": (payload.name or "").strip(),
+        "business_name": (payload.business_name or "").strip(),
+        "phone": (payload.phone or "").strip(),
+        "message": (payload.message or "").strip(),
+        "created_at": now,
+    })
+
+    _s.logger.info("[inquiry] new landing inquiry from %s (%s)", em, payload.name)
+    return {"ok": True}
+
+
+@router.get("/inquiries")
+async def list_inquiries(user: dict = Depends(_require_sales_vendor),
+                          limit: int = Query(200, ge=1, le=500)):
+    """Auth'd endpoint — BotNira's internal team uses this to review every
+    landing-page inquiry chronologically."""
+    cur = _s.db.sales_inquiries.find(
+        {"vendor_id": user["vendor_id"]}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit)
+    items = await cur.to_list(limit)
+    return {"items": items, "total": len(items)}
+
+
 # ---------------------------------------------------------------- sender ---
 def _wrap_html(body_html: str, unsubscribe_url: str, pixel_url: str) -> str:
     """Append a CASL-compliant unsubscribe footer + invisible tracking pixel.
@@ -1005,6 +1116,7 @@ async def _start_sales_sender():
         await _s.db.sales_campaign_recipients.create_index([("campaign_id", 1), ("status", 1)])
         await _s.db.sales_campaign_recipients.create_index([("vendor_id", 1), ("sent_at", -1)])
         await _s.db.sales_campaign_recipients.create_index([("vendor_id", 1), ("email", 1), ("sent_at", -1)])
+        await _s.db.sales_inquiries.create_index([("vendor_id", 1), ("created_at", -1)])
     except Exception as e:
         _s.logger.warning("[sales] index create warning: %s", e)
     # One-time migration for pre-list prospects
