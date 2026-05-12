@@ -1,5 +1,5 @@
 """BotNira - Multi-tenant AI Receptionist platform backend."""
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Response, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -1744,6 +1744,150 @@ async def whatsapp_register_phone(req: WhatsAppRegisterReq, user: dict = Depends
     logger.info("[wa register] phone %s registered for vendor %s",
                 wc["phone_number_id"], user["vendor_id"])
     return {"ok": True, "registered": True}
+
+
+# ----- WhatsApp Business Profile (vendor-facing, lives at Meta side) -------
+# Lets the vendor edit the public profile shown to their customers (About,
+# Description, Address, Email, Websites, Vertical, Profile picture). Meta
+# does NOT expose business-hours / greeting-message via Cloud API — those
+# remain in business.facebook.com.
+_WA_PROFILE_FIELDS = "about,address,description,email,vertical,websites,profile_picture_url,messaging_product"
+_WA_VERTICALS = {
+    "UNDEFINED", "OTHER", "AUTO", "BEAUTY", "APPAREL", "EDU",
+    "ENTERTAIN", "EVENT_PLAN", "FINANCE", "GROCERY", "GOVT",
+    "HOTEL", "HEALTH", "NONPROFIT", "PROF_SERVICES", "RETAIL",
+    "TRAVEL", "RESTAURANT", "NOT_A_BIZ",
+}
+
+
+async def _require_wa_conn(user: dict) -> dict:
+    wc = await db.whatsapp_connections.find_one({"vendor_id": user["vendor_id"]}, {"_id": 0})
+    if not wc:
+        raise HTTPException(status_code=404, detail="Connect WhatsApp first.")
+    return wc
+
+
+@api_router.get("/whatsapp/profile")
+async def whatsapp_profile_get(user: dict = Depends(require_vendor)):
+    wc = await _require_wa_conn(user)
+    token = wc.get("access_token") or META_SYSTEM_USER_TOKEN
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(
+            f"{GRAPH_BASE}/{wc['phone_number_id']}/whatsapp_business_profile",
+            params={"fields": _WA_PROFILE_FIELDS},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Meta returned {r.status_code}: {r.text[:200]}")
+    data = (r.json().get("data") or [{}])[0]
+    return {
+        "about": data.get("about") or "",
+        "address": data.get("address") or "",
+        "description": data.get("description") or "",
+        "email": data.get("email") or "",
+        "websites": data.get("websites") or [],
+        "vertical": data.get("vertical") or "UNDEFINED",
+        "profile_picture_url": data.get("profile_picture_url") or "",
+    }
+
+
+class WhatsAppProfilePatch(BaseModel):
+    about: Optional[str] = Field(None, max_length=139)
+    address: Optional[str] = Field(None, max_length=256)
+    description: Optional[str] = Field(None, max_length=512)
+    email: Optional[str] = Field(None, max_length=128)
+    websites: Optional[List[str]] = None
+    vertical: Optional[str] = None
+
+
+@api_router.patch("/whatsapp/profile")
+async def whatsapp_profile_patch(req: WhatsAppProfilePatch, user: dict = Depends(require_vendor)):
+    wc = await _require_wa_conn(user)
+    token = wc.get("access_token") or META_SYSTEM_USER_TOKEN
+    body: Dict[str, Any] = {"messaging_product": "whatsapp"}
+    if req.about is not None:
+        body["about"] = req.about.strip()
+    if req.address is not None:
+        body["address"] = req.address.strip()
+    if req.description is not None:
+        body["description"] = req.description.strip()
+    if req.email is not None:
+        body["email"] = req.email.strip()
+    if req.websites is not None:
+        # Meta accepts max 2 websites
+        body["websites"] = [w.strip() for w in req.websites if w and w.strip()][:2]
+    if req.vertical is not None:
+        v = req.vertical.upper().strip()
+        if v not in _WA_VERTICALS:
+            raise HTTPException(status_code=400, detail=f"Invalid vertical. Allowed: {sorted(_WA_VERTICALS)}")
+        body["vertical"] = v
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.post(
+            f"{GRAPH_BASE}/{wc['phone_number_id']}/whatsapp_business_profile",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=body,
+        )
+    if r.status_code >= 400:
+        try:
+            err = r.json().get("error", {})
+            msg = err.get("error_user_msg") or err.get("message") or r.text[:200]
+        except Exception:
+            msg = r.text[:200]
+        raise HTTPException(status_code=400, detail=f"Meta rejected the change: {msg}")
+    return {"ok": True}
+
+
+@api_router.post("/whatsapp/profile/photo")
+async def whatsapp_profile_photo(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_vendor),
+):
+    """Upload a profile picture to Meta's media API, then attach it to the
+    business profile. Meta accepts JPG/PNG up to 5 MB and recommends a
+    square image (640×640 minimum)."""
+    wc = await _require_wa_conn(user)
+    token = wc.get("access_token") or META_SYSTEM_USER_TOKEN
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image is too large (5 MB max).")
+    mime = file.content_type or "image/jpeg"
+    if mime not in ("image/jpeg", "image/png"):
+        raise HTTPException(status_code=400, detail="Use a JPG or PNG image.")
+
+    # 1) Upload to Meta media — returns a handle
+    async with httpx.AsyncClient(timeout=60) as c:
+        files = {
+            "file": (file.filename or "profile.jpg", raw, mime),
+        }
+        data = {"messaging_product": "whatsapp", "type": mime}
+        up = await c.post(
+            f"{GRAPH_BASE}/{wc['phone_number_id']}/media",
+            headers={"Authorization": f"Bearer {token}"},
+            data=data, files=files,
+        )
+    if up.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Meta media upload failed: {up.text[:200]}")
+    handle = up.json().get("id")
+    if not handle:
+        raise HTTPException(status_code=502, detail="Meta did not return a media handle.")
+
+    # 2) Attach to business profile
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.post(
+            f"{GRAPH_BASE}/{wc['phone_number_id']}/whatsapp_business_profile",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"messaging_product": "whatsapp", "profile_picture_handle": handle},
+        )
+    if r.status_code >= 400:
+        try:
+            err = r.json().get("error", {})
+            msg = err.get("error_user_msg") or err.get("message") or r.text[:200]
+        except Exception:
+            msg = r.text[:200]
+        raise HTTPException(status_code=400, detail=f"Couldn't apply profile picture: {msg}")
+    return {"ok": True, "media_handle": handle}
 
 
 class WhatsAppConnectReq(BaseModel):
