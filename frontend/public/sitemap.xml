@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!-- Core -->
+  <url><loc>https://botnira.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://botnira.com/#pricing</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://botnira.com/#contact</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/privacy</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://botnira.com/terms</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+
+  <!-- Search-intent landing pages -->
+  <url><loc>https://botnira.com/ai-sales-agent</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://botnira.com/ai-appointment-booking-software</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://botnira.com/ai-chatbot-for-immigration-consultants</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://botnira.com/replace-sales-team-with-ai</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://botnira.com/whatsapp-ai-assistant</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://botnira.com/24-7-ai-receptionist</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+
+  <!-- Industry use-case pages -->
+  <url><loc>https://botnira.com/use-case/dental</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/healthcare-clinic</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/salon</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/real-estate</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/restaurant</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/auto-repair</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/home-services</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://botnira.com/use-case/education</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+</urlset>

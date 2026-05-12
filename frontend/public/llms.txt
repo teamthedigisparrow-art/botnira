@@ -1,0 +1,45 @@
+# BotNira
+
+> BotNira is a multi-tenant AI receptionist & sales-assistant platform that answers business calls, WhatsApp messages, web chats, SMS and emails 24/7. It books appointments, qualifies leads, captures payments and runs outbound sales campaigns — in 90+ languages.
+
+BotNira is built for service businesses, clinics, salons, lawyers, immigration consultants, restaurants, hotels, agencies, real-estate teams, and B2B sales teams. The product unifies five customer channels (Voice / WhatsApp / Web chat / SMS / Email) into one inbox and one AI brain that learns the vendor's business from a short description and FAQs.
+
+Pricing starts at USD $49/month (Starter), $149/month (Growth — includes AI Sales Assistant) and $399/month (Pro — includes AI Sales Assistant). All plans include all five channels, with hard-stop usage limits so vendors never face surprise bills.
+
+Contact:
+- WhatsApp: +1 (548) 577 3855
+- Email: kamal@botnira.com
+- Web: https://botnira.com
+
+## Core product pages
+
+- [BotNira homepage](https://botnira.com/): Product overview, channels, pricing, live demo widget, FAQ, contact.
+- [Pricing](https://botnira.com/#pricing): All three plans (Starter, Growth, Pro) with feature matrix, voice-minute allowances and AI message limits.
+- [Contact](https://botnira.com/#contact): Inquiry form + WhatsApp + email for sales and partnerships.
+- [Privacy policy](https://botnira.com/privacy): How vendor + customer data is handled.
+- [Terms of service](https://botnira.com/terms): Subscription, fair-use and acceptable-use terms.
+
+## Search-intent landing pages
+
+- [AI Sales Agent](https://botnira.com/ai-sales-agent): How BotNira replaces SDR/BDR roles — outbound calls, inbound chat, lead qualification, demo booking.
+- [AI Appointment Booking Software](https://botnira.com/ai-appointment-booking-software): Automated multi-channel appointment booking with calendar sync, reminders and waitlist refills.
+- [AI Chatbot for Immigration Consultants](https://botnira.com/ai-chatbot-for-immigration-consultants): Multilingual lead qualification + paid-consult booking for RCICs and immigration law firms.
+- [Replace Sales Team with AI](https://botnira.com/replace-sales-team-with-ai): Cost comparison and migration playbook for replacing human SDRs with BotNira.
+- [WhatsApp AI Assistant](https://botnira.com/whatsapp-ai-assistant): Official WhatsApp Business Cloud API integration, multilingual replies, payments, embedded signup.
+- [24/7 AI Receptionist](https://botnira.com/24-7-ai-receptionist): Always-on phone/WhatsApp/email reception for SMBs, clinics, salons and service businesses.
+
+## Industry use-case pages
+
+- [Dental Clinics](https://botnira.com/use-case/dental)
+- [Healthcare Clinics & Doctors](https://botnira.com/use-case/healthcare-clinic)
+- [Beauty Salons & Spas](https://botnira.com/use-case/salon)
+- [Real Estate Agents](https://botnira.com/use-case/real-estate)
+- [Restaurants & Cafés](https://botnira.com/use-case/restaurant)
+- [Auto Repair & Service Centres](https://botnira.com/use-case/auto-repair)
+- [Home Services & Contractors](https://botnira.com/use-case/home-services)
+- [Education & Tutoring](https://botnira.com/use-case/education)
+
+## Optional
+
+- [Sitemap (XML)](https://botnira.com/sitemap.xml): Machine-readable index of all public pages.
+- [Brand assets](https://botnira.com/brand/): Logo files and brand-mark assets.

@@ -10,6 +10,8 @@ import ForgotPassword from "./pages/ForgotPassword";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import UseCasePage from "./pages/UseCasePage";
+import SeoLandingPage from "./pages/SeoLandingPage";
+import { SEO_PAGES } from "./data/seoPages";
 import VendorLayout from "./layouts/VendorLayout";
 import AdminLayout from "./layouts/AdminLayout";
 import Overview from "./pages/vendor/Overview";
@@ -65,6 +67,9 @@ function App() {
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/use-case/:slug" element={<UseCasePage />} />
+            {SEO_PAGES.map((p) => (
+              <Route key={p.slug} path={p.path} element={<SeoLandingPage slug={p.slug} />} />
+            ))}
 
             <Route path="/app" element={<Protected role="vendor"><VendorLayout /></Protected>}>
               <Route index element={<Overview />} />
