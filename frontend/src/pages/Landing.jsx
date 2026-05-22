@@ -760,7 +760,7 @@ const Footer = () => (
     </div>
     <div className="border-t border-white/10">
       <div className="max-w-7xl mx-auto px-6 py-5 flex flex-wrap justify-between items-center gap-3 text-xs font-mono opacity-60">
-        <span>© 2026 BotNira · AI Receptionist &amp; AI Calling Software · All rights reserved.</span>
+        <span>© 2026 BotNira · AI Receptionist &amp; AI Calling Software · All rights reserved by THE DIGISPARROW, Hamilton, ON, Canada.</span>
         <span>Built for front desks that sleep.</span>
       </div>
     </div>

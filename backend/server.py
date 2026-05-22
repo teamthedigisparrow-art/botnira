@@ -40,11 +40,30 @@ if STRIPE_SECRET_KEY:
     _stripe.api_key = STRIPE_SECRET_KEY
 
 # Plans (recurring monthly subscriptions)
+# `channels` whitelists the customer-facing channels each plan unlocks.
+# Voice/SMS need a paid Twilio number → only included from Starter ↑.
 PLANS = {
-    "starter": {"name": "Starter", "price_usd": 49.0,  "voice_min": 100,  "messages": 2000},
-    "growth":  {"name": "Growth",  "price_usd": 149.0, "voice_min": 500,  "messages": 8000},
-    "pro":     {"name": "Pro",     "price_usd": 399.0, "voice_min": 1500, "messages": 25000},
+    "basic":   {"name": "Basic",   "price_usd": 29.0,  "voice_min": 0,    "messages": 1000,
+                "channels": ["whatsapp", "email", "web"]},
+    "starter": {"name": "Starter", "price_usd": 49.0,  "voice_min": 100,  "messages": 2000,
+                "channels": ["whatsapp", "email", "web", "voice", "sms"]},
+    "growth":  {"name": "Growth",  "price_usd": 149.0, "voice_min": 500,  "messages": 8000,
+                "channels": ["whatsapp", "email", "web", "voice", "sms"]},
+    "pro":     {"name": "Pro",     "price_usd": 399.0, "voice_min": 1500, "messages": 25000,
+                "channels": ["whatsapp", "email", "web", "voice", "sms"]},
 }
+
+
+def plan_allows_channel(plan_key: Optional[str], channel: str) -> bool:
+    """Returns True if the given subscription plan unlocks `channel`. Exempt /
+    None plans default to all-allowed."""
+    if not plan_key:
+        return True
+    cfg = PLANS.get(plan_key)
+    if not cfg:
+        return True
+    allowed = cfg.get("channels")
+    return (not allowed) or channel in allowed
 # Prepaid top-up packs (one-time purchase, never expire)
 TOPUPS = {
     "spark":   {"name": "Spark",   "price_usd": 125.0,  "voice_min": 100,  "messages": 1000},
