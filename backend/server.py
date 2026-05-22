@@ -2030,6 +2030,217 @@ async def whatsapp_test_send(req: WhatsAppTestReq, user: dict = Depends(require_
     return {"ok": True, "message_id": (resp.get("messages") or [{}])[0].get("id")}
 
 
+# --- WhatsApp message templates (24h+ session re-engagement) -----------------
+class WhatsAppTemplateCreateReq(BaseModel):
+    name: str
+    language: str = "en_US"
+    category: str = "MARKETING"  # MARKETING | UTILITY | AUTHENTICATION
+    body_text: str
+    body_example_vars: Optional[List[str]] = None  # sample values for {{1}}, {{2}}...
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+
+
+class WhatsAppTemplateSendReq(BaseModel):
+    to: str
+    template_name: str
+    language: str = "en_US"
+    body_vars: Optional[List[str]] = None  # ordered values for {{1}}, {{2}}...
+
+
+def _normalize_template_name(name: str) -> str:
+    """Meta requires lowercase, alphanumerics + underscores only, max 512 chars."""
+    n = re.sub(r"[^a-z0-9_]", "_", (name or "").lower().strip()).strip("_")
+    return n[:512]
+
+
+@api_router.get("/whatsapp/templates")
+async def whatsapp_templates_list(user: dict = Depends(require_vendor)):
+    """List all message templates registered on the vendor's WABA (live from Meta)."""
+    wc = await db.whatsapp_connections.find_one(
+        {"vendor_id": user["vendor_id"], "status": "active"}, {"_id": 0}
+    )
+    if not wc:
+        raise HTTPException(status_code=400, detail="WhatsApp not connected")
+    if not wc.get("waba_id"):
+        raise HTTPException(status_code=400, detail="WABA ID missing on connection")
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(
+                f"{GRAPH_BASE}/{wc['waba_id']}/message_templates",
+                headers={"Authorization": f"Bearer {wc['access_token']}"},
+                params={"limit": 100, "fields": "name,language,status,category,components,id"},
+            )
+            if r.status_code >= 400:
+                logger.warning("WA template list failed %s: %s", r.status_code, r.text[:300])
+                raise HTTPException(status_code=502, detail=f"Meta API error: {r.text[:200]}")
+            data = r.json()
+            return {"templates": data.get("data", [])}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("WA template list error")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@api_router.post("/whatsapp/templates")
+async def whatsapp_templates_create(
+    req: WhatsAppTemplateCreateReq, user: dict = Depends(require_vendor)
+):
+    """Submit a new template for Meta approval. Approval is typically minutes to a few hours."""
+    wc = await db.whatsapp_connections.find_one(
+        {"vendor_id": user["vendor_id"], "status": "active"}, {"_id": 0}
+    )
+    if not wc:
+        raise HTTPException(status_code=400, detail="WhatsApp not connected")
+    if not wc.get("waba_id"):
+        raise HTTPException(status_code=400, detail="WABA ID missing on connection")
+
+    cat = (req.category or "MARKETING").upper()
+    if cat not in {"MARKETING", "UTILITY", "AUTHENTICATION"}:
+        raise HTTPException(status_code=400, detail="category must be MARKETING, UTILITY, or AUTHENTICATION")
+    name = _normalize_template_name(req.name)
+    if not name:
+        raise HTTPException(status_code=400, detail="Template name is required (a-z, 0-9, _)")
+    if not (req.body_text and req.body_text.strip()):
+        raise HTTPException(status_code=400, detail="Body text is required")
+
+    components: List[dict] = []
+    if req.header_text and req.header_text.strip():
+        components.append({"type": "HEADER", "format": "TEXT", "text": req.header_text.strip()[:60]})
+
+    body_comp: dict = {"type": "BODY", "text": req.body_text.strip()[:1024]}
+    # Detect {{1}}..{{N}} placeholders and attach example values if provided
+    placeholders = sorted({int(m.group(1)) for m in re.finditer(r"\{\{\s*(\d+)\s*\}\}", req.body_text)})
+    if placeholders:
+        examples = req.body_example_vars or []
+        # Pad with safe defaults so Meta accepts the example
+        padded = list(examples) + [f"Sample {i}" for i in range(len(examples) + 1, len(placeholders) + 1)]
+        body_comp["example"] = {"body_text": [padded[: len(placeholders)]]}
+    components.append(body_comp)
+
+    if req.footer_text and req.footer_text.strip():
+        components.append({"type": "FOOTER", "text": req.footer_text.strip()[:60]})
+
+    payload = {
+        "name": name,
+        "language": req.language or "en_US",
+        "category": cat,
+        "components": components,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(
+                f"{GRAPH_BASE}/{wc['waba_id']}/message_templates",
+                headers={
+                    "Authorization": f"Bearer {wc['access_token']}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if r.status_code >= 400:
+                logger.warning("WA template create failed %s: %s", r.status_code, r.text[:400])
+                raise HTTPException(status_code=502, detail=f"Meta API error: {r.text[:300]}")
+            return {"ok": True, "template": r.json(), "submitted_name": name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("WA template create error")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@api_router.delete("/whatsapp/templates")
+async def whatsapp_templates_delete(
+    name: str, hsm_id: Optional[str] = None, user: dict = Depends(require_vendor)
+):
+    """Delete a template by name (and optional HSM/template id for disambiguation)."""
+    wc = await db.whatsapp_connections.find_one(
+        {"vendor_id": user["vendor_id"], "status": "active"}, {"_id": 0}
+    )
+    if not wc:
+        raise HTTPException(status_code=400, detail="WhatsApp not connected")
+    if not wc.get("waba_id"):
+        raise HTTPException(status_code=400, detail="WABA ID missing on connection")
+    params = {"name": name}
+    if hsm_id:
+        params["hsm_id"] = hsm_id
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.delete(
+                f"{GRAPH_BASE}/{wc['waba_id']}/message_templates",
+                headers={"Authorization": f"Bearer {wc['access_token']}"},
+                params=params,
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=502, detail=f"Meta API error: {r.text[:300]}")
+            return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("WA template delete error")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@api_router.post("/whatsapp/send-template")
+async def whatsapp_send_template(
+    req: WhatsAppTemplateSendReq, user: dict = Depends(require_vendor)
+):
+    """Send an approved template to a recipient. Use this to re-engage outside the 24h window."""
+    ok, reason = await _vendor_can_use_channel(user["vendor_id"], "whatsapp")
+    if not ok:
+        raise HTTPException(status_code=402, detail=reason)
+    wc = await db.whatsapp_connections.find_one(
+        {"vendor_id": user["vendor_id"], "status": "active"}, {"_id": 0}
+    )
+    if not wc:
+        raise HTTPException(status_code=400, detail="WhatsApp not connected")
+
+    to = (req.to or "").strip().lstrip("+")
+    if not to:
+        raise HTTPException(status_code=400, detail="Recipient phone is required")
+
+    template_payload: dict = {
+        "name": req.template_name,
+        "language": {"code": req.language or "en_US"},
+    }
+    if req.body_vars:
+        template_payload["components"] = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": str(v)} for v in req.body_vars],
+        }]
+
+    body = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "template",
+        "template": template_payload,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(
+                f"{GRAPH_BASE}/{wc['phone_number_id']}/messages",
+                headers={
+                    "Authorization": f"Bearer {wc['access_token']}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            if r.status_code >= 400:
+                logger.warning("WA template send failed %s: %s", r.status_code, r.text[:400])
+                raise HTTPException(status_code=502, detail=f"Meta API error: {r.text[:300]}")
+            resp = r.json()
+            mid = (resp.get("messages") or [{}])[0].get("id")
+            # Decrement message quota
+            await _decrement_message_balance(user["vendor_id"])
+            return {"ok": True, "message_id": mid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("WA template send error")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 # --- Meta webhook: GET verifies, POST receives messages ----------------------
 from fastapi import Request as _FastAPIRequest
 from fastapi.responses import PlainTextResponse

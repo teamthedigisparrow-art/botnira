@@ -10,6 +10,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButton";
 import ConnectVoicePanel from "../../components/botnira/ConnectVoicePanel";
 import WhatsAppProfilePanel from "../../components/botnira/WhatsAppProfilePanel";
+import WhatsAppTemplatesPanel from "../../components/botnira/WhatsAppTemplatesPanel";
 import ConnectEmailPanel from "../../components/botnira/ConnectEmailPanel";
 
 const META = {
@@ -390,6 +391,9 @@ export default function Channels() {
 
             {/* WhatsApp Business Profile editor — only once number is fully live */}
             {waPhoneStatus?.registered && <WhatsAppProfilePanel />}
+
+            {/* WhatsApp Message Templates manager — only once number is fully live */}
+            {waPhoneStatus?.registered && <WhatsAppTemplatesPanel />}
 
             <div className="border-2 border-black p-4 text-sm">
               <div className="font-display font-bold mb-1">Share your WhatsApp with customers</div>
