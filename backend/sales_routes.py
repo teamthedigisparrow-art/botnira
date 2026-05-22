@@ -33,6 +33,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from typing import Optional, List, Dict, Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Query
 from fastapi.responses import Response, HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -46,6 +47,9 @@ router = APIRouter()
 SEND_DELAY_MIN_SEC = 5 * 60      # 5 minutes
 SEND_DELAY_MAX_SEC = 45 * 60     # 45 minutes
 SCHEDULER_TICK_SEC = 20          # how often the loop wakes
+# WhatsApp bulk template pacing (faster than email — WA is conversational by nature)
+WA_SEND_DELAY_MIN_SEC = 30       # 30 seconds
+WA_SEND_DELAY_MAX_SEC = 180      # 3 minutes
 GIF_1X1 = bytes.fromhex("47494638396101000100800000ffffff00000021f90401000000002c00000000010001000002024401003b")
 
 # A 1×1 transparent GIF response (no body, no caching) used as the open pixel.
@@ -107,7 +111,24 @@ _BOTNIRA_INTAKE_VENDOR_EMAIL = "kamal@thedigisparrow.com"
 @router.get("/access")
 async def sales_access(user: dict = Depends(_s.require_vendor)):
     vendor = await _s.db.vendors.find_one({"id": user["vendor_id"]}, {"_id": 0})
-    return _sales_enabled_for(vendor)
+    base = _sales_enabled_for(vendor)
+    # Also surface per-channel connection state so the UI can disable
+    # Email / WhatsApp / Calls tabs that lack a backing integration.
+    email_conn = await _s.db.email_connections.find_one(
+        {"vendor_id": user["vendor_id"]}, {"_id": 0, "enabled": 1, "email_address": 1}
+    )
+    wa_conn = await _s.db.whatsapp_connections.find_one(
+        {"vendor_id": user["vendor_id"], "status": "active"},
+        {"_id": 0, "waba_id": 1, "phone_number_id": 1, "display_phone_number": 1},
+    )
+    base["channels"] = {
+        "email": {"connected": bool(email_conn and email_conn.get("enabled")),
+                  "from": (email_conn or {}).get("email_address") or ""},
+        "whatsapp": {"connected": bool(wa_conn),
+                     "display_phone_number": (wa_conn or {}).get("display_phone_number") or ""},
+        "calls": {"connected": False, "coming_soon": True},
+    }
+    return base
 
 
 # ---------------------------------------------------------------- lists ---
@@ -1063,6 +1084,402 @@ async def _process_one_campaign(camp: dict):
         )
 
 
+# ============================================================================
+# WhatsApp BULK CAMPAIGNS — uses the vendor's connected Meta Cloud API number
+# to broadcast an APPROVED message template to prospect lists with anti-spam
+# pacing. Reuses sales_prospects + sales_prospect_lists for targeting.
+# ============================================================================
+
+PHONE_DIGITS_RE = re.compile(r"[^\d]")
+
+
+def _normalize_phone(raw: str) -> str:
+    """E.164-ish — keep digits only (Meta auto-prefixes country code from the
+    BSP number context). Returns '' if no digits."""
+    if not raw:
+        return ""
+    digits = PHONE_DIGITS_RE.sub("", raw)
+    return digits
+
+
+def _replace_merge_tags_wa(s: str, prospect: dict) -> str:
+    """Same tokens as email merge so users can reuse mental model."""
+    if not s:
+        return s
+    name = prospect.get("name") or ""
+    first = (name.split() or [""])[0]
+    return (
+        s.replace("{{name}}", name)
+         .replace("{{first_name}}", first)
+         .replace("{{company}}", prospect.get("company") or "")
+         .replace("{{email}}", prospect.get("email") or "")
+         .replace("{{phone}}", prospect.get("phone") or "")
+    )
+
+
+class WaCampaignVarSpec(BaseModel):
+    """How to fill a single template body variable for each recipient."""
+    kind: str = Field(..., description="'literal' or 'token'")
+    value: str  # for 'literal' — text; for 'token' — '{{first_name}}' etc.
+
+
+class WaCampaignIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    template_name: str = Field(..., min_length=1, max_length=512)
+    language: str = Field("en_US", max_length=16)
+    body_var_specs: List[WaCampaignVarSpec] = Field(default_factory=list)
+    list_ids: List[str] = Field(default_factory=list,
+                                 description="Target list IDs. Empty = all lists.")
+    start_now: bool = True
+    scheduled_at: Optional[str] = None
+
+
+@router.post("/wa/campaigns")
+async def wa_create_campaign(payload: WaCampaignIn, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    # Must have an active WhatsApp connection
+    wa = await _s.db.whatsapp_connections.find_one(
+        {"vendor_id": vid, "status": "active"}, {"_id": 0}
+    )
+    if not wa:
+        raise HTTPException(
+            status_code=400,
+            detail="Connect your WhatsApp number in Channels → WhatsApp before launching a campaign.",
+        )
+    # Channel access gate (Basic plan includes WhatsApp; Voice-locked plans are fine here)
+    ok, reason = await _s._vendor_can_use_channel(vid, "whatsapp")
+    if not ok:
+        raise HTTPException(status_code=402, detail=reason)
+
+    # Snapshot prospects (must have a phone)
+    prospect_filter: Dict[str, Any] = {
+        "vendor_id": vid, "status": "active",
+        "phone": {"$exists": True, "$nin": ["", None]},
+    }
+    target_list_ids = list(dict.fromkeys(payload.list_ids or []))
+    if target_list_ids:
+        valid_lists = await _s.db.sales_prospect_lists.count_documents(
+            {"vendor_id": vid, "id": {"$in": target_list_ids}}
+        )
+        if valid_lists != len(target_list_ids):
+            raise HTTPException(status_code=400, detail="One or more selected lists don't exist")
+        prospect_filter["list_ids"] = {"$in": target_list_ids}
+
+    prospects: List[dict] = []
+    seen_phones = set()
+    cur = _s.db.sales_prospects.find(prospect_filter, {"_id": 0}).sort("created_at", 1)
+    async for p in cur:
+        ph = _normalize_phone(p.get("phone", ""))
+        if not ph or ph in seen_phones:
+            continue
+        seen_phones.add(ph)
+        p["_phone_e164"] = ph
+        prospects.append(p)
+    if not prospects:
+        raise HTTPException(
+            status_code=400,
+            detail="No active prospects with a phone number in the selected list(s). Add a phone column to your CSV or pick another list.",
+        )
+
+    cid = _s.new_id()
+    now = _s.now_iso()
+    if payload.start_now:
+        next_send_at = now
+        status = "sending"
+        started_at = now
+    else:
+        if not payload.scheduled_at:
+            raise HTTPException(status_code=400, detail="scheduled_at required when start_now=False")
+        next_send_at = payload.scheduled_at
+        status = "scheduled"
+        started_at = None
+
+    campaign = {
+        "id": cid,
+        "vendor_id": vid,
+        "name": payload.name.strip(),
+        "template_name": payload.template_name.strip(),
+        "language": payload.language,
+        "body_var_specs": [v.model_dump() for v in payload.body_var_specs],
+        "list_ids": target_list_ids,
+        "from_phone": wa.get("display_phone_number") or "",
+        "phone_number_id": wa["phone_number_id"],
+        "status": status,
+        "total": len(prospects),
+        "sent_count": 0,
+        "failed_count": 0,
+        "next_send_at": next_send_at,
+        "started_at": started_at,
+        "completed_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await _s.db.sales_wa_campaigns.insert_one(campaign.copy())
+
+    roster = [{
+        "id": _s.new_id(),
+        "campaign_id": cid,
+        "vendor_id": vid,
+        "prospect_id": p["id"],
+        "phone": p["_phone_e164"],
+        "name": p.get("name", ""),
+        "company": p.get("company", ""),
+        "email": p.get("email", ""),
+        "status": "pending",
+        "sent_at": None,
+        "message_id": None,
+        "error": None,
+        "created_at": now,
+    } for p in prospects]
+    await _s.db.sales_wa_campaign_recipients.insert_many([r.copy() for r in roster])
+    return {"campaign": campaign}
+
+
+@router.get("/wa/campaigns")
+async def wa_list_campaigns(user: dict = Depends(_require_sales_vendor)):
+    cur = _s.db.sales_wa_campaigns.find(
+        {"vendor_id": user["vendor_id"]}, {"_id": 0}
+    ).sort("created_at", -1).limit(200)
+    return {"campaigns": await cur.to_list(200)}
+
+
+@router.get("/wa/campaigns/{cid}")
+async def wa_get_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
+    c = await _s.db.sales_wa_campaigns.find_one(
+        {"id": cid, "vendor_id": user["vendor_id"]}, {"_id": 0}
+    )
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    recipients = await _s.db.sales_wa_campaign_recipients.find(
+        {"campaign_id": cid}, {"_id": 0}
+    ).sort("created_at", 1).to_list(5000)
+    return {"campaign": c, "recipients": recipients}
+
+
+@router.post("/wa/campaigns/{cid}/pause")
+async def wa_pause_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
+    r = await _s.db.sales_wa_campaigns.update_one(
+        {"id": cid, "vendor_id": user["vendor_id"], "status": {"$in": ["sending", "scheduled"]}},
+        {"$set": {"status": "paused", "updated_at": _s.now_iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Campaign cannot be paused in its current state")
+    return {"ok": True}
+
+
+@router.post("/wa/campaigns/{cid}/resume")
+async def wa_resume_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
+    r = await _s.db.sales_wa_campaigns.update_one(
+        {"id": cid, "vendor_id": user["vendor_id"], "status": "paused"},
+        {"$set": {"status": "sending", "next_send_at": _s.now_iso(), "updated_at": _s.now_iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Only paused campaigns can be resumed")
+    return {"ok": True}
+
+
+@router.post("/wa/campaigns/{cid}/cancel")
+async def wa_cancel_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
+    r = await _s.db.sales_wa_campaigns.update_one(
+        {"id": cid, "vendor_id": user["vendor_id"], "status": {"$in": ["sending", "scheduled", "paused"]}},
+        {"$set": {"status": "canceled", "completed_at": _s.now_iso(),
+                   "next_send_at": None, "updated_at": _s.now_iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Campaign cannot be canceled in its current state")
+    return {"ok": True}
+
+
+@router.get("/wa/analytics")
+async def wa_analytics(user: dict = Depends(_require_sales_vendor),
+                       days: int = Query(7, ge=1, le=365)):
+    """KPI cards + daily series for the WhatsApp campaigns module."""
+    vid = user["vendor_id"]
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since_iso = since.isoformat()
+    pipe_total = [
+        {"$match": {"vendor_id": vid}},
+        {"$group": {"_id": None,
+                     "sent": {"$sum": {"$cond": [{"$eq": ["$status", "sent"]}, 1, 0]}},
+                     "failed": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}},
+                     "pending": {"$sum": {"$cond": [{"$eq": ["$status", "pending"]}, 1, 0]}}}},
+    ]
+    totals = await _s.db.sales_wa_campaign_recipients.aggregate(pipe_total).to_list(1)
+    kpi = totals[0] if totals else {"sent": 0, "failed": 0, "pending": 0}
+    kpi.pop("_id", None)
+
+    # Daily breakdown by sent date
+    pipe_daily = [
+        {"$match": {"vendor_id": vid, "sent_at": {"$gte": since_iso}, "status": {"$in": ["sent", "failed"]}}},
+        {"$addFields": {"day": {"$substr": ["$sent_at", 0, 10]}}},
+        {"$group": {"_id": "$day",
+                     "sent": {"$sum": {"$cond": [{"$eq": ["$status", "sent"]}, 1, 0]}},
+                     "failed": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}}}},
+        {"$sort": {"_id": 1}},
+    ]
+    daily = await _s.db.sales_wa_campaign_recipients.aggregate(pipe_daily).to_list(500)
+    daily_clean = [{"day": d["_id"], "sent": d.get("sent", 0), "failed": d.get("failed", 0)} for d in daily]
+    return {"totals": kpi, "daily": daily_clean, "days": days}
+
+
+# ----------------------------------------- WA sender (one-at-a-time per campaign) ---
+async def _wa_send_one(camp: dict, rec: dict, wa_conn: dict, prospect: dict) -> dict:
+    """Calls Meta Graph API to send the approved template. Returns
+    {ok: bool, message_id?: str, error?: str}."""
+    body_specs = camp.get("body_var_specs") or []
+    # Resolve each spec into a final string value for this recipient
+    resolved_vars: List[str] = []
+    for spec in body_specs:
+        kind = spec.get("kind", "literal")
+        raw = spec.get("value", "")
+        if kind == "token":
+            resolved = _replace_merge_tags_wa(raw, prospect)
+        else:
+            resolved = raw
+        # Meta limits template body var to 1024 chars; trim and replace newlines
+        resolved = (resolved or "").replace("\n", " ").strip()[:1024] or " "
+        resolved_vars.append(resolved)
+
+    template_payload: dict = {
+        "name": camp["template_name"],
+        "language": {"code": camp.get("language") or "en_US"},
+    }
+    if resolved_vars:
+        template_payload["components"] = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": v} for v in resolved_vars],
+        }]
+
+    body = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": rec["phone"],
+        "type": "template",
+        "template": template_payload,
+    }
+    url = f"{_s.GRAPH_BASE}/{wa_conn['phone_number_id']}/messages"
+    headers = {"Authorization": f"Bearer {wa_conn['access_token']}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(url, headers=headers, json=body)
+            if r.status_code >= 400:
+                return {"ok": False, "error": r.text[:300]}
+            data = r.json()
+            mid = (data.get("messages") or [{}])[0].get("id")
+            return {"ok": True, "message_id": mid}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+async def _process_one_wa_campaign(camp: dict):
+    """Send the next pending recipient for this WA campaign."""
+    cid = camp["id"]
+    vid = camp["vendor_id"]
+    # Pick the oldest pending recipient
+    rec = await _s.db.sales_wa_campaign_recipients.find_one(
+        {"campaign_id": cid, "status": "pending"}, {"_id": 0}, sort=[("created_at", 1)]
+    )
+    if not rec:
+        # Nothing left → mark complete
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid},
+            {"$set": {"status": "completed", "completed_at": _s.now_iso(),
+                       "next_send_at": None, "updated_at": _s.now_iso()}},
+        )
+        return
+    # Channel gate (covers messages_balance exhaustion mid-campaign)
+    ok, reason = await _s._vendor_can_use_channel(vid, "whatsapp")
+    if not ok:
+        _s.logger.warning("[sales-wa] vendor %s gated mid-campaign: %s", vid, reason)
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid}, {"$set": {"status": "paused", "updated_at": _s.now_iso()}}
+        )
+        return
+    wa_conn = await _s.db.whatsapp_connections.find_one(
+        {"vendor_id": vid, "status": "active"}, {"_id": 0}
+    )
+    if not wa_conn:
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid}, {"$set": {"status": "paused", "updated_at": _s.now_iso()}}
+        )
+        return
+    prospect = await _s.db.sales_prospects.find_one(
+        {"id": rec["prospect_id"]}, {"_id": 0}
+    ) or {"name": rec.get("name", ""), "company": rec.get("company", ""), "email": rec.get("email", ""), "phone": rec.get("phone", "")}
+
+    result = await _wa_send_one(camp, rec, wa_conn, prospect)
+    if result.get("ok"):
+        await _s.db.sales_wa_campaign_recipients.update_one(
+            {"id": rec["id"]},
+            {"$set": {"status": "sent", "sent_at": _s.now_iso(),
+                       "message_id": result.get("message_id")}},
+        )
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid}, {"$inc": {"sent_count": 1}, "$set": {"updated_at": _s.now_iso()}}
+        )
+        # Decrement vendor's message balance (exempt skips inside helper)
+        try:
+            await _s._decrement_message_balance(vid)
+        except Exception:
+            pass
+    else:
+        await _s.db.sales_wa_campaign_recipients.update_one(
+            {"id": rec["id"]},
+            {"$set": {"status": "failed", "sent_at": _s.now_iso(),
+                       "error": result.get("error", "send failed")}},
+        )
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid}, {"$inc": {"failed_count": 1}, "$set": {"updated_at": _s.now_iso()}}
+        )
+
+    # Schedule next slot
+    remaining = await _s.db.sales_wa_campaign_recipients.count_documents(
+        {"campaign_id": cid, "status": "pending"}
+    )
+    if remaining == 0:
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid},
+            {"$set": {"status": "completed", "completed_at": _s.now_iso(),
+                       "next_send_at": None, "updated_at": _s.now_iso()}},
+        )
+    else:
+        delay = random.randint(WA_SEND_DELAY_MIN_SEC, WA_SEND_DELAY_MAX_SEC)
+        next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+        await _s.db.sales_wa_campaigns.update_one(
+            {"id": cid}, {"$set": {"next_send_at": next_at, "updated_at": _s.now_iso()}}
+        )
+
+
+async def _sales_wa_sender_loop():
+    """Wakes every SCHEDULER_TICK_SEC and processes any WA campaign whose
+    next_send_at has passed."""
+    _s.logger.info("[sales-wa] sender loop started")
+    while True:
+        try:
+            now_iso = _s.now_iso()
+            cur = _s.db.sales_wa_campaigns.find(
+                {"status": {"$in": ["sending", "scheduled"]},
+                 "next_send_at": {"$lte": now_iso}},
+                {"_id": 0},
+            ).limit(50)
+            campaigns = await cur.to_list(50)
+            for c in campaigns:
+                if c.get("status") == "scheduled":
+                    await _s.db.sales_wa_campaigns.update_one(
+                        {"id": c["id"]},
+                        {"$set": {"status": "sending", "started_at": _s.now_iso(),
+                                   "updated_at": _s.now_iso()}},
+                    )
+                    c["status"] = "sending"
+                try:
+                    await _process_one_wa_campaign(c)
+                except Exception as e:
+                    _s.logger.exception("[sales-wa] campaign %s failed: %s", c.get("id"), e)
+        except Exception as e:
+            _s.logger.exception("[sales-wa] loop tick error: %s", e)
+        await asyncio.sleep(SCHEDULER_TICK_SEC)
+
+
 async def _sales_sender_loop():
     """Wakes every SCHEDULER_TICK_SEC and processes any campaign whose
     next_send_at has passed."""
@@ -1105,6 +1522,7 @@ async def _start_sales_sender():
         return
     _SENDER_TASK_STARTED = True
     asyncio.create_task(_sales_sender_loop())
+    asyncio.create_task(_sales_wa_sender_loop())
     # Ensure useful indexes
     try:
         await _s.db.sales_prospects.create_index([("vendor_id", 1), ("email", 1)], unique=True)
@@ -1117,6 +1535,11 @@ async def _start_sales_sender():
         await _s.db.sales_campaign_recipients.create_index([("vendor_id", 1), ("sent_at", -1)])
         await _s.db.sales_campaign_recipients.create_index([("vendor_id", 1), ("email", 1), ("sent_at", -1)])
         await _s.db.sales_inquiries.create_index([("vendor_id", 1), ("created_at", -1)])
+        # WhatsApp bulk campaign indexes
+        await _s.db.sales_wa_campaigns.create_index([("vendor_id", 1), ("created_at", -1)])
+        await _s.db.sales_wa_campaigns.create_index([("status", 1), ("next_send_at", 1)])
+        await _s.db.sales_wa_campaign_recipients.create_index([("campaign_id", 1), ("status", 1)])
+        await _s.db.sales_wa_campaign_recipients.create_index([("vendor_id", 1), ("sent_at", -1)])
     except Exception as e:
         _s.logger.warning("[sales] index create warning: %s", e)
     # One-time migration for pre-list prospects

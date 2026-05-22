@@ -5,13 +5,14 @@ import { toast } from "sonner";
 import {
   Megaphone, Mail, Users, BarChart3, Upload, Sparkles, Lock,
   Play, Pause, X, Trash2, ShieldCheck, Clock, Check, AlertTriangle,
-  Eye, Send, Plus, Pencil, ListPlus, Folder,
+  Eye, Send, Plus, Pencil, ListPlus, Folder, MessageCircle, Phone,
 } from "lucide-react";
 
 const TABS = [
   { id: "prospects", label: "Prospects", icon: Users },
-  { id: "campaigns", label: "Campaigns", icon: Mail },
-  { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "emails", label: "Emails", icon: Mail },
+  { id: "whatsapp", label: "WhatsApp", icon: MessageCircle },
+  { id: "calls", label: "Calls", icon: Phone, comingSoon: true },
 ];
 
 const STATUS_BADGE = {
@@ -940,6 +941,532 @@ function BigStat({ label, value, testid, highlight }) {
   );
 }
 
+// ============================================================================
+// WhatsApp BULK CAMPAIGNS — sends an approved WhatsApp template to prospects
+// across selected lists. Same prospect/list pool as email campaigns.
+// ============================================================================
+const WA_STATUS_BADGE = STATUS_BADGE;
+
+function WaComposer({ lists, onClose, onLaunched }) {
+  const [templates, setTemplates] = useState([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [form, setForm] = useState({
+    name: "",
+    template_name: "",
+    language: "en_US",
+    list_ids: [],
+    body_var_specs: [],
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setTemplatesLoading(true);
+    api.get("/whatsapp/templates")
+      .then(({ data }) => setTemplates(data.templates || []))
+      .catch((e) => toast.error(e?.response?.data?.detail || "Failed to load WhatsApp templates"))
+      .finally(() => setTemplatesLoading(false));
+  }, []);
+
+  const approved = useMemo(() => templates.filter((t) => t.status === "APPROVED"), [templates]);
+  const selectedTpl = useMemo(
+    () => approved.find((t) => t.name === form.template_name) || null,
+    [approved, form.template_name],
+  );
+  const bodyText = useMemo(() => {
+    const b = (selectedTpl?.components || []).find((c) => c.type === "BODY");
+    return b?.text || "";
+  }, [selectedTpl]);
+  const placeholderCount = useMemo(() => {
+    const matches = (bodyText || "").match(/\{\{\s*(\d+)\s*\}\}/g) || [];
+    const nums = matches.map((m) => parseInt(m.replace(/[^\d]/g, ""), 10)).filter((n) => !Number.isNaN(n));
+    return nums.length === 0 ? 0 : Math.max(...nums);
+  }, [bodyText]);
+
+  // Whenever template changes → reset body_var_specs to defaults
+  useEffect(() => {
+    setForm((f) => ({
+      ...f,
+      language: selectedTpl?.language || f.language,
+      body_var_specs: new Array(placeholderCount).fill(null).map(() => ({ kind: "literal", value: "" })),
+    }));
+    // eslint-disable-next-line
+  }, [form.template_name]);
+
+  const toggleList = (lid) => {
+    setForm((f) => ({
+      ...f,
+      list_ids: f.list_ids.includes(lid) ? f.list_ids.filter((x) => x !== lid) : [...f.list_ids, lid],
+    }));
+  };
+  const setVarSpec = (idx, patch) => {
+    setForm((f) => {
+      const next = [...f.body_var_specs];
+      next[idx] = { ...next[idx], ...patch };
+      return { ...f, body_var_specs: next };
+    });
+  };
+
+  const targetCount = useMemo(() => {
+    if (form.list_ids.length === 0) return lists.reduce((s, l) => s + (l.counts?.active_with_phone || l.counts?.active || 0), 0);
+    return lists.filter((l) => form.list_ids.includes(l.id))
+      .reduce((s, l) => s + (l.counts?.active_with_phone || l.counts?.active || 0), 0);
+  }, [form.list_ids, lists]);
+
+  const submit = async () => {
+    if (!form.name.trim()) return toast.error("Campaign name required");
+    if (!form.template_name) return toast.error("Pick an approved template");
+    if (placeholderCount > 0) {
+      for (let i = 0; i < placeholderCount; i++) {
+        if (!form.body_var_specs[i]?.value) {
+          return toast.error(`Fill mapping for variable {{${i + 1}}}`);
+        }
+      }
+    }
+    setSubmitting(true);
+    try {
+      const payload = {
+        name: form.name.trim(),
+        template_name: form.template_name,
+        language: form.language || "en_US",
+        list_ids: form.list_ids,
+        body_var_specs: form.body_var_specs.slice(0, placeholderCount),
+        start_now: true,
+      };
+      const { data } = await api.post("/sales/wa/campaigns", payload);
+      toast.success(`Campaign launched — ${data.campaign.total} recipients queued`);
+      onLaunched();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Launch failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      data-testid="wa-composer-modal"
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white border-2 border-black shadow-brutal w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b-2 border-black px-5 py-3 flex items-center justify-between bg-[#002FA7] text-white">
+          <div className="font-display font-bold text-lg flex items-center gap-2">
+            <MessageCircle size={18} /> New WhatsApp campaign
+          </div>
+          <button onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="overflow-y-auto px-5 py-4 space-y-4">
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-neutral-600">Campaign name (internal)</label>
+            <input
+              data-testid="wa-composer-name"
+              className="w-full border-2 border-black px-3 py-2 text-sm"
+              placeholder="Spring re-engagement"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-neutral-600">Approved template</label>
+            {templatesLoading ? (
+              <div className="text-sm text-neutral-500 mt-1">Loading templates…</div>
+            ) : approved.length === 0 ? (
+              <div className="border-2 border-amber-700 bg-amber-50 p-3 text-sm mt-1" data-testid="wa-composer-no-templates">
+                You don't have any APPROVED templates yet. Go to <Link to="/app/channels" className="underline font-bold">Channels → WhatsApp → Message Templates</Link> to submit one. Meta usually approves in minutes.
+              </div>
+            ) : (
+              <select
+                data-testid="wa-composer-template"
+                className="w-full border-2 border-black px-3 py-2 text-sm font-mono"
+                value={form.template_name}
+                onChange={(e) => setForm({ ...form, template_name: e.target.value })}
+              >
+                <option value="">— Select a template —</option>
+                {approved.map((t) => (
+                  <option key={t.id || t.name} value={t.name}>
+                    {t.name} ({t.language}) · {t.category}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {bodyText && (
+            <div className="border-2 border-neutral-300 bg-neutral-50 p-3 text-sm font-mono whitespace-pre-wrap" data-testid="wa-composer-preview">
+              <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-1">Template body preview</div>
+              {bodyText}
+            </div>
+          )}
+
+          {placeholderCount > 0 && (
+            <div data-testid="wa-composer-vars" className="space-y-2">
+              <div className="text-xs font-bold uppercase tracking-wider text-neutral-600">Variable mappings</div>
+              <p className="text-[11px] text-neutral-500">
+                Choose what each <code className="font-mono">{"{{n}}"}</code> resolves to per recipient. Use a prospect field token or a static value.
+              </p>
+              {Array.from({ length: placeholderCount }).map((_, i) => {
+                const spec = form.body_var_specs[i] || { kind: "literal", value: "" };
+                return (
+                  <div key={i} className="border-2 border-black p-2 grid grid-cols-1 md:grid-cols-[80px_140px_1fr] gap-2 items-center" data-testid={`wa-composer-var-${i + 1}`}>
+                    <div className="font-mono text-sm font-bold">{`{{${i + 1}}}`}</div>
+                    <select
+                      data-testid={`wa-composer-var-kind-${i + 1}`}
+                      className="border-2 border-black px-2 py-1.5 text-sm"
+                      value={spec.kind}
+                      onChange={(e) => setVarSpec(i, { kind: e.target.value, value: "" })}
+                    >
+                      <option value="literal">Static text</option>
+                      <option value="token">Prospect field</option>
+                    </select>
+                    {spec.kind === "token" ? (
+                      <select
+                        data-testid={`wa-composer-var-value-${i + 1}`}
+                        className="border-2 border-black px-2 py-1.5 text-sm font-mono"
+                        value={spec.value}
+                        onChange={(e) => setVarSpec(i, { value: e.target.value })}
+                      >
+                        <option value="">— Select field —</option>
+                        <option value="{{first_name}}">{"{{first_name}}"}</option>
+                        <option value="{{name}}">{"{{name}}"}</option>
+                        <option value="{{company}}">{"{{company}}"}</option>
+                        <option value="{{email}}">{"{{email}}"}</option>
+                        <option value="{{phone}}">{"{{phone}}"}</option>
+                      </select>
+                    ) : (
+                      <input
+                        data-testid={`wa-composer-var-value-${i + 1}`}
+                        className="border-2 border-black px-2 py-1.5 text-sm"
+                        placeholder={`Static value for {{${i + 1}}}`}
+                        value={spec.value}
+                        onChange={(e) => setVarSpec(i, { value: e.target.value })}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-neutral-600">Target lists</label>
+            <p className="text-[11px] text-neutral-500">
+              Leave empty to broadcast to <strong>all active prospects with a phone number</strong>. Prospects without a phone are skipped automatically.
+            </p>
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+              {lists.map((l) => (
+                <label key={l.id} className="border-2 border-black p-2 flex items-center gap-2 text-sm cursor-pointer hover:bg-neutral-50"
+                       data-testid={`wa-composer-list-${l.id}`}>
+                  <input
+                    type="checkbox"
+                    checked={form.list_ids.includes(l.id)}
+                    onChange={() => toggleList(l.id)}
+                  />
+                  <Folder size={12} />
+                  <span className="font-bold">{l.name}</span>
+                  <span className="ml-auto text-[10px] font-mono text-neutral-500">{l.counts?.active || 0} active</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t-2 border-black px-5 py-3 flex items-center justify-between bg-neutral-50">
+          <div className="text-sm text-neutral-700">
+            ~<strong>{targetCount}</strong> max recipients with a phone (from {form.list_ids.length || "all"} list{form.list_ids.length === 1 ? "" : "s"}).
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="border-2 border-black px-4 py-2 text-sm font-bold bg-white hover-lift">Cancel</button>
+            <button
+              onClick={submit}
+              disabled={submitting || approved.length === 0}
+              data-testid="wa-composer-launch"
+              className="border-2 border-black px-5 py-2 text-sm font-bold bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-60"
+            >
+              <Send size={14} className="inline -mt-0.5 mr-1" />
+              {submitting ? "Launching…" : "Launch campaign"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WaCampaignsPanel({ lists, waConnected }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showComposer, setShowComposer] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+  const [recipients, setRecipients] = useState([]);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/sales/wa/campaigns");
+      setItems(data.campaigns || []);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load campaigns");
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const hasLive = items.some((c) => ["sending", "scheduled"].includes(c.status));
+    if (!hasLive) return;
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [items]);
+
+  const loadRecipients = async (cid) => {
+    if (expanded === cid) { setExpanded(null); return; }
+    try {
+      const { data } = await api.get(`/sales/wa/campaigns/${cid}`);
+      setRecipients(data.recipients || []);
+      setExpanded(cid);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+
+  const action = async (cid, kind) => {
+    try {
+      await api.post(`/sales/wa/campaigns/${cid}/${kind}`);
+      toast.success(`Campaign ${kind}d`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Action failed");
+    }
+  };
+
+  const fmtDate = (s) => s ? new Date(s).toLocaleString() : "—";
+
+  if (!waConnected) {
+    return (
+      <div className="border-2 border-amber-700 bg-amber-50 p-6 text-center" data-testid="wa-not-connected">
+        <MessageCircle size={28} className="mx-auto mb-2 text-amber-700" />
+        <h3 className="font-display font-black text-lg">Connect WhatsApp first</h3>
+        <p className="text-sm text-neutral-700 mt-1">
+          Bulk WhatsApp campaigns reuse your connected Meta Cloud API number.
+          Hook it up in Channels first, then come back here.
+        </p>
+        <Link to="/app/channels" className="inline-block mt-4 bg-[#002FA7] text-white border-2 border-black px-5 py-2 font-bold shadow-brutal hover-lift">
+          Go to Channels →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="sales-wa-campaigns-panel">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-sm text-neutral-700">
+          Send approved WhatsApp templates to your prospect lists. Messages are paced 30s–3 min apart to stay friendly with Meta's spam heuristics.
+        </p>
+        <button
+          onClick={() => setShowComposer(true)}
+          data-testid="sales-wa-new-campaign-btn"
+          className="text-sm font-bold border-2 border-black px-4 py-2 bg-[#002FA7] text-white shadow-brutal hover-lift"
+        >
+          <Sparkles size={14} className="inline -mt-0.5 mr-1" />
+          New WhatsApp campaign
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="p-10 text-center text-sm text-neutral-500">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="border-2 border-black bg-white shadow-brutal p-10 text-center" data-testid="sales-wa-empty">
+          <Megaphone size={28} className="mx-auto mb-3 text-[#002FA7]" />
+          <h3 className="font-display font-black text-xl">No WhatsApp campaigns yet</h3>
+          <p className="text-sm text-neutral-600 mt-1">Launch your first bulk template send to reach prospects on WhatsApp.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {items.map((c) => {
+            const isOpen = expanded === c.id;
+            const pct = c.total ? Math.round(((c.sent_count + c.failed_count) / c.total) * 100) : 0;
+            return (
+              <div key={c.id} className="border-2 border-black bg-white shadow-brutal" data-testid={`sales-wa-camp-${c.id}`}>
+                <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 ${WA_STATUS_BADGE[c.status] || "bg-neutral-200"}`}>
+                        {c.status}
+                      </span>
+                      <h4 className="font-display font-black text-lg truncate">{c.name}</h4>
+                    </div>
+                    <div className="text-xs text-neutral-500 mt-1 truncate">
+                      Template: <code className="font-mono font-bold">{c.template_name}</code> · {c.language}
+                    </div>
+                    <div className="text-[11px] text-neutral-500 mt-1">
+                      Created {fmtDate(c.created_at)} · From {c.from_phone || "—"}
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 md:grid-cols-4 gap-2 max-w-2xl">
+                      <MiniStat icon={Users} label="Total" value={c.total} />
+                      <MiniStat icon={Check} label="Sent" value={c.sent_count} />
+                      <MiniStat icon={AlertTriangle} label="Failed" value={c.failed_count} />
+                      <MiniStat icon={Clock} label="Progress" value={`${pct}%`} />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 lg:items-end">
+                    <div className="flex gap-1 flex-wrap">
+                      {c.status === "sending" && (
+                        <button onClick={() => action(c.id, "pause")} data-testid={`sales-wa-pause-${c.id}`} className="border-2 border-black px-2 py-1 text-xs font-bold bg-white hover-lift flex items-center gap-1">
+                          <Pause size={12} /> Pause
+                        </button>
+                      )}
+                      {c.status === "paused" && (
+                        <button onClick={() => action(c.id, "resume")} data-testid={`sales-wa-resume-${c.id}`} className="border-2 border-black px-2 py-1 text-xs font-bold bg-white hover-lift flex items-center gap-1">
+                          <Play size={12} /> Resume
+                        </button>
+                      )}
+                      {["sending", "scheduled", "paused"].includes(c.status) && (
+                        <button onClick={() => action(c.id, "cancel")} data-testid={`sales-wa-cancel-${c.id}`} className="border-2 border-black px-2 py-1 text-xs font-bold bg-white hover-lift flex items-center gap-1">
+                          <X size={12} /> Cancel
+                        </button>
+                      )}
+                      <button onClick={() => loadRecipients(c.id)} data-testid={`sales-wa-toggle-${c.id}`} className="border-2 border-black px-2 py-1 text-xs font-bold bg-white hover-lift flex items-center gap-1">
+                        <Eye size={12} /> {isOpen ? "Hide" : "Details"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div className="border-t-2 border-black p-3 bg-neutral-50" data-testid={`sales-wa-recipients-${c.id}`}>
+                    <div className="text-[10px] uppercase tracking-widest font-bold text-neutral-600 mb-2">
+                      Recipients ({recipients.length})
+                    </div>
+                    <div className="max-h-72 overflow-auto border-2 border-black bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-neutral-100 sticky top-0">
+                          <tr>
+                            <th className="text-left px-2 py-1 border-b border-black">Phone</th>
+                            <th className="text-left px-2 py-1 border-b border-black">Name</th>
+                            <th className="text-left px-2 py-1 border-b border-black">Status</th>
+                            <th className="text-left px-2 py-1 border-b border-black">Sent at</th>
+                            <th className="text-left px-2 py-1 border-b border-black">Error</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recipients.map((r) => (
+                            <tr key={r.id} className="border-b border-neutral-200">
+                              <td className="px-2 py-1 font-mono">{r.phone}</td>
+                              <td className="px-2 py-1">{r.name || "—"}</td>
+                              <td className="px-2 py-1">
+                                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 ${
+                                  r.status === "sent" ? "bg-green-200 text-green-900"
+                                  : r.status === "failed" ? "bg-red-200 text-red-900"
+                                  : "bg-neutral-200"
+                                }`}>{r.status}</span>
+                              </td>
+                              <td className="px-2 py-1 font-mono text-[10px]">{r.sent_at ? new Date(r.sent_at).toLocaleString() : "—"}</td>
+                              <td className="px-2 py-1 text-red-700 text-[10px]">{r.error || ""}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showComposer && (
+        <WaComposer
+          lists={lists}
+          onClose={() => setShowComposer(false)}
+          onLaunched={() => { setShowComposer(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function WaAnalyticsPanel() {
+  const [data, setData] = useState(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    api.get("/sales/wa/analytics", { params: { days } })
+      .then(({ data }) => setData(data))
+      .catch((e) => toast.error(e?.response?.data?.detail || "Failed to load analytics"))
+      .finally(() => setLoading(false));
+  }, [days]);
+
+  if (loading || !data) return <div className="p-10 text-center text-sm text-neutral-500">Loading…</div>;
+  const t = data.totals;
+  const max = Math.max(1, ...data.daily.map((d) => d.sent));
+
+  return (
+    <div className="space-y-5" data-testid="sales-wa-analytics-panel">
+      <div className="flex items-center justify-between">
+        <h3 className="font-display font-black text-2xl">WhatsApp performance</h3>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))}
+                data-testid="sales-wa-analytics-days"
+                className="border-2 border-black px-3 py-1.5 text-sm">
+          <option value={7}>Last 7 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+          <option value={365}>Last year</option>
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <BigStat label="Sent" value={t.sent || 0} testid="wa-stat-sent" />
+        <BigStat label="Failed" value={t.failed || 0} testid="wa-stat-failed" />
+        <BigStat label="Pending" value={t.pending || 0} testid="wa-stat-pending" highlight />
+      </div>
+
+      <div className="border-2 border-black bg-white shadow-brutal p-5">
+        <h4 className="font-display font-black text-lg">Daily activity</h4>
+        {data.daily.length === 0 ? (
+          <div className="text-sm text-neutral-500 mt-3">No sends in the selected window yet.</div>
+        ) : (
+          <div className="mt-4 grid items-end gap-1" style={{ gridTemplateColumns: `repeat(${data.daily.length}, minmax(20px, 1fr))`, minHeight: 180 }}>
+            {data.daily.map((s) => (
+              <div key={s.day} className="flex flex-col items-center gap-1 group">
+                <div className="text-[9px] font-mono text-neutral-500 opacity-0 group-hover:opacity-100">{s.sent}/{s.sent + s.failed}</div>
+                <div className="relative w-full bg-neutral-100 border-2 border-black" style={{ height: 140 }}>
+                  <div className="absolute bottom-0 inset-x-0 bg-red-400" style={{ height: `${((s.failed) / max) * 100}%` }} />
+                  <div className="absolute bottom-0 inset-x-0 bg-[#002FA7]" style={{ height: `${((s.sent) / max) * 100}%`, opacity: 0.85 }} />
+                </div>
+                <div className="text-[9px] font-mono text-neutral-500 -rotate-45 origin-top-left whitespace-nowrap">{s.day.slice(5)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="text-[11px] font-mono text-neutral-600 mt-3 flex gap-4">
+          <span><span className="inline-block w-3 h-3 align-middle bg-[#002FA7] border border-black"></span> Sent</span>
+          <span><span className="inline-block w-3 h-3 align-middle bg-red-400 border border-black"></span> Failed</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CallsComingSoon() {
+  return (
+    <div className="border-2 border-black bg-white shadow-brutal p-10 text-center max-w-2xl mx-auto" data-testid="sales-calls-coming-soon">
+      <div className="inline-flex items-center justify-center w-16 h-16 border-2 border-black bg-amber-300 mb-5">
+        <Phone size={28} />
+      </div>
+      <h2 className="font-display font-black text-3xl tracking-tight">Outbound calls — coming soon</h2>
+      <p className="mt-3 text-neutral-700 max-w-md mx-auto">
+        We're wiring up Twilio + our AI voice bridge to let you launch outbound call campaigns from
+        the same prospect lists you already use for email and WhatsApp.
+      </p>
+      <p className="mt-4 text-xs font-mono text-neutral-500">Want early access? Reach out via Contact Us on the landing page.</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------- main page ---
 export default function SalesAssistant() {
   const [tab, setTab] = useState("prospects");
@@ -977,15 +1504,15 @@ export default function SalesAssistant() {
           <Megaphone size={12} /> Sales Assistant
         </div>
         <h1 className="font-display text-3xl md:text-4xl font-black tracking-tighter mt-1">
-          Outbound email marketing
+          Outbound campaigns — email, WhatsApp, calls
         </h1>
         <p className="text-sm text-neutral-600 mt-1">
-          Organise prospects into lists, then launch multi-list campaigns —
-          paced safely so you stay out of spam folders.
+          One prospect pool, three channels. Compose, pace and track multi-list
+          campaigns across email and WhatsApp from a single place.
         </p>
       </header>
 
-      <div className="border-b-2 border-black flex gap-0">
+      <div className="border-b-2 border-black flex gap-0 overflow-x-auto">
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = tab === t.id;
@@ -994,12 +1521,13 @@ export default function SalesAssistant() {
               key={t.id}
               onClick={() => setTab(t.id)}
               data-testid={`sales-tab-${t.id}`}
-              className={`px-4 py-2.5 text-sm font-bold border-2 border-b-0 -mb-0.5 ${
+              className={`px-4 py-2.5 text-sm font-bold border-2 border-b-0 -mb-0.5 whitespace-nowrap ${
                 isActive ? "bg-[#002FA7] text-white border-black" : "bg-transparent border-transparent text-neutral-700 hover:text-black"
               }`}
             >
               <Icon size={13} className="inline -mt-0.5 mr-1.5" />
               {t.label}
+              {t.comingSoon && <span className="ml-1.5 text-[9px] font-mono opacity-70">soon</span>}
             </button>
           );
         })}
@@ -1013,8 +1541,25 @@ export default function SalesAssistant() {
           reloadLists={reloadLists}
         />
       )}
-      {tab === "campaigns" && <CampaignsPanel lists={lists} />}
-      {tab === "analytics" && <AnalyticsPanel />}
+      {tab === "emails" && (
+        <div className="space-y-8">
+          <CampaignsPanel lists={lists} />
+          <div className="border-t-2 border-black pt-6">
+            <AnalyticsPanel />
+          </div>
+        </div>
+      )}
+      {tab === "whatsapp" && (
+        <div className="space-y-8">
+          <WaCampaignsPanel lists={lists} waConnected={!!access?.channels?.whatsapp?.connected} />
+          {access?.channels?.whatsapp?.connected && (
+            <div className="border-t-2 border-black pt-6">
+              <WaAnalyticsPanel />
+            </div>
+          )}
+        </div>
+      )}
+      {tab === "calls" && <CallsComingSoon />}
     </div>
   );
 }

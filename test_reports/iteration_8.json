@@ -1,0 +1,33 @@
+{
+  "summary": "Backend-only validation of (1) WhatsApp Templates manager endpoints under /api/whatsapp/templates*, (2) WhatsApp Bulk Campaigns under /api/sales/wa/*, and (3) Basic-plan ($29/mo) channel restriction in /api/billing/plans. 25/25 tests pass in new file test_whatsapp_templates_and_sales_wa.py. Meta Graph API success paths were intentionally NOT exercised (no vendor has an ACTIVE WA connection — kamal's connection is status=inactive), so testing focused on the gate/validation/422 error responses as instructed. All requested validation paths return the documented status codes and detail messages.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/whatsapp/send-template", "issue": "Channel-access gate (_vendor_can_use_channel for 'whatsapp') is evaluated BEFORE the connection-check (status=='active') in whatsapp_send_template (server.py L2189). For exempt vendor kamal the gate passes, so we still surface the 400 'WhatsApp not connected'. However for a non-exempt Basic-plan vendor the order is fine. Acceptable, just noting that the two other endpoints (list/create/delete) don't run the channel gate at all — they rely purely on the connection check. If a plan ever excludes WhatsApp (none today), a vendor could submit a template without a paywall hit. Cosmetic only."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_whatsapp_templates_and_sales_wa.py",
+    "/app/test_reports/pytest/iter8_wa.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py whatsapp_send_template L2189-2191: channel gate runs first; intentional but be aware the create/list/delete endpoints do NOT gate the channel — only the connection check. If you later add a plan that excludes WhatsApp, those endpoints will bypass the gate.",
+    "sales_routes.py wa_create_campaign L1141-1148: when no WA connection, returns 400 with detail 'Connect your WhatsApp number in Channels → WhatsApp before launching a campaign.' — friendlier than the generic 'WhatsApp not connected'. Good UX, just diverges from server.py's wording — consider unifying for consistent toast messages on the frontend.",
+    "sales_routes.py wa_pause/resume/cancel return 400 for both 'wrong state' AND 'not found' (no separate 404). Frontend cannot distinguish 'campaign was already canceled' from 'campaign doesn't exist'. Minor UX nit — could split into 404 (no match by id+vendor) vs 400 (match but wrong status).",
+    "sales_routes.py wa_create_campaign L1166: prospect_filter uses {'list_ids': {'$in': target_list_ids}} which correctly matches prospects in ANY of the selected lists (union). Good.",
+    "server.py whatsapp_templates_create L2114: regex {{\\s*(\\d+)\\s*}} correctly extracts placeholder indices; example values padded with 'Sample N' so Meta accepts. Solid.",
+    "server.py PLANS L45-54: Basic plan correctly limited to whatsapp/email/web (NO voice/sms) — matches spec. plan_allows_channel returns True for missing/empty plan_key (exempt). Good.",
+    "Tests/coverage gap: no test for Basic-plan vendor's allowed_channels because no Basic-plan vendor seeded in DB. _plan_for_vendor flow verified indirectly via exempt vendor returning all 5 channels."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_whatsapp_templates_and_sales_wa.py"
+  ],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "not tested (per request)"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu (exempt, WA connection status=inactive → ideal for validation tests). admin@botnira.com / admin123.",
+  "seed_data_creation": "None. No DB writes — all tests are read-only or hit gates that 400/422 before any write.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with: REACT_APP_BACKEND_URL=https://unified-inbox-ai-4.preview.emergentagent.com pytest /app/backend/tests/test_whatsapp_templates_and_sales_wa.py -v. To test the Meta happy path, you need a vendor with whatsapp_connections.status='active' (currently kamal has status='inactive' from a 2026-05-07 disconnect). The Meta test phone number ID and token are still in /app/backend/.env; flipping the kamal connection status to 'active' in MongoDB would unlock the actual Meta Graph API tests but those calls hit the real Meta v22.0 endpoint — only do that if you intend to send a real WhatsApp message. /api/billing/me access info is NESTED under .access.allowed_channels, NOT at top level — important for next agent. Pre-existing failures in test_billing.py & test_sales_assistance.py around demo trial expiry (May 22 2026 server clock) are NOT regressions — they were broken before this session per iteration_7 context."
+}
