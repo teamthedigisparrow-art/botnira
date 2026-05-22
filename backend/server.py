@@ -1873,11 +1873,20 @@ async def whatsapp_profile_photo(
     file: UploadFile = File(...),
     user: dict = Depends(require_vendor),
 ):
-    """Upload a profile picture to Meta's media API, then attach it to the
-    business profile. Meta accepts JPG/PNG up to 5 MB and recommends a
-    square image (640×640 minimum)."""
+    """Upload a profile picture using Meta's **Resumable Upload API** (NOT the
+    WhatsApp media API). The two return different identifiers:
+      • /{phone_number_id}/media → returns a media ID (used for sending
+        media inside conversations). This is NOT accepted by the profile
+        endpoint and triggers `Check the handle provided for the uploaded
+        media in the request`.
+      • /{app_id}/uploads → returns an upload session, then a true file
+        handle (e.g. `4::aW1hZ2U/anBlZw==:...`) — THIS is what
+        `profile_picture_handle` requires.
+    """
     wc = await _require_wa_conn(user)
     token = wc.get("access_token") or META_SYSTEM_USER_TOKEN
+    if not META_APP_ID:
+        raise HTTPException(status_code=500, detail="META_APP_ID is not configured on the server. Add it to backend/.env.")
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -1887,24 +1896,42 @@ async def whatsapp_profile_photo(
     if mime not in ("image/jpeg", "image/png"):
         raise HTTPException(status_code=400, detail="Use a JPG or PNG image.")
 
-    # 1) Upload to Meta media — returns a handle
-    async with httpx.AsyncClient(timeout=60) as c:
-        files = {
-            "file": (file.filename or "profile.jpg", raw, mime),
-        }
-        data = {"messaging_product": "whatsapp", "type": mime}
-        up = await c.post(
-            f"{GRAPH_BASE}/{wc['phone_number_id']}/media",
+    # ── Step 1: Create a Resumable Upload session ────────────────────────
+    # POST /{app-id}/uploads with file_length + file_type → returns
+    # {"id": "upload:SESSION_ID"} that we use as the next URL.
+    async with httpx.AsyncClient(timeout=30) as c:
+        sess = await c.post(
+            f"{GRAPH_BASE}/{META_APP_ID}/uploads",
             headers={"Authorization": f"Bearer {token}"},
-            data=data, files=files,
+            params={"file_length": str(len(raw)), "file_type": mime},
+        )
+    if sess.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Meta upload-session create failed: {sess.text[:300]}")
+    session_id = (sess.json() or {}).get("id") or ""
+    if not session_id:
+        raise HTTPException(status_code=502, detail="Meta did not return an upload session id.")
+
+    # ── Step 2: Upload bytes to the session ──────────────────────────────
+    # POST /upload:SESSION_ID with the raw binary body. Note: this leg
+    # uses `Authorization: OAuth <token>` (NOT Bearer) per Meta's spec,
+    # and `file_offset: 0` to indicate a fresh upload (no resume).
+    async with httpx.AsyncClient(timeout=120) as c:
+        up = await c.post(
+            f"{GRAPH_BASE}/{session_id}",
+            headers={
+                "Authorization": f"OAuth {token}",
+                "file_offset": "0",
+                "Content-Type": mime,
+            },
+            content=raw,
         )
     if up.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Meta media upload failed: {up.text[:200]}")
-    handle = up.json().get("id")
+        raise HTTPException(status_code=502, detail=f"Meta upload failed: {up.text[:300]}")
+    handle = (up.json() or {}).get("h") or ""
     if not handle:
-        raise HTTPException(status_code=502, detail="Meta did not return a media handle.")
+        raise HTTPException(status_code=502, detail="Meta did not return a file handle (`h`).")
 
-    # 2) Attach to business profile
+    # ── Step 3: Attach handle to the business profile ────────────────────
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.post(
             f"{GRAPH_BASE}/{wc['phone_number_id']}/whatsapp_business_profile",
