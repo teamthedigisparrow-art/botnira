@@ -41,7 +41,7 @@ const placeholderCount = (txt) => {
   return nums.length === 0 ? 0 : Math.max(...nums);
 };
 
-export default function WhatsAppTemplatesPanel() {
+export default function WhatsAppTemplatesPanel({ phoneRegistered = true }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -197,6 +197,17 @@ export default function WhatsAppTemplatesPanel() {
           if flagged. Use <code className="font-mono">{"{{1}}"}</code>, <code className="font-mono">{"{{2}}"}</code> etc. for personalisation.
         </div>
       </div>
+
+      {!phoneRegistered && (
+        <div className="border-2 border-amber-700 bg-amber-50 text-xs px-3 py-2 flex gap-2" data-testid="wa-tpl-phone-warning">
+          <Info size={14} className="mt-0.5 flex-shrink-0 text-amber-800" />
+          <div className="text-amber-900">
+            <strong>Heads up:</strong> your WhatsApp number isn't fully activated yet, so the <em>Send</em>
+            action is disabled. You <strong>can</strong> still create, edit and delete templates here —
+            Meta processes approvals at the WABA level. Activate messaging in the panel above to start sending.
+          </div>
+        </div>
+      )}
 
       {/* Create form */}
       {showCreate && (
@@ -376,8 +387,9 @@ export default function WhatsAppTemplatesPanel() {
                         setSendTpl(tpl);
                         setSendForm({ to: "", body_vars: new Array(phCount).fill("") });
                       }}
-                      className="border-2 border-black bg-[#002FA7] text-white px-2 py-1 text-xs font-bold flex items-center gap-1 hover-lift"
-                      title="Send this template"
+                      disabled={!phoneRegistered}
+                      title={phoneRegistered ? "Send this template" : "Activate your WhatsApp number to send"}
+                      className="border-2 border-black bg-[#002FA7] text-white px-2 py-1 text-xs font-bold flex items-center gap-1 hover-lift disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Send size={12} /> Send
                     </button>

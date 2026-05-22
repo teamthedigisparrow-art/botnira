@@ -392,8 +392,13 @@ export default function Channels() {
             {/* WhatsApp Business Profile editor — only once number is fully live */}
             {waPhoneStatus?.registered && <WhatsAppProfilePanel />}
 
-            {/* WhatsApp Message Templates manager — only once number is fully live */}
-            {waPhoneStatus?.registered && <WhatsAppTemplatesPanel />}
+            {/* WhatsApp Message Templates manager — available as soon as the
+                WABA is connected (templates live at the WABA level on Meta,
+                independent of phone activation). The Send button inside the
+                panel is the only thing that needs an activated phone. */}
+            {wa?.connection?.status === "active" && (
+              <WhatsAppTemplatesPanel phoneRegistered={!!waPhoneStatus?.registered} />
+            )}
 
             <div className="border-2 border-black p-4 text-sm">
               <div className="font-display font-bold mb-1">Share your WhatsApp with customers</div>
