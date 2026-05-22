@@ -6,7 +6,7 @@ import { Rocket, Zap, Phone, MessageCircle, Mail, MessageSquare, Globe, Check, C
 import { useSearchParams, useNavigate } from "react-router-dom";
 import UsagePanel from "../../components/UsagePanel";
 
-const PLAN_ICONS = { starter: Zap, growth: Rocket, pro: Rocket };
+const PLAN_ICONS = { basic: Zap, starter: Zap, growth: Rocket, pro: Rocket };
 const PACK_THEMES = {
   spark:  { emoji: "✦", color: "bg-yellow-100 border-yellow-700" },
   boost:  { emoji: "⚡", color: "bg-orange-100 border-orange-700" },
@@ -15,7 +15,7 @@ const PACK_THEMES = {
   fleet:  { emoji: "⛵", color: "bg-green-100 border-green-700" },
   armada: { emoji: "⚓", color: "bg-purple-100 border-purple-700" },
 };
-const PLAN_NAMES = { starter: "Starter", growth: "Growth", pro: "Pro" };
+const PLAN_NAMES = { basic: "Basic", starter: "Starter", growth: "Growth", pro: "Pro" };
 
 const fmtDate = (iso) => {
   if (!iso) return "—";
@@ -387,12 +387,14 @@ export default function Billing() {
           <div className="border-2 border-amber-700 bg-amber-50 px-4 py-2 mb-5 inline-block text-xs font-mono" data-testid="tax-notice-plans">
             <strong>Heads up:</strong> all prices are in USD. <strong>{taxRate}% HST</strong> will be added at checkout (Canadian Harmonized Sales Tax).
           </div>
-          <div className="grid md:grid-cols-3 gap-5">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
             {plans.map(p => {
               const Icon = PLAN_ICONS[p.id] || Rocket;
               const isCurrent = me.plan === p.id && me.subscription_status === "active";
               const taxAmt = (p.price_usd * taxRate / 100).toFixed(2);
               const totalAmt = (p.price_usd * (1 + taxRate / 100)).toFixed(2);
+              const channels = p.channels || ["web","whatsapp","email","sms","voice"];
+              const chLabel = channels.map(c => c === "whatsapp" ? "WhatsApp" : c === "sms" ? "SMS" : c.charAt(0).toUpperCase()+c.slice(1)).join(" · ");
               return (
                 <div key={p.id} className={`border-2 border-black p-6 bg-white shadow-brutal ${isCurrent ? "ring-4 ring-[#002FA7]" : ""}`} data-testid={`plan-${p.id}`}>
                   <div className="flex items-center justify-between">
@@ -406,9 +408,13 @@ export default function Billing() {
                   </div>
                   <div className="text-[11px] font-mono text-neutral-500 mt-1">+ ${taxAmt} HST = <strong>${totalAmt}/mo</strong> total</div>
                   <ul className="mt-5 space-y-2 text-sm">
-                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.voice_min}</strong> voice minutes</li>
+                    {p.voice_min > 0 ? (
+                      <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.voice_min}</strong> voice minutes</li>
+                    ) : (
+                      <li className="flex items-center gap-2 text-neutral-400"><Phone size={13}/> No voice minutes</li>
+                    )}
                     <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.messages.toLocaleString()}</strong> AI messages</li>
-                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> All channels unlocked</li>
+                    <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> {chLabel}</li>
                     <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Live agent override</li>
                   </ul>
                   <button

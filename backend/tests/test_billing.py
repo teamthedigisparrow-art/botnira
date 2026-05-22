@@ -87,14 +87,19 @@ class TestPlans:
         r = http.get(f"{API}/billing/plans", timeout=20)
         assert r.status_code == 200
         d = r.json()
-        assert len(d["plans"]) == 3
+        assert len(d["plans"]) == 4
         assert len(d["topups"]) == 6
         ids = sorted([p["id"] for p in d["plans"]])
-        assert ids == ["growth", "pro", "starter"]
+        assert ids == ["basic", "growth", "pro", "starter"]
         prices = {p["id"]: p["price_usd"] for p in d["plans"]}
+        assert prices["basic"] == 29
         assert prices["starter"] == 49
         assert prices["growth"] == 149
         assert prices["pro"] == 399
+        # Basic plan must NOT include voice/sms
+        basic = next(p for p in d["plans"] if p["id"] == "basic")
+        assert "voice" not in basic["channels"]
+        assert "sms" not in basic["channels"]
         for p in d["plans"]:
             assert p.get("stripe_price_id"), f"plan {p['id']} missing stripe_price_id"
         topup_ids = sorted([t["id"] for t in d["topups"]])

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle } from "lucide-react";
+import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle, Lock } from "lucide-react";
 import BrandMark from "../components/BrandMark";
 import Reviews from "../components/marketing/Reviews";
 import TrustedBy from "../components/marketing/TrustedBy";
@@ -398,9 +398,10 @@ const How = () => (
 );
 
 const PLAN_DATA = [
-  { id: "starter", name: "Starter", price: 49, min: 100, msg: 2000, tagline: "Solo & side-hustle receptionists" },
-  { id: "growth", name: "Growth", price: 149, min: 500, msg: 8000, tagline: "Most businesses pick this", featured: true, salesAssistant: true },
-  { id: "pro", name: "Pro", price: 399, min: 1500, msg: 25000, tagline: "Clinics, agencies, multi-location", salesAssistant: true },
+  { id: "basic", name: "Basic", price: 29, min: 0, msg: 1000, tagline: "Web + chat-only starter", channels: "WhatsApp · Web · Email" },
+  { id: "starter", name: "Starter", price: 49, min: 100, msg: 2000, tagline: "Solo & side-hustle receptionists", channels: "Voice · WhatsApp · Web · Email · SMS" },
+  { id: "growth", name: "Growth", price: 149, min: 500, msg: 8000, tagline: "Most businesses pick this", featured: true, salesAssistant: true, channels: "Voice · WhatsApp · Web · Email · SMS" },
+  { id: "pro", name: "Pro", price: 399, min: 1500, msg: 25000, tagline: "Clinics, agencies, multi-location", salesAssistant: true, channels: "Voice · WhatsApp · Web · Email · SMS" },
 ];
 
 const Pricing = () => (
@@ -415,7 +416,7 @@ const Pricing = () => (
           Every plan auto-renews monthly. <strong>5-day free trial</strong> — no card required to start. Cancel anytime.
         </p>
       </div>
-      <div className="grid md:grid-cols-3 gap-6">
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
         {PLAN_DATA.map(p => (
           <div
             key={p.id}
@@ -437,9 +438,13 @@ const Pricing = () => (
             </div>
             <div className="text-[11px] font-mono text-neutral-500 mt-1">+ 13% HST · ${(p.price * 1.13).toFixed(2)}/mo total</div>
             <ul className="mt-6 space-y-2 text-sm">
-              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.min}</strong> voice minutes/mo</li>
+              {p.min > 0 ? (
+                <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.min}</strong> voice minutes/mo</li>
+              ) : (
+                <li className="flex items-center gap-2 text-neutral-400"><Lock size={13}/> No voice/SMS (chat-only)</li>
+              )}
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> <strong>{p.msg.toLocaleString()}</strong> AI messages/mo</li>
-              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Voice · WhatsApp · Web · Email · SMS</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> {p.channels}</li>
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Live agent override (inbox)</li>
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Hard-stop at zero — no bill shocks</li>
               <li className="flex items-center gap-2"><Check size={14} className="text-green-700"/> Top-up packs never expire</li>
@@ -484,7 +489,7 @@ const FAQS = [
   },
   {
     q: "How much does BotNira cost per month?",
-    a: "BotNira offers three monthly plans in USD: Starter $49 (100 voice min + 2,000 AI messages), Growth $149 (500 min + 8,000 messages), and Pro $399 (1,500 min + 25,000 messages). All plans include every channel — phone, WhatsApp, email, SMS, and web chat. Top-up packs are available from $125 and never expire. Every new vendor gets a 5-day free trial with no credit card required.",
+    a: "BotNira offers four monthly plans in USD: Basic $29 (1,000 AI messages, WhatsApp + Web + Email only), Starter $49 (100 voice min + 2,000 AI messages), Growth $149 (500 min + 8,000 messages), and Pro $399 (1,500 min + 25,000 messages). Starter and above include every channel — phone, WhatsApp, email, SMS, and web chat. Top-up packs are available from $125 and never expire. Every new vendor gets a 5-day free trial with no credit card required.",
   },
   {
     q: "Is my customer data safe with BotNira?",

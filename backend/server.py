@@ -2308,12 +2308,14 @@ def _plan_for_vendor(vendor: dict) -> dict:
             "minutes_balance": float(vendor.get("minutes_balance", 0.0)),
             "messages_balance": int(vendor.get("messages_balance", 0)),
         }
-    # Active paying subscription
+    # Active paying subscription — channels restricted per PLANS config
     if sub_status == "active":
+        plan_key = vendor.get("plan", "starter")
+        plan_cfg = PLANS.get(plan_key) or PLANS["starter"]
         return {
             "paywall": False, "trial": False, "trial_days_left": 0,
-            "allowed_channels": {"web", "whatsapp", "email", "sms", "voice"},
-            "plan_label": vendor.get("plan", "starter"), "is_exempt": False,
+            "allowed_channels": set(plan_cfg.get("channels") or ["web", "whatsapp", "email", "sms", "voice"]),
+            "plan_label": plan_key, "is_exempt": False,
             "minutes_balance": float(vendor.get("minutes_balance", 0.0)),
             "messages_balance": int(vendor.get("messages_balance", 0)),
         }
@@ -2338,7 +2340,7 @@ async def _vendor_can_use_channel(vendor_id: str, channel: str) -> tuple[bool, s
     if channel not in access["allowed_channels"]:
         if access["trial"]:
             return False, f"The {channel} channel is locked during trial. Upgrade to unlock."
-        return False, f"The {channel} channel requires an active plan."
+        return False, f"The {channel} channel is not included in your current plan. Upgrade to unlock."
     # balance check
     if channel == "voice":
         if access["minutes_balance"] <= 0:
