@@ -193,7 +193,11 @@ function ListFormModal({ editing, form, setForm, onCancel, onSave }) {
 // ---------------------------------------------------------- prospect editor ---
 function ProspectEditModal({ prospect, onClose, onSaved }) {
   const [form, setForm] = useState({
-    email: prospect.email, name: prospect.name || "", company: prospect.company || "", phone: prospect.phone || "",
+    email: prospect.email,
+    name: prospect.name || "",
+    company: prospect.company || "",
+    country_code: prospect.country_code || "",
+    phone: prospect.phone || "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -217,12 +221,13 @@ function ProspectEditModal({ prospect, onClose, onSaved }) {
           <button onClick={onClose} className="border-2 border-black p-1"><X size={13} /></button>
         </div>
         <div className="p-5 space-y-3">
-          {["email", "name", "phone", "company"].map((k) => (
+          {["email", "name", "company", "country_code", "phone"].map((k) => (
             <div key={k}>
-              <label className="text-xs font-bold uppercase tracking-widest">{k}</label>
+              <label className="text-xs font-bold uppercase tracking-widest">{k.replace("_", " ")}</label>
               <input
                 value={form[k]}
                 onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+                placeholder={k === "country_code" ? "+1" : k === "phone" ? "4165551234" : ""}
                 className="w-full border-2 border-black px-3 py-2 mt-1 font-mono text-sm"
                 data-testid={`prospect-edit-${k}`}
               />
@@ -330,14 +335,39 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
 
       <div className="flex-1 min-w-0 space-y-4">
         {/* Helper banner */}
-        <div className="border-2 border-black bg-amber-50 p-4 flex gap-3 items-start">
+        <div className="border-2 border-black bg-amber-50 p-4 flex gap-3 items-start" data-testid="sales-prospects-help">
           <ShieldCheck size={18} className="mt-0.5 text-amber-700 shrink-0" />
-          <div className="text-sm">
+          <div className="text-sm flex-1">
             <strong>CSV columns:</strong>{" "}
-            <code className="bg-white border border-black px-1 font-mono text-xs">email, name, company</code>.{" "}
-            Duplicates are merged automatically — same email in a different
-            list is treated as the <strong>same person</strong>, so campaigns
-            touching multiple lists still deliver one email per prospect.
+            <code className="bg-white border border-black px-1 font-mono text-xs">email, name, company, country_code, phone</code>.{" "}
+            Only <strong>email</strong> is required. Use <code className="font-mono">country_code</code> like <code className="font-mono">+1</code>, <code className="font-mono">+91</code> — we'll combine it with the phone to make WhatsApp sends work out of the box.{" "}
+            Duplicates are merged automatically — same email in a different list is treated as the <strong>same person</strong>, so campaigns touching multiple lists still deliver one email per prospect.
+            <div className="mt-2">
+              <a
+                href={`${process.env.REACT_APP_BACKEND_URL}/api/sales/prospects/template.csv`}
+                onClick={async (e) => {
+                  // Send Authorization header via fetch (anchor tag can't); fallback to JS download
+                  e.preventDefault();
+                  try {
+                    const res = await api.get("/sales/prospects/template.csv", { responseType: "blob" });
+                    const url = window.URL.createObjectURL(new Blob([res.data]));
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.setAttribute("download", "botnira-prospects-template.csv");
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    window.URL.revokeObjectURL(url);
+                  } catch (err) {
+                    toast.error("Couldn't download template");
+                  }
+                }}
+                data-testid="sales-prospects-template-download"
+                className="inline-flex items-center gap-1.5 border-2 border-black bg-white text-black font-bold text-xs px-3 py-1.5 hover-lift no-underline"
+              >
+                <Upload size={12} className="rotate-180" /> Download sample CSV
+              </a>
+            </div>
           </div>
         </div>
 
@@ -1304,10 +1334,10 @@ function WaCampaignsPanel({ lists, waConnected }) {
                       Created {fmtDate(c.created_at)} · From {c.from_phone || "—"}
                     </div>
                     <div className="mt-2 grid grid-cols-3 md:grid-cols-4 gap-2 max-w-2xl">
-                      <MiniStat icon={Users} label="Total" value={c.total} />
-                      <MiniStat icon={Check} label="Sent" value={c.sent_count} />
-                      <MiniStat icon={AlertTriangle} label="Failed" value={c.failed_count} />
-                      <MiniStat icon={Clock} label="Progress" value={`${pct}%`} />
+                      <Stat icon={Users} label="Total" value={c.total} />
+                      <Stat icon={Check} label="Sent" value={c.sent_count} />
+                      <Stat icon={AlertTriangle} label="Failed" value={c.failed_count} />
+                      <Stat icon={Clock} label="Progress" value={`${pct}%`} />
                     </div>
                   </div>
                   <div className="flex flex-col gap-2 lg:items-end">

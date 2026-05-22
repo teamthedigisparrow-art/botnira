@@ -96,10 +96,37 @@ async def _require_sales_vendor(user: dict = Depends(_s.require_vendor)) -> dict
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_DIGITS_RE = re.compile(r"[^\d]")
 
 
 def _norm_email(s: str) -> str:
     return (s or "").strip().lower()
+
+
+def _norm_country_code(s: str) -> str:
+    """Return country code with a single leading '+' — e.g. '+1'. Empty if blank."""
+    if not s:
+        return ""
+    digits = _PHONE_DIGITS_RE.sub("", str(s))
+    return f"+{digits}" if digits else ""
+
+
+def _norm_phone_digits(s: str) -> str:
+    """Strip everything except digits. Used for E.164 storage."""
+    return _PHONE_DIGITS_RE.sub("", str(s or ""))
+
+
+def _combine_e164(country_code: str, local: str) -> str:
+    """Concatenate country-code digits and local-phone digits into a single
+    digit-only E.164 string. If `local` already starts with the country-code
+    digits, we don't double-prefix."""
+    cc = _norm_phone_digits(country_code)
+    lc = _norm_phone_digits(local)
+    if not lc:
+        return ""
+    if cc and lc.startswith(cc):
+        return lc
+    return f"{cc}{lc}"
 
 
 # Email of the BotNira-internal vendor that receives landing-page contact form
@@ -252,6 +279,8 @@ class ProspectIn(BaseModel):
     email: EmailStr
     name: Optional[str] = ""
     company: Optional[str] = ""
+    country_code: Optional[str] = ""  # e.g. "+1", "+91" — display-friendly
+    phone: Optional[str] = ""  # local digits OR E.164; stored as digits-only
     list_id: Optional[str] = None
 
 
@@ -259,6 +288,7 @@ class ProspectPatch(BaseModel):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
     company: Optional[str] = None
+    country_code: Optional[str] = None
     phone: Optional[str] = None
 
 
@@ -307,14 +337,25 @@ async def add_prospect(p: ProspectIn, user: dict = Depends(_require_sales_vendor
     em = _norm_email(p.email)
     if not _EMAIL_RE.match(em):
         raise HTTPException(status_code=400, detail="Invalid email")
+    cc_disp = _norm_country_code(p.country_code or "")
+    phone_full = _combine_e164(p.country_code or "", p.phone or "")
     existing = await _s.db.sales_prospects.find_one({"vendor_id": vid, "email": em}, {"_id": 0})
     if existing:
-        # Add to this list if not already a member
+        # Add to this list if not already a member; also enrich phone if missing
+        upd: Dict[str, Any] = {"updated_at": _s.now_iso()}
+        addset: Dict[str, Any] = {}
         if lid not in (existing.get("list_ids") or []):
-            await _s.db.sales_prospects.update_one(
-                {"id": existing["id"]},
-                {"$addToSet": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}},
-            )
+            addset["list_ids"] = lid
+        if phone_full and not existing.get("phone"):
+            upd["phone"] = phone_full
+        if cc_disp and not existing.get("country_code"):
+            upd["country_code"] = cc_disp
+        mongo_op: Dict[str, Any] = {"$set": upd}
+        if addset:
+            mongo_op["$addToSet"] = addset
+        await _s.db.sales_prospects.update_one({"id": existing["id"]}, mongo_op)
+        existing.update(upd)
+        if addset:
             existing["list_ids"] = list(set((existing.get("list_ids") or []) + [lid]))
         return {"prospect": existing, "duplicate": True}
 
@@ -324,6 +365,8 @@ async def add_prospect(p: ProspectIn, user: dict = Depends(_require_sales_vendor
         "email": em,
         "name": (p.name or "").strip(),
         "company": (p.company or "").strip(),
+        "country_code": cc_disp,
+        "phone": phone_full,
         "list_ids": [lid],
         "status": "active",
         "source": "manual",
@@ -356,8 +399,13 @@ async def update_prospect(pid: str, payload: ProspectPatch, user: dict = Depends
         updates["name"] = payload.name.strip()
     if payload.company is not None:
         updates["company"] = payload.company.strip()
-    if payload.phone is not None:
-        updates["phone"] = payload.phone.strip()
+    # Phone + country_code: re-normalise as a pair so the stored `phone`
+    # always reflects the full E.164 number with country code prefixed.
+    if payload.country_code is not None or payload.phone is not None:
+        new_cc_raw = payload.country_code if payload.country_code is not None else (current.get("country_code") or "")
+        new_local = payload.phone if payload.phone is not None else (current.get("phone") or "")
+        updates["country_code"] = _norm_country_code(new_cc_raw)
+        updates["phone"] = _combine_e164(new_cc_raw, new_local)
     await _s.db.sales_prospects.update_one({"id": pid, "vendor_id": vid}, {"$set": updates})
     refreshed = await _s.db.sales_prospects.find_one({"id": pid, "vendor_id": vid}, {"_id": 0})
     return {"prospect": refreshed}
@@ -422,11 +470,18 @@ async def upload_prospects(
     list_id: Optional[str] = None,
     user: dict = Depends(_require_sales_vendor),
 ):
-    """Accepts a CSV with a header row (`email, name, company` — case
-    insensitive; extra columns ignored) and uploads prospects into the
-    target `list_id`. If the list is omitted, the vendor's default
-    'Main list' is used. If a prospect email already exists (same
-    vendor), we simply add the list membership — no overwrite, no dupe.
+    """Accepts a CSV with a header row (case-insensitive) and uploads
+    prospects into the target `list_id`. Recognised columns:
+      • email (required)
+      • name
+      • company
+      • country_code  (e.g. +1, +91, +44 — leading + optional)
+      • phone         (local digits OR full E.164; spaces/dashes ignored)
+    `country_code` + `phone` are combined into a single digit-only E.164
+    string stored as `phone`; `country_code` is also kept separately for
+    display. If a prospect email already exists (same vendor), we add the
+    list membership and enrich missing phone/country_code fields — no
+    overwrite of existing values, no dupe.
     """
     vid = user["vendor_id"]
     lid = list_id or await _ensure_default_list(vid)
@@ -453,14 +508,20 @@ async def upload_prospects(
         idx_email = next((i for i, h in enumerate(header) if h in {"email", "e-mail", "email address"}), 0)
         idx_name = next((i for i, h in enumerate(header) if h in {"name", "full name", "first name"}), -1)
         idx_company = next((i for i, h in enumerate(header) if h in {"company", "organization", "business"}), -1)
+        idx_cc = next((i for i, h in enumerate(header) if h in {"country_code", "country code", "country", "code", "dial code"}), -1)
+        idx_phone = next((i for i, h in enumerate(header) if h in {"phone", "phone number", "mobile", "whatsapp"}), -1)
         data_rows = rows[1:]
     else:
-        idx_email, idx_name, idx_company = 0, 1, 2
+        # Default positional ordering: email, name, company, country_code, phone
+        idx_email, idx_name, idx_company, idx_cc, idx_phone = 0, 1, 2, 3, 4
         data_rows = rows
 
     # Pull all existing prospects for this vendor so we can merge (add list_id)
     existing_by_email: Dict[str, dict] = {}
-    cur = _s.db.sales_prospects.find({"vendor_id": vid}, {"_id": 0, "id": 1, "email": 1, "list_ids": 1})
+    cur = _s.db.sales_prospects.find(
+        {"vendor_id": vid},
+        {"_id": 0, "id": 1, "email": 1, "list_ids": 1, "phone": 1, "country_code": 1},
+    )
     async for d in cur:
         existing_by_email[d["email"]] = d
 
@@ -471,6 +532,7 @@ async def upload_prospects(
     seen_in_file: set = set()
     docs_to_insert: List[dict] = []
     ids_to_add_list: List[str] = []
+    enrich_ops: List[dict] = []  # for prospects existing without phone/cc
 
     for r in data_rows:
         if idx_email >= len(r):
@@ -485,6 +547,10 @@ async def upload_prospects(
         seen_in_file.add(em)
         nm = r[idx_name].strip() if 0 <= idx_name < len(r) else ""
         co = r[idx_company].strip() if 0 <= idx_company < len(r) else ""
+        cc_raw = r[idx_cc].strip() if 0 <= idx_cc < len(r) else ""
+        ph_raw = r[idx_phone].strip() if 0 <= idx_phone < len(r) else ""
+        cc_disp = _norm_country_code(cc_raw)
+        phone_full = _combine_e164(cc_raw, ph_raw)
         existing = existing_by_email.get(em)
         if existing:
             lists = existing.get("list_ids") or []
@@ -493,6 +559,15 @@ async def upload_prospects(
             else:
                 ids_to_add_list.append(existing["id"])
                 merged_into_list += 1
+            # Enrich existing prospect with phone/country_code if missing
+            patch: Dict[str, Any] = {}
+            if phone_full and not existing.get("phone"):
+                patch["phone"] = phone_full
+            if cc_disp and not existing.get("country_code"):
+                patch["country_code"] = cc_disp
+            if patch:
+                patch["updated_at"] = _s.now_iso()
+                enrich_ops.append({"id": existing["id"], "set": patch})
             continue
         docs_to_insert.append({
             "id": _s.new_id(),
@@ -500,6 +575,8 @@ async def upload_prospects(
             "email": em,
             "name": nm,
             "company": co,
+            "country_code": cc_disp,
+            "phone": phone_full,
             "list_ids": [lid],
             "status": "active",
             "source": "csv",
@@ -515,6 +592,11 @@ async def upload_prospects(
             {"id": {"$in": ids_to_add_list}, "vendor_id": vid},
             {"$addToSet": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}},
         )
+    # Apply phone/country_code enrichment to existing prospects that had blanks
+    for op in enrich_ops:
+        await _s.db.sales_prospects.update_one(
+            {"id": op["id"], "vendor_id": vid}, {"$set": op["set"]}
+        )
 
     return {
         "inserted": inserted,
@@ -523,6 +605,28 @@ async def upload_prospects(
         "invalid_skipped": invalid,
         "total_in_file": len(data_rows),
     }
+
+
+@router.get("/prospects/template.csv")
+async def prospects_template_csv(user: dict = Depends(_require_sales_vendor)):
+    """Returns a ready-to-fill CSV template with the recognised column
+    headers and a handful of example rows. Vendors download this, edit
+    in Excel / Google Sheets, then upload back via /prospects/upload."""
+    sample = (
+        "email,name,company,country_code,phone\n"
+        "alex.morgan@acmedental.com,Alex Morgan,Acme Dental Clinic,+1,4165550101\n"
+        "priya.shah@example.in,Priya Shah,Example Pvt Ltd,+91,9876543210\n"
+        "john.doe@example.co.uk,John Doe,Example Ltd,+44,7700900123\n"
+        "noemail-prospect@example.com,Jane Doe,,,\n"
+    )
+    return Response(
+        content=sample,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="botnira-prospects-template.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---------------------------------------------------------------- campaigns ---
