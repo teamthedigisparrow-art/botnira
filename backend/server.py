@@ -1703,7 +1703,8 @@ async def whatsapp_phone_verification(user: dict = Depends(require_vendor)):
         r = await c.get(
             f"{GRAPH_BASE}/{wc['phone_number_id']}",
             params={"fields": "display_phone_number,verified_name,quality_rating,"
-                              "code_verification_status,name_status,messaging_limit_tier,status"},
+                              "code_verification_status,name_status,messaging_limit_tier,"
+                              "status,platform_type"},
             headers={"Authorization": f"Bearer {token}"},
         )
     if r.status_code >= 400:
@@ -1712,9 +1713,20 @@ async def whatsapp_phone_verification(user: dict = Depends(require_vendor)):
     cvs = (data.get("code_verification_status") or "").upper()
     phone_status = (data.get("status") or "").upper()
     platform = (data.get("platform_type") or "").upper()
-    is_registered = cvs == "VERIFIED"
-    is_cloud_ready = is_registered and phone_status == "CONNECTED" and platform == "CLOUD_API"
-    needs_release = is_registered and not is_cloud_ready
+    # `code_verification_status` reflects the PIN-verification *history* on
+    # Meta and can be EXPIRED even on numbers that are actively sending +
+    # receiving (e.g., a number registered by a previous BSP and migrated
+    # to Cloud API on-platform). The ACTUAL operational signal is
+    # status=CONNECTED — that means Meta is actively delivering inbound
+    # messages to our webhook AND accepting outbound sends. `platform_type`
+    # is supplementary (when present, "CLOUD_API" is the only value that
+    # matters here; older numbers may return it empty).
+    is_operational = (phone_status == "CONNECTED") and (platform in {"CLOUD_API", ""})
+    is_cloud_ready = is_operational
+    needs_release = (cvs == "VERIFIED") and not is_cloud_ready
+    # Only suggest re-registration when the number ISN'T operational AND
+    # Meta says the verification slot is empty/expired.
+    needs_registration = (not is_operational) and (cvs in {"EXPIRED", "NOT_VERIFIED", ""})
     return {
         "phone_number_id": wc["phone_number_id"],
         "display_phone_number": data.get("display_phone_number"),
@@ -1725,7 +1737,7 @@ async def whatsapp_phone_verification(user: dict = Depends(require_vendor)):
         "messaging_limit_tier": data.get("messaging_limit_tier"),
         "status": data.get("status"),
         "platform_type": data.get("platform_type"),
-        "needs_registration": cvs in {"EXPIRED", "NOT_VERIFIED", ""},
+        "needs_registration": needs_registration,
         "needs_release": needs_release,
         "registered": is_cloud_ready,
     }
