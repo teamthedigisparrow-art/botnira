@@ -7,41 +7,8 @@ import TrustedBy from "../components/marketing/TrustedBy";
 import SocialIcons from "../components/marketing/SocialIcons";
 import { USE_CASE_PAGES } from "../data/useCases";
 
-const Nav = () => (
-  <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b-2 border-black" data-testid="main-nav">
-    <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-      <Link to="/" className="flex items-center gap-2" data-testid="brand-logo">
-        <BrandMark size={32} />
-        <span className="font-display font-black text-xl tracking-tight">BotNira</span>
-      </Link>
-      <div className="hidden lg:flex items-center gap-7 text-sm font-medium">
-        <a href="#features" className="hover:text-[#002FA7]" data-testid="nav-features">Features</a>
-        <a href="#channels" className="hover:text-[#002FA7]" data-testid="nav-channels">Channels</a>
-        <a href="#how" className="hover:text-[#002FA7]" data-testid="nav-how">How it works</a>
-        <a href="#try" className="hover:text-[#002FA7]" data-testid="nav-try">Try live</a>
-        <a href="#usecases" className="hover:text-[#002FA7]" data-testid="nav-usecases">Use cases</a>
-        <a href="#pricing" className="hover:text-[#002FA7]" data-testid="nav-pricing">Pricing</a>
-        <Link
-          to="/referrals"
-          data-testid="nav-referrals-page"
-          className="hover:text-[#002FA7] inline-flex items-center gap-1"
-        >
-          Referrals
-          <span className="text-[9px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-1 leading-tight">earn 15%</span>
-        </Link>
-        <Link to="/blog" data-testid="nav-blog" className="hover:text-[#002FA7]">Blog</Link>
-        <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
-        <a href="#contact" className="hover:text-[#002FA7]" data-testid="nav-contact">Contact</a>
-      </div>
-      <div className="flex items-center gap-3">
-        <Link to="/login" className="text-sm font-bold hover:underline" data-testid="nav-login">Log in</Link>
-        <Link to="/signup" data-testid="nav-signup" className="inline-flex items-center gap-2 bg-[#002FA7] text-white font-bold text-sm px-4 py-2 border-2 border-black shadow-brutal hover-lift">
-          Get started <ArrowRight size={16} />
-        </Link>
-      </div>
-    </div>
-  </nav>
-);
+import SiteNav from "../components/marketing/SiteNav";
+const Nav = () => <SiteNav />;
 
 const Hero = () => (
   <section className="relative border-b-2 border-black bg-grid">

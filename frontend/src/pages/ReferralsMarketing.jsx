@@ -24,15 +24,15 @@ function Hero() {
     <section className="relative border-b-2 border-black bg-gradient-to-br from-yellow-200 via-amber-100 to-white overflow-hidden">
       <div className="absolute inset-0 opacity-[0.06] pointer-events-none"
            style={{ backgroundImage: "radial-gradient(#000 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
-      <div className="max-w-7xl mx-auto px-6 py-20 md:py-28 grid md:grid-cols-12 gap-10 items-center relative">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-28 grid md:grid-cols-12 gap-10 items-center relative">
         <div className="md:col-span-7">
           <div className="inline-flex items-center gap-2 border-2 border-black px-3 py-1 mb-6 bg-white" data-testid="ref-hero-badge">
             <Gift size={14} />
             <span className="text-xs font-bold tracking-[0.15em] uppercase">BotNira Referral Program · Earn 15% Recurring</span>
           </div>
-          <h1 className="font-display text-5xl md:text-7xl font-black leading-[0.95] tracking-tighter">
+          <h1 className="font-display text-[2.5rem] sm:text-5xl md:text-7xl font-black leading-[1] sm:leading-[0.95] tracking-tighter">
             Refer once.<br/>
-            <span className="bg-black text-[#FFD600] px-3 inline-block">Get paid forever.</span>
+            <span className="bg-black text-[#FFD600] px-2 sm:px-3 inline-block">Get paid forever.</span>
           </h1>
           <p className="mt-6 text-lg md:text-xl max-w-2xl text-neutral-800 font-medium">
             Share your unique BotNira link. Every business you refer pays you
@@ -55,7 +55,7 @@ function Hero() {
               See how it works
             </a>
           </div>
-          <div className="mt-8 grid grid-cols-3 gap-3 max-w-xl">
+          <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-xl">
             {[
               { icon: Repeat, label: "15% recurring", sub: "Every month, forever" },
               { icon: Banknote, label: "Paid in USD", sub: "Wire to your bank" },
@@ -73,20 +73,20 @@ function Hero() {
         {/* Earnings teaser card — mimics the vendor dashboard */}
         <div className="md:col-span-5">
           <div className="border-2 border-black bg-white shadow-brutal-lg" data-testid="ref-hero-preview">
-            <div className="flex items-center justify-between border-b-2 border-black px-4 py-2 bg-black text-white">
-              <div className="flex items-center gap-2">
-                <Gift size={14} />
-                <span className="text-xs font-mono font-bold">YOUR REFERRAL DASHBOARD</span>
+            <div className="flex items-center justify-between border-b-2 border-black px-3 sm:px-4 py-2 bg-black text-white">
+              <div className="flex items-center gap-2 min-w-0">
+                <Gift size={14} className="shrink-0" />
+                <span className="text-[10px] sm:text-xs font-mono font-bold truncate">YOUR REFERRAL DASHBOARD</span>
               </div>
-              <span className="text-[10px] font-mono opacity-70">LIVE</span>
+              <span className="text-[10px] font-mono opacity-70 shrink-0 ml-2">LIVE</span>
             </div>
-            <div className="p-5 space-y-4">
-              <div className="border-2 border-black bg-yellow-200 p-3 flex items-center justify-between gap-2">
-                <div>
+            <div className="p-4 sm:p-5 space-y-4">
+              <div className="border-2 border-black bg-yellow-200 p-3 flex items-center justify-between gap-2 flex-wrap">
+                <div className="min-w-0 flex-1">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-700">Your link</div>
-                  <div className="font-mono text-sm break-all">botnira.com/r/<strong>your-business-x7k2</strong></div>
+                  <div className="font-mono text-xs sm:text-sm break-all">botnira.com/r/<strong>your-business-x7k2</strong></div>
                 </div>
-                <button className="bg-black text-white text-xs font-bold px-3 py-2 border-2 border-black flex items-center gap-1">
+                <button className="bg-black text-white text-xs font-bold px-3 py-2 border-2 border-black flex items-center gap-1 shrink-0">
                   <Copy size={12}/> Copy
                 </button>
               </div>
@@ -132,7 +132,7 @@ function Stats() {
   ];
   return (
     <section className="border-b-2 border-black bg-white">
-      <div className="max-w-7xl mx-auto px-6 py-10 grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         {stats.map((s) => (
           <div key={s.label} className="border-2 border-black p-5 bg-neutral-50 hover-lift" data-testid={`ref-stat-${s.label.toLowerCase().split(" ")[0]}`}>
             <s.icon size={20} />
@@ -189,10 +189,10 @@ function HowItWorks() {
 
   return (
     <section id="how" className="border-b-2 border-black bg-neutral-50">
-      <div className="max-w-7xl mx-auto px-6 py-16 md:py-20">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-16 md:py-20">
         <div className="max-w-3xl">
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">How it works</div>
-          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-black tracking-tighter mt-2">
             From sign-up to your <span className="bg-yellow-300 px-2">first commission</span> in under a week.
           </h2>
           <p className="mt-4 text-neutral-700 max-w-2xl">
@@ -235,10 +235,10 @@ function HowItWorks() {
 function ScreenPreviews() {
   return (
     <section className="border-b-2 border-black bg-white">
-      <div className="max-w-7xl mx-auto px-6 py-16 md:py-20">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-16 md:py-20">
         <div className="max-w-3xl">
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Your dashboard</div>
-          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-black tracking-tighter mt-2">
             See exactly what you'll get the moment you log in.
           </h2>
           <p className="mt-4 text-neutral-700 max-w-2xl">
@@ -246,7 +246,7 @@ function ScreenPreviews() {
           </p>
         </div>
 
-        <div className="mt-10 grid lg:grid-cols-2 gap-8">
+        <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-2 gap-6 sm:gap-8">
           {/* Mock — Overview / link card */}
           <ScreenMockOverview />
           {/* Mock — Customers table */}
@@ -264,24 +264,24 @@ function ScreenPreviews() {
 function ScreenChrome({ title, tab, children, testid }) {
   const tabs = ["Overview", "My Referrals", "Commissions", "Payouts", "Bank Account"];
   return (
-    <div className="border-2 border-black bg-white shadow-brutal-lg" data-testid={testid}>
-      <div className="flex items-center justify-between border-b-2 border-black px-3 py-2 bg-black text-white">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-red-500" />
-          <div className="w-2 h-2 rounded-full bg-yellow-400" />
-          <div className="w-2 h-2 rounded-full bg-green-500" />
-          <span className="ml-2 text-[10px] font-mono opacity-70">botnira.com/app/referrals</span>
+    <div className="border-2 border-black bg-white shadow-brutal-lg max-w-full" data-testid={testid}>
+      <div className="flex items-center justify-between border-b-2 border-black px-3 py-2 bg-black text-white gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+          <div className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />
+          <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+          <span className="ml-2 text-[9px] sm:text-[10px] font-mono opacity-70 truncate">botnira.com/app/referrals</span>
         </div>
-        <span className="text-[10px] font-mono opacity-70">{title}</span>
+        <span className="text-[9px] sm:text-[10px] font-mono opacity-70 shrink-0">{title}</span>
       </div>
-      <div className="border-b-2 border-black px-3 py-2 flex flex-wrap gap-1.5">
+      <div className="border-b-2 border-black px-2 sm:px-3 py-2 flex flex-wrap gap-1.5">
         {tabs.map((t) => (
-          <span key={t} className={`text-[10px] font-bold uppercase tracking-widest border-2 border-black px-2 py-1 ${t === tab ? "bg-[#002FA7] text-white" : "bg-white"}`}>
+          <span key={t} className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest border-2 border-black px-1.5 sm:px-2 py-1 ${t === tab ? "bg-[#002FA7] text-white" : "bg-white"}`}>
             {t}
           </span>
         ))}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-3 sm:p-4 overflow-x-auto">{children}</div>
     </div>
   );
 }
@@ -453,10 +453,10 @@ const CASES = [
 function CaseStudies() {
   return (
     <section className="border-b-2 border-black bg-black text-white">
-      <div className="max-w-7xl mx-auto px-6 py-16 md:py-20">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-16 md:py-20">
         <div className="max-w-3xl">
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#FFD600]">Real partners · real cheques</div>
-          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-black tracking-tighter mt-2">
             They referred. We paid them. <span className="text-[#FFD600]">Last month.</span>
           </h2>
           <p className="mt-4 opacity-80 max-w-2xl">
@@ -464,36 +464,36 @@ function CaseStudies() {
           </p>
         </div>
 
-        <div className="mt-12 grid md:grid-cols-3 gap-5">
+        <div className="mt-10 sm:mt-12 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {CASES.map((c, i) => (
             <div
               key={c.name}
               className="bg-white text-black border-2 border-black shadow-brutal-lg flex flex-col"
               data-testid={`ref-case-${i + 1}`}
             >
-              <div className={`relative ${c.accent} border-b-2 border-black p-5 flex items-center gap-4`}>
+              <div className={`relative ${c.accent} border-b-2 border-black p-4 sm:p-5 flex items-center gap-3 sm:gap-4`}>
                 <img
                   src={c.photo}
                   alt={c.name}
                   loading="lazy"
-                  className="w-20 h-20 object-cover border-2 border-black"
+                  className="w-16 h-16 sm:w-20 sm:h-20 object-cover border-2 border-black shrink-0"
                 />
-                <div className="min-w-0">
-                  <div className="font-display font-black text-lg leading-tight truncate">{c.name}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-display font-black text-base sm:text-lg leading-tight truncate">{c.name}</div>
                   <div className="text-xs font-mono text-neutral-700 truncate">{c.role}</div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-600 mt-1">{c.location}</div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-600 mt-1 truncate">{c.location}</div>
                 </div>
               </div>
 
-              <div className="p-5 flex-1 flex flex-col">
-                <div className="bg-[#FFD600] border-2 border-black px-4 py-3 flex items-end justify-between">
-                  <div>
+              <div className="p-4 sm:p-5 flex-1 flex flex-col">
+                <div className="bg-[#FFD600] border-2 border-black px-3 sm:px-4 py-3 flex items-end justify-between gap-2">
+                  <div className="min-w-0">
                     <div className="text-[10px] font-bold uppercase tracking-widest">Earned last month</div>
-                    <div className="font-display font-black text-3xl leading-none mt-1">{fmtUSD(c.last_month)}</div>
+                    <div className="font-display font-black text-2xl sm:text-3xl leading-none mt-1 break-words">{fmtUSD(c.last_month)}</div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <div className="text-[10px] font-bold uppercase tracking-widest">Active referrals</div>
-                    <div className="font-mono font-black text-2xl">{c.referrals}</div>
+                    <div className="font-mono font-black text-xl sm:text-2xl">{c.referrals}</div>
                   </div>
                 </div>
 
@@ -547,10 +547,10 @@ function Calculator() {
 
   return (
     <section className="border-b-2 border-black bg-white">
-      <div className="max-w-7xl mx-auto px-6 py-16 md:py-20 grid md:grid-cols-2 gap-10 items-center">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-16 md:py-20 grid md:grid-cols-2 gap-10 items-center">
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Earnings calculator</div>
-          <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-black tracking-tighter mt-2">
             Do the math on <span className="bg-yellow-300 px-2">your network.</span>
           </h2>
           <p className="mt-4 text-neutral-700">
@@ -596,9 +596,9 @@ function Calculator() {
           </div>
         </div>
 
-        <div className="border-2 border-black bg-gradient-to-br from-yellow-100 via-yellow-200 to-amber-200 shadow-brutal-lg p-8" data-testid="ref-calc-result">
+        <div className="border-2 border-black bg-gradient-to-br from-yellow-100 via-yellow-200 to-amber-200 shadow-brutal-lg p-6 sm:p-8" data-testid="ref-calc-result">
           <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-700">You earn (recurring)</div>
-          <div className="font-display font-black text-6xl md:text-7xl tracking-tighter leading-none mt-2">
+          <div className="font-display font-black text-5xl sm:text-6xl md:text-7xl tracking-tighter leading-none mt-2 break-words">
             {fmtUSD(monthly)}<span className="text-2xl md:text-3xl">/mo</span>
           </div>
           <div className="mt-3 text-sm font-bold">
@@ -714,21 +714,21 @@ function FAQ() {
   const [openIdx, setOpenIdx] = useState(0);
   return (
     <section className="border-b-2 border-black bg-white">
-      <div className="max-w-4xl mx-auto px-6 py-16 md:py-20">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-14 sm:py-16 md:py-20">
         <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">FAQ</div>
-        <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Questions, answered.</h2>
+        <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-black tracking-tighter mt-2">Questions, answered.</h2>
         <div className="mt-8 space-y-2">
           {FAQS.map((f, i) => (
             <div key={f.q} className="border-2 border-black bg-white" data-testid={`ref-faq-${i}`}>
               <button
                 onClick={() => setOpenIdx(openIdx === i ? -1 : i)}
-                className="w-full text-left px-5 py-4 flex items-center justify-between gap-4"
+                className="w-full text-left px-4 sm:px-5 py-4 flex items-start justify-between gap-3"
               >
-                <span className="font-display font-bold">{f.q}</span>
-                <ChevronRight size={18} className={`transition-transform ${openIdx === i ? "rotate-90" : ""}`} />
+                <span className="font-display font-bold text-sm sm:text-base">{f.q}</span>
+                <ChevronRight size={18} className={`shrink-0 mt-1 transition-transform ${openIdx === i ? "rotate-90" : ""}`} />
               </button>
               {openIdx === i && (
-                <div className="px-5 pb-5 text-sm text-neutral-700 border-t-2 border-black pt-3">{f.a}</div>
+                <div className="px-4 sm:px-5 pb-5 text-sm text-neutral-700 border-t-2 border-black pt-3">{f.a}</div>
               )}
             </div>
           ))}
@@ -744,28 +744,28 @@ function FAQ() {
 function FinalCTA() {
   return (
     <section className="border-b-2 border-black bg-[#002FA7] text-white" id="contact">
-      <div className="max-w-7xl mx-auto px-6 py-16 md:py-20 grid md:grid-cols-[1.4fr_1fr] gap-10 items-center">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-16 md:py-20 grid md:grid-cols-[1.4fr_1fr] gap-10 items-center">
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#FFD600]">Start earning today</div>
-          <h2 className="font-display text-4xl md:text-6xl font-black tracking-tighter mt-2 leading-[0.95]">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-6xl font-black tracking-tighter mt-2 leading-[1] sm:leading-[0.95]">
             Your link is <span className="text-[#FFD600]">already waiting.</span>
           </h2>
           <p className="mt-5 text-white/90 max-w-xl text-lg">
             60-second sign-up. The Referrals tab is the very first thing you'll see in your dashboard.
             Paste your link anywhere — and start earning 15% recurring commission today.
           </p>
-          <div className="mt-8 flex flex-wrap gap-4">
+          <div className="mt-6 sm:mt-8 flex flex-wrap gap-3 sm:gap-4">
             <Link
               to="/signup"
               data-testid="ref-finalcta-signup"
-              className="inline-flex items-center gap-2 bg-[#FFD600] text-black font-bold px-7 py-3 border-2 border-black shadow-brutal-lg hover-lift"
+              className="inline-flex items-center gap-2 bg-[#FFD600] text-black font-bold px-5 sm:px-7 py-3 border-2 border-black shadow-brutal-lg hover-lift text-sm sm:text-base"
             >
               Create my free account <ArrowRight size={18}/>
             </Link>
             <Link
               to="/login"
               data-testid="ref-finalcta-login"
-              className="inline-flex items-center gap-2 bg-white text-black font-bold px-7 py-3 border-2 border-black shadow-brutal hover-lift"
+              className="inline-flex items-center gap-2 bg-white text-black font-bold px-5 sm:px-7 py-3 border-2 border-black shadow-brutal hover-lift text-sm sm:text-base"
             >
               I already have an account
             </Link>

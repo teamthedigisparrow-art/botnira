@@ -7,7 +7,7 @@ import { USE_CASE_PAGES } from "../../data/useCases";
 export default function SiteFooter() {
   return (
     <footer className="bg-black text-white" data-testid="landing-footer">
-      <div className="max-w-7xl mx-auto px-6 py-12 grid md:grid-cols-4 gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 grid sm:grid-cols-2 md:grid-cols-4 gap-8">
         <div className="md:col-span-1">
           <div className="flex items-center gap-3">
             <BrandMark size={32} />
@@ -56,7 +56,7 @@ export default function SiteFooter() {
         </div>
       </div>
       <div className="border-t border-white/10">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex flex-wrap justify-between items-center gap-3 text-xs font-mono opacity-60">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap justify-between items-center gap-3 text-xs font-mono opacity-60">
           <span>© 2026 BotNira · AI Receptionist &amp; AI Calling Software · All rights reserved by THE DIGISPARROW, Hamilton, ON, Canada.</span>
           <span>Built for front desks that sleep.</span>
         </div>
