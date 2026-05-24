@@ -15,6 +15,7 @@ import ReferralsMarketing from "./pages/ReferralsMarketing";
 import Blog from "./pages/Blog";
 import BlogDetail from "./pages/BlogDetail";
 import AdminBlogs from "./pages/admin/AdminBlogs";
+import ScrollToHash from "./components/ScrollToHash";
 import { SEO_PAGES } from "./data/seoPages";
 import VendorLayout from "./layouts/VendorLayout";
 import AdminLayout from "./layouts/AdminLayout";
@@ -66,6 +67,7 @@ function App() {
         <BrowserRouter>
           <Toaster position="top-right" />
           <RouteAnalytics />
+          <ScrollToHash />
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/referrals" element={<ReferralsMarketing />} />
