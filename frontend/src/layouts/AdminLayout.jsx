@@ -1,5 +1,5 @@
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
-import { Building2, BarChart3, LogOut, LayoutDashboard, CreditCard, Gift } from "lucide-react";
+import { Building2, BarChart3, LogOut, LayoutDashboard, CreditCard, Gift, FileText } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import BrandMark from "../components/BrandMark";
 
@@ -9,6 +9,7 @@ const links = [
   { to: "/admin/billing", label: "Billing", icon: CreditCard, tid: "admin-nav-billing" },
   { to: "/admin/analytics", label: "Analytics", icon: BarChart3, tid: "admin-nav-analytics" },
   { to: "/admin/referrals", label: "Referrals", icon: Gift, tid: "admin-nav-referrals" },
+  { to: "/admin/blogs", label: "Blogs", icon: FileText, tid: "admin-nav-blogs" },
 ];
 
 export default function AdminLayout() {

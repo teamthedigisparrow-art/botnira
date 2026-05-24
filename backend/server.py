@@ -5533,6 +5533,22 @@ from referral_routes import (  # noqa: E402
 api_router.include_router(_referral_router, prefix="/referrals")
 api_router.include_router(_referral_admin_router, prefix="/admin/referrals")
 
+# Blog module — public reader + admin CMS with object-storage image uploads
+from blog_routes import (  # noqa: E402
+    router as _blog_router,
+    admin_router as _blog_admin_router,
+    init_storage as _blog_init_storage,
+)
+api_router.include_router(_blog_router, prefix="/blogs")
+api_router.include_router(_blog_admin_router, prefix="/admin/blogs")
+
+@app.on_event("startup")
+async def _init_blog_storage():
+    try:
+        _blog_init_storage()
+    except Exception as e:
+        logger.warning("blog storage init non-fatal: %s", e)
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,

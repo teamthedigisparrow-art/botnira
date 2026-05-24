@@ -12,6 +12,9 @@ import Terms from "./pages/Terms";
 import UseCasePage from "./pages/UseCasePage";
 import SeoLandingPage from "./pages/SeoLandingPage";
 import ReferralsMarketing from "./pages/ReferralsMarketing";
+import Blog from "./pages/Blog";
+import BlogDetail from "./pages/BlogDetail";
+import AdminBlogs from "./pages/admin/AdminBlogs";
 import { SEO_PAGES } from "./data/seoPages";
 import VendorLayout from "./layouts/VendorLayout";
 import AdminLayout from "./layouts/AdminLayout";
@@ -66,6 +69,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/referrals" element={<ReferralsMarketing />} />
+            <Route path="/blog" element={<Blog />} />
+            <Route path="/blog/:slug" element={<BlogDetail />} />
             <Route path="/r/:code" element={<ReferralRedirect />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
@@ -96,6 +101,7 @@ function App() {
               <Route path="billing" element={<AdminBilling />} />
               <Route path="analytics" element={<AdminAnalytics />} />
               <Route path="referrals" element={<AdminReferrals />} />
+              <Route path="blogs" element={<AdminBlogs />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

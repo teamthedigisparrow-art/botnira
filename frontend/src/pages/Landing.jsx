@@ -29,6 +29,7 @@ const Nav = () => (
           Referrals
           <span className="text-[9px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-1 leading-tight">earn 15%</span>
         </Link>
+        <Link to="/blog" data-testid="nav-blog" className="hover:text-[#002FA7]">Blog</Link>
         <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
         <a href="#contact" className="hover:text-[#002FA7]" data-testid="nav-contact">Contact</a>
       </div>
@@ -757,6 +758,7 @@ const Footer = () => (
           <li><a href="#channels" className="hover:underline">Channels</a></li>
           <li><a href="#pricing" className="hover:underline">Pricing</a></li>
           <li><Link to="/referrals" className="hover:underline" data-testid="footer-referrals">Referrals · earn 15%</Link></li>
+          <li><Link to="/blog" className="hover:underline" data-testid="footer-blog">Blog</Link></li>
           <li><a href="#faq" className="hover:underline">FAQ</a></li>
           <li><a href="#contact" className="hover:underline">Contact</a></li>
           <li><a href="#try" className="hover:underline">Try live</a></li>

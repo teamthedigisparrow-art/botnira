@@ -30,6 +30,7 @@ export default function SiteNav({ activeReferrals = false }) {
             Referrals
             <span className="text-[9px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-1 leading-tight">earn 15%</span>
           </Link>
+          <Link to="/blog" data-testid="nav-blog" className="hover:text-[#002FA7]">Blog</Link>
           <Link to="/#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</Link>
           <Link to="/#contact" className="hover:text-[#002FA7]" data-testid="nav-contact">Contact</Link>
         </div>

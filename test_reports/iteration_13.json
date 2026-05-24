@@ -1,0 +1,47 @@
+{
+  "summary": "Iter 13 — Tested Blog module end-to-end (backend + frontend). Backend: 21/21 pytest tests PASS covering public list/by-slug/file proxy, admin CRUD, slug uniqueness, status workflow (draft→active sets published_at; active→inactive keeps it; draft hidden from public), auth gating (anon 401, vendor 403, super 200), image upload validation (jpg/png/webp ≤6MB, .exe rejected 400, empty 400, 7MB rejected 413), public image fetch round-trip. Frontend: public /blog list, /blog/:slug detail (title/body/h1/h2/bold/list + meta), 404 path, nav-blog & footer-blog on both Landing and SiteNav/SiteFooter (/referrals page), full admin editor flow including preview toggle, inline body image upload (![image](/api/blogs/files/<id>)), save-draft, toggle, delete-with-confirm — all working with no console errors.",
+  "backend_verification": {
+    "endpoints_tested": "GET /api/blogs, GET /api/blogs/by-slug/{slug}, GET /api/blogs/files/{id}, GET/POST/PATCH/DELETE /api/admin/blogs, POST /api/admin/blogs/{id}/toggle-status, POST /api/admin/blogs/upload-image",
+    "auth_gating": "PASS — anon → 401/403, vendor → 403 on all admin endpoints. Superadmin (sidhuboys000) → 200.",
+    "slug_uniqueness": "PASS — duplicate titles auto-suffix (-2). Patching slug to existing also suffixes (no 409 error).",
+    "status_workflow": "PASS — draft hidden from /api/blogs + /by-slug. Toggle draft→active sets published_at + appears in public list. Toggle active→inactive preserves published_at + hides from public again.",
+    "image_pipeline": "PASS — upload PNG via multipart returns {id,url=/api/blogs/files/<id>,content_type=image/png,size}. Anonymous GET of that URL returns 200 with image/png and exact bytes. Cache-Control: public, max-age=86400 set."
+  },
+  "frontend_verification": {
+    "public_list": "PASS — /blog renders blog-list-page, blog-hero-card present, seeded blog visible, blog-tags-filter + blog-tag-all rendered (3 tag chips: AI/Receptionist/2026).",
+    "public_detail": "PASS — /blog/<slug> renders blog-detail-title='AI Receptionists in 2026...', blog-detail-body contains <h1>, <h2>, <strong> markdown-rendered. document.title and meta[name=description] populated from seo fields. view_count increments on each load.",
+    "not_found": "PASS — /blog/nonexistent-xyz-999 renders blog-detail-notfound testid (404 path).",
+    "nav_footer_links": "PASS — nav-blog + footer-blog (href=/blog) present on both Landing (/) and SiteNav/SiteFooter (/referrals page).",
+    "admin_sidebar": "PASS — admin-nav-blogs link visible in SuperAdmin sidebar.",
+    "admin_list_page": "PASS — /admin/blogs renders admin-blogs-page with search + status filter pills (ALL/ACTIVE/DRAFT/INACTIVE) and admin-blogs-table.",
+    "admin_editor": "PASS — admin-blogs-new-btn → admin-blog-editor opens with title/slug/author/subtitle/excerpt/body/featured-upload/tags/SEO/status panel. Title field testid is on wrapper div (use `[data-testid=admin-blog-title] input`).",
+    "preview_toggle": "PASS — admin-blog-preview-toggle switches between textarea and admin-blog-body-preview (renders <h1>, <strong>, <li> from markdown).",
+    "inline_image_upload": "PASS — admin-blog-body-upload-image triggers file chooser; upload returns ![image](/api/blogs/files/<uuid>) appended to admin-blog-body. Public fetch of that URL returns 200 image/png.",
+    "save_draft_toggle_delete": "PASS — save-draft saves and returns to list with new row; admin-blog-toggle-<id> flips status; admin-blog-delete-<id> shows admin-blog-delete-confirm-<id> button; confirm removes row + toast 'Post deleted' shown."
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_blogs.py",
+    "/app/test_reports/pytest/iter13_blogs.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "blog_routes.py uses synchronous `requests` for object-storage I/O inside async FastAPI endpoints — blocks the event loop on every image upload/fetch. Acceptable for low traffic but should switch to httpx.AsyncClient or run_in_threadpool for high-traffic SEO image serving. Non-blocking for MVP.",
+    "Public image proxy /api/blogs/files/{id} loads entire payload into memory (StreamingResponse(io.BytesIO(data))). For larger images (≤6MB) acceptable, but a true streaming proxy (httpx stream + aiter_bytes) would be more efficient and avoid double-buffering.",
+    "_unique_slug loop has no upper bound — pathological many-collision case (e.g., 1000+ posts with same title) would run 1000+ DB queries. Add a hard cap (e.g., 50) and fall back to a UUID suffix.",
+    "AdminBlogs.jsx Field component places data-testid on the wrapper <div>, not the input — testing requires `[data-testid=admin-blog-title] input` chained selector. Consider also putting testid directly on inputs (e.g., admin-blog-title-input) for cleaner test selectors.",
+    "AdminBlogs.jsx is 686 lines (close to 700-line guideline). FeaturedImageInput, Field, SidePanel, BlogEditor could be split into /pages/admin/blog/ submodules for maintainability.",
+    "Frontend doesn't enforce client-side file size check before posting to /upload-image — a 7MB file uploads fully and only fails server-side with 413. Add `if (file.size > 6 * 1024 * 1024) toast.error(...)` in FeaturedImageInput + the body inline uploader.",
+    "blog_routes uses 200 for create instead of 201 (FastAPI default). Non-blocking but inconsistent with REST conventions used elsewhere if applicable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_blogs.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% (all critical flows verified)"},
+  "test_credentials": "sidhuboys000@gmail.com / Kamala98@pamo (superadmin) and demo@botnira.com / demo123 (vendor for 403 negative tests). Both authenticate via POST /api/auth/login → token in JSON 'token' field.",
+  "seed_data_creation": "test_blogs.py creates ephemeral TEST_ prefixed blogs and deletes them in a fixture teardown. UI test also creates + deletes one 'TEST UI Blog' end-to-end. No persistent residue.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Blog module is solid. Backend test_blogs.py (21 tests) is the regression suite — run with `pytest /app/backend/tests/test_blogs.py -v`. The seeded blog 'ai-receptionists-in-2026-why-your-front-desk-needs-one' is relied upon by some tests (public detail + view_count); do not delete it. For UI testing, login first (form uses get_by_role('button', name='Sign in'), not type=submit), then navigate to /admin/blogs. Title input is `[data-testid=admin-blog-title] input` (wrapper has testid). Body upload uses native file chooser — use page.expect_file_chooser context to set files. Object storage is real (Emergent) — uploads ARE persisted; tests use unique blog titles to avoid slug collisions."
+}

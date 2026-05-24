@@ -40,6 +40,7 @@ export default function SiteFooter() {
             <li><Link to="/#channels" className="hover:underline">Channels</Link></li>
             <li><Link to="/#pricing" className="hover:underline">Pricing</Link></li>
             <li><Link to="/referrals" className="hover:underline" data-testid="footer-referrals">Referrals · earn 15%</Link></li>
+            <li><Link to="/blog" className="hover:underline" data-testid="footer-blog">Blog</Link></li>
             <li><Link to="/#faq" className="hover:underline">FAQ</Link></li>
             <li><Link to="/#contact" className="hover:underline">Contact</Link></li>
           </ul>
