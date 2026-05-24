@@ -29,6 +29,7 @@ import AdminOverview from "./pages/admin/AdminOverview";
 import AdminVendors from "./pages/admin/AdminVendors";
 import AdminBilling from "./pages/admin/AdminBilling";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
+import AdminReferrals from "./pages/admin/AdminReferrals";
 
 // Fires Meta Pixel + Google Analytics PageView on every SPA route change.
 // Without this, gtag/fbq would only count the very first page load.
@@ -92,6 +93,7 @@ function App() {
               <Route path="vendors" element={<AdminVendors />} />
               <Route path="billing" element={<AdminBilling />} />
               <Route path="analytics" element={<AdminAnalytics />} />
+              <Route path="referrals" element={<AdminReferrals />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

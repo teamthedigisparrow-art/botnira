@@ -263,11 +263,30 @@ def slugify(txt: str) -> str:
 @app.on_event("startup")
 async def seed_admin():
     # Canonical seed credentials — kept in sync with /app/memory/test_credentials.md.
-    # Seed is idempotent: if a stale DB already has these users with a wrong/old
-    # password hash, we always overwrite the password_hash + email_verified flag
-    # so login never fails after a re-deploy.
+    # The superadmin login was rotated to a personal email; we migrate the old
+    # seeded account in-place so the existing JWT/permissions stay intact.
+    NEW_ADMIN_EMAIL = "sidhuboys000@gmail.com"
+    NEW_ADMIN_PW = "Kamala98@pamo"
+    OLD_ADMIN_EMAIL = "admin@botnira.com"
+
+    # If the legacy admin still exists, rename + repassword it. Drop a stale
+    # row at the new email first so the rename isn't blocked by a unique index.
+    legacy_admin = await db.users.find_one({"email": OLD_ADMIN_EMAIL}, {"_id": 0})
+    if legacy_admin:
+        await db.users.delete_many({"email": NEW_ADMIN_EMAIL, "id": {"$ne": legacy_admin["id"]}})
+        await db.users.update_one(
+            {"id": legacy_admin["id"]},
+            {"$set": {
+                "email": NEW_ADMIN_EMAIL,
+                "password_hash": hash_password(NEW_ADMIN_PW),
+                "email_verified": True,
+                "role": "superadmin",
+            }},
+        )
+        logger.info("Migrated superadmin %s → %s", OLD_ADMIN_EMAIL, NEW_ADMIN_EMAIL)
+
     SEED_PASSWORDS = {
-        "admin@botnira.com": "admin123",
+        NEW_ADMIN_EMAIL: NEW_ADMIN_PW,
         "demo@botnira.com": "demo123",
         "kamal@thedigisparrow.com": "Kamala98@hmu",
     }
@@ -298,14 +317,14 @@ async def seed_admin():
                     {"$set": {"email_verified": True}},
                 )
 
-    admin_email = "admin@botnira.com"
+    admin_email = NEW_ADMIN_EMAIL
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
         await db.users.insert_one(
             {
                 "id": new_id(),
                 "email": admin_email,
-                "password_hash": hash_password(SEED_PASSWORDS[admin_email]),
+                "password_hash": hash_password(NEW_ADMIN_PW),
                 "full_name": "Super Admin",
                 "role": "superadmin",
                 "vendor_id": None,
@@ -313,7 +332,7 @@ async def seed_admin():
                 "created_at": now_iso(),
             }
         )
-        logger.info("Seeded superadmin admin@botnira.com / admin123")
+        logger.info("Seeded superadmin %s", admin_email)
 
     # seed one demo vendor for easy exploration
     demo_email = "demo@botnira.com"
@@ -5505,12 +5524,14 @@ app.add_event_handler("startup", _sales_start)
 # Referral program — 15% recurring commission, paid monthly
 from referral_routes import (  # noqa: E402
     router as _referral_router,
+    admin_router as _referral_admin_router,
     ensure_referral_code as _ensure_referral_code,
     attach_referral_on_signup as _attach_referral_on_signup,
     record_commission_for_invoice as _record_referral_commission,
     mark_referral_cancelled as _mark_referral_cancelled,
 )
 api_router.include_router(_referral_router, prefix="/referrals")
+api_router.include_router(_referral_admin_router, prefix="/admin/referrals")
 
 app.include_router(api_router)
 app.add_middleware(

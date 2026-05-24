@@ -15,9 +15,10 @@ from pydantic import BaseModel, Field
 
 # We re-use the auth helpers, db handle and id generator from the main server
 # module rather than duplicate state.
-from server import db, require_vendor, new_id, now_iso, slugify, logger  # type: ignore
+from server import db, require_vendor, require_admin, new_id, now_iso, slugify, logger  # type: ignore
 
 router = APIRouter()
+admin_router = APIRouter()
 
 # 15% commission, recurring on every paid invoice from a referred vendor.
 COMMISSION_RATE = 0.15
@@ -405,3 +406,327 @@ async def public_resolve(code: str):
         "code": code_clean,
         "referrer_business_name": (vendor or {}).get("name", ""),
     }
+
+
+
+# ===========================================================================
+# Admin endpoints — mounted at /api/admin/referrals/*
+# ===========================================================================
+class PayoutMarkPaidReq(BaseModel):
+    vendor_id: str
+    month: str = Field(min_length=7, max_length=7)  # YYYY-MM
+    amount_usd: float = Field(gt=0)
+    payout_method: str = Field(default="Wire (USD)", max_length=64)
+    reference: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=400)
+
+
+async def _vendor_lookup_map(vendor_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch vendor docs + their owning user's email in one shot."""
+    if not vendor_ids:
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    async for v in db.vendors.find({"id": {"$in": vendor_ids}}, {"_id": 0}):
+        out[v["id"]] = {"vendor": v, "email": "", "full_name": ""}
+    async for u in db.users.find(
+        {"vendor_id": {"$in": vendor_ids}, "role": "vendor"},
+        {"_id": 0, "vendor_id": 1, "email": 1, "full_name": 1},
+    ):
+        if u["vendor_id"] in out:
+            out[u["vendor_id"]]["email"] = u.get("email", "")
+            out[u["vendor_id"]]["full_name"] = u.get("full_name", "")
+    return out
+
+
+@admin_router.get("/overview")
+async def admin_referral_overview(user: dict = Depends(require_admin)):
+    """Returns global summary + every vendor who has ever referred at least
+    one customer. Vendors with zero referrals are excluded — admin only cares
+    about the ones who actually earn."""
+    # Build the unique set of referrer_vendor_ids from referrals + commissions.
+    referrer_ids: set[str] = set()
+    async for r in db.referrals.find({}, {"_id": 0, "referrer_vendor_id": 1}):
+        referrer_ids.add(r["referrer_vendor_id"])
+    async for c in db.referral_commissions.find({}, {"_id": 0, "referrer_vendor_id": 1}):
+        referrer_ids.add(c["referrer_vendor_id"])
+
+    vendors_map = await _vendor_lookup_map(list(referrer_ids))
+
+    # Aggregate per-referrer totals
+    rows: List[Dict[str, Any]] = []
+    g_pending = 0.0
+    g_paid = 0.0
+    g_lifetime = 0.0
+    g_customers = 0
+    g_active_customers = 0
+
+    for vid in referrer_ids:
+        total_customers = await db.referrals.count_documents({"referrer_vendor_id": vid})
+        active_customers = await db.referrals.count_documents(
+            {"referrer_vendor_id": vid, "status": "active"}
+        )
+
+        async def _sum(match):
+            agg = await db.referral_commissions.aggregate([
+                {"$match": match},
+                {"$group": {"_id": None, "total": {"$sum": "$commission_amount_usd"}}},
+            ]).to_list(1)
+            return float(agg[0]["total"]) if agg else 0.0
+
+        lifetime = await _sum({"referrer_vendor_id": vid})
+        paid = await _sum({"referrer_vendor_id": vid, "status": "paid"})
+        pending = await _sum({"referrer_vendor_id": vid, "status": "accrued"})
+
+        # Last payout (any)
+        last_payout = await db.referral_payouts.find_one(
+            {"vendor_id": vid}, {"_id": 0}, sort=[("paid_at", -1)]
+        )
+        # Bank on file?
+        bank = await db.referral_bank_accounts.find_one(
+            {"vendor_id": vid}, {"_id": 0, "id": 1}
+        )
+        rcode = await db.referral_codes.find_one({"vendor_id": vid}, {"_id": 0, "code": 1})
+
+        info = vendors_map.get(vid) or {}
+        rows.append({
+            "vendor_id": vid,
+            "business_name": (info.get("vendor") or {}).get("name", ""),
+            "contact_email": info.get("email", ""),
+            "contact_name": info.get("full_name", ""),
+            "referral_code": (rcode or {}).get("code", ""),
+            "total_customers": total_customers,
+            "active_customers": active_customers,
+            "lifetime_usd": round(lifetime, 2),
+            "paid_usd": round(paid, 2),
+            "pending_usd": round(pending, 2),
+            "bank_on_file": bool(bank),
+            "last_payout_at": (last_payout or {}).get("paid_at"),
+        })
+
+        g_customers += total_customers
+        g_active_customers += active_customers
+        g_lifetime += lifetime
+        g_paid += paid
+        g_pending += pending
+
+    # Sort: vendors with pending payouts first, then by lifetime desc.
+    rows.sort(key=lambda r: (-r["pending_usd"], -r["lifetime_usd"]))
+
+    return {
+        "summary": {
+            "total_referrers": len(referrer_ids),
+            "total_referred_customers": g_customers,
+            "total_active_referred_customers": g_active_customers,
+            "global_pending_usd": round(g_pending, 2),
+            "global_paid_usd": round(g_paid, 2),
+            "global_lifetime_usd": round(g_lifetime, 2),
+            "commission_rate_percent": int(COMMISSION_RATE * 100),
+        },
+        "referrers": rows,
+    }
+
+
+@admin_router.get("/vendor/{vendor_id}")
+async def admin_referral_vendor(vendor_id: str, user: dict = Depends(require_admin)):
+    """Drill-down: everything we know about a single referrer — month-wise
+    commission breakdown, every referred customer, every commission row, every
+    payout sent, plus their bank details so admin can wire from one screen."""
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    owner = await db.users.find_one(
+        {"vendor_id": vendor_id, "role": "vendor"},
+        {"_id": 0, "email": 1, "full_name": 1, "created_at": 1},
+    ) or {}
+    code_doc = await db.referral_codes.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    bank = await db.referral_bank_accounts.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    summary = await _summary_for_vendor(vendor_id)
+
+    # Customers
+    customers_raw = await db.referrals.find(
+        {"referrer_vendor_id": vendor_id}, {"_id": 0}
+    ).sort("signup_at", -1).to_list(1000)
+    referred_ids = [c["referred_vendor_id"] for c in customers_raw]
+    ref_vendors = await _vendor_lookup_map(referred_ids)
+    customers = []
+    for c in customers_raw:
+        rv = ref_vendors.get(c["referred_vendor_id"]) or {}
+        agg = await db.referral_commissions.aggregate([
+            {"$match": {
+                "referrer_vendor_id": vendor_id,
+                "referred_vendor_id": c["referred_vendor_id"],
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$commission_amount_usd"}}},
+        ]).to_list(1)
+        earned = float(agg[0]["total"]) if agg else 0.0
+        customers.append({
+            "referral_id": c["id"],
+            "referred_vendor_id": c["referred_vendor_id"],
+            "business_name": (rv.get("vendor") or {}).get("name", ""),
+            "contact_email": rv.get("email", ""),
+            "plan": (rv.get("vendor") or {}).get("plan", ""),
+            "subscription_status": (rv.get("vendor") or {}).get("subscription_status", ""),
+            "signup_at": c.get("signup_at"),
+            "status": c.get("status", "active"),
+            "earned_usd": round(earned, 2),
+        })
+
+    # All commissions
+    rows = await db.referral_commissions.find(
+        {"referrer_vendor_id": vendor_id}, {"_id": 0}
+    ).sort("paid_at", -1).to_list(2000)
+    name_map = {rid: (ref_vendors.get(rid, {}).get("vendor") or {}).get("name", "")
+                for rid in referred_ids}
+    commissions = [{
+        "id": r["id"],
+        "referred_vendor_id": r["referred_vendor_id"],
+        "business_name": name_map.get(r["referred_vendor_id"], ""),
+        "payment_amount_usd": r.get("payment_amount_usd", 0.0),
+        "commission_amount_usd": r.get("commission_amount_usd", 0.0),
+        "commission_month": r.get("commission_month"),
+        "status": r.get("status", "accrued"),
+        "paid_at": r.get("paid_at"),
+        "stripe_invoice_id": r.get("stripe_invoice_id", ""),
+        "payout_id": r.get("payout_id", ""),
+    } for r in rows]
+
+    # Monthly rollup with breakdown of paid vs pending
+    monthly: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        m = r.get("commission_month") or "unknown"
+        bucket = monthly.setdefault(m, {
+            "month": m, "invoices": 0,
+            "gross_payments_usd": 0.0, "commission_usd": 0.0,
+            "paid_usd": 0.0, "accrued_usd": 0.0,
+        })
+        bucket["invoices"] += 1
+        bucket["gross_payments_usd"] += float(r.get("payment_amount_usd", 0))
+        bucket["commission_usd"] += float(r.get("commission_amount_usd", 0))
+        if r.get("status") == "paid":
+            bucket["paid_usd"] += float(r.get("commission_amount_usd", 0))
+        else:
+            bucket["accrued_usd"] += float(r.get("commission_amount_usd", 0))
+    monthly_list = sorted(monthly.values(), key=lambda x: x["month"], reverse=True)
+    for m in monthly_list:
+        for k in ("gross_payments_usd", "commission_usd", "paid_usd", "accrued_usd"):
+            m[k] = round(m[k], 2)
+
+    # Payouts already sent
+    payouts = await db.referral_payouts.find(
+        {"vendor_id": vendor_id}, {"_id": 0}
+    ).sort("paid_at", -1).to_list(500)
+
+    return {
+        "vendor": {
+            "id": vendor["id"],
+            "name": vendor.get("name", ""),
+            "plan": vendor.get("plan"),
+            "subscription_status": vendor.get("subscription_status"),
+            "created_at": vendor.get("created_at"),
+        },
+        "owner": owner,
+        "referral_code": (code_doc or {}).get("code", ""),
+        "bank_account": bank,
+        "summary": summary,
+        "customers": customers,
+        "monthly": monthly_list,
+        "commissions": commissions,
+        "payouts": payouts,
+    }
+
+
+@admin_router.get("/payouts/pending")
+async def admin_pending_payouts(user: dict = Depends(require_admin)):
+    """Payout queue grouped by (vendor, month). Each row is one wire admin
+    needs to send. Skips rows where the vendor has no bank account on file
+    (still surfaces them with bank_on_file=false so admin can chase them)."""
+    pipeline = [
+        {"$match": {"status": "accrued"}},
+        {"$group": {
+            "_id": {"vendor_id": "$referrer_vendor_id", "month": "$commission_month"},
+            "amount_usd": {"$sum": "$commission_amount_usd"},
+            "commission_count": {"$sum": 1},
+            "oldest_paid_at": {"$min": "$paid_at"},
+            "latest_paid_at": {"$max": "$paid_at"},
+        }},
+    ]
+    rows: List[Dict[str, Any]] = []
+    vendor_ids: set[str] = set()
+    async for r in db.referral_commissions.aggregate(pipeline):
+        vendor_ids.add(r["_id"]["vendor_id"])
+        rows.append(r)
+
+    vmap = await _vendor_lookup_map(list(vendor_ids))
+    banks: Dict[str, Dict[str, Any]] = {}
+    async for b in db.referral_bank_accounts.find(
+        {"vendor_id": {"$in": list(vendor_ids)}}, {"_id": 0}
+    ):
+        banks[b["vendor_id"]] = b
+
+    pending: List[Dict[str, Any]] = []
+    total = 0.0
+    for r in rows:
+        vid = r["_id"]["vendor_id"]
+        info = vmap.get(vid) or {}
+        bank = banks.get(vid)
+        pending.append({
+            "vendor_id": vid,
+            "month": r["_id"]["month"],
+            "business_name": (info.get("vendor") or {}).get("name", ""),
+            "contact_email": info.get("email", ""),
+            "amount_usd": round(float(r["amount_usd"]), 2),
+            "commission_count": r["commission_count"],
+            "oldest_paid_at": r.get("oldest_paid_at"),
+            "latest_paid_at": r.get("latest_paid_at"),
+            "bank_on_file": bool(bank),
+            "bank_account": bank,
+        })
+        total += float(r["amount_usd"])
+
+    # Group by month asc → oldest months first (those should be paid first).
+    pending.sort(key=lambda x: (x["month"] or "", -x["amount_usd"]))
+    return {"pending": pending, "total_pending_usd": round(total, 2)}
+
+
+@admin_router.post("/payouts")
+async def admin_record_payout(req: PayoutMarkPaidReq, user: dict = Depends(require_admin)):
+    """Mark all accrued commissions for (vendor, month) as paid and record a
+    payout row. Idempotent: if no accrued rows match, the API errors out so
+    admin doesn't accidentally double-pay."""
+    vendor = await db.vendors.find_one({"id": req.vendor_id}, {"_id": 0, "name": 1})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    accrued_rows = await db.referral_commissions.find(
+        {"referrer_vendor_id": req.vendor_id, "commission_month": req.month, "status": "accrued"},
+        {"_id": 0},
+    ).to_list(2000)
+    if not accrued_rows:
+        raise HTTPException(status_code=400, detail="No accrued commissions found for that vendor and month")
+    expected_total = round(sum(float(r.get("commission_amount_usd", 0)) for r in accrued_rows), 2)
+    payout_id = new_id()
+    payout = {
+        "id": payout_id,
+        "vendor_id": req.vendor_id,
+        "amount": round(float(req.amount_usd), 2),
+        "expected_amount": expected_total,
+        "period_start": f"{req.month}-01",
+        "period_end": f"{req.month}-end",
+        "month": req.month,
+        "commission_count": len(accrued_rows),
+        "payout_method": req.payout_method,
+        "reference": req.reference,
+        "note": req.note,
+        "status": "paid",
+        "currency": "USD",
+        "paid_at": now_iso(),
+        "paid_by_admin_id": user.get("id"),
+        "created_at": now_iso(),
+    }
+    await db.referral_payouts.insert_one(payout)
+    # Flip all matching accrued rows → paid + link them to this payout
+    await db.referral_commissions.update_many(
+        {"referrer_vendor_id": req.vendor_id, "commission_month": req.month, "status": "accrued"},
+        {"$set": {"status": "paid", "payout_id": payout_id, "paid_at": now_iso()}},
+    )
+    payout.pop("_id", None)
+    return {"ok": True, "payout": payout}
