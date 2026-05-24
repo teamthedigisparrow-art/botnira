@@ -728,5 +728,126 @@ async def admin_record_payout(req: PayoutMarkPaidReq, user: dict = Depends(requi
         {"referrer_vendor_id": req.vendor_id, "commission_month": req.month, "status": "accrued"},
         {"$set": {"status": "paid", "payout_id": payout_id, "paid_at": now_iso()}},
     )
+    # Fire-and-forget notification email — "Your $X payout is on its way".
+    try:
+        await _send_payout_email(req.vendor_id, payout)
+    except Exception as e:
+        logger.warning("payout email failed for vendor=%s: %s", req.vendor_id, e)
     payout.pop("_id", None)
     return {"ok": True, "payout": payout}
+
+
+# ---------------------------------------------------------------------------
+# Payout email — fired after admin marks a month paid.
+# ---------------------------------------------------------------------------
+async def _send_payout_email(vendor_id: str, payout: Dict[str, Any]) -> None:
+    """Sends 'Your $X payout is on its way' email to the referrer. Pulls SMTP
+    creds from server module so we never have two configs to keep in sync."""
+    # Imported here (not at module top) so we don't introduce a circular
+    # import — server.py imports this module at the bottom of its file.
+    import asyncio
+    import smtplib
+    from email.message import EmailMessage
+    from server import (  # type: ignore
+        SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_NAME,
+    )
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("SMTP not configured — skipping payout email for vendor=%s", vendor_id)
+        return
+
+    vendor = await db.vendors.find_one({"id": vendor_id}, {"_id": 0, "name": 1})
+    owner = await db.users.find_one(
+        {"vendor_id": vendor_id, "role": "vendor"},
+        {"_id": 0, "email": 1, "full_name": 1},
+    )
+    if not vendor or not owner or not owner.get("email"):
+        return
+
+    to_email = owner["email"]
+    owner_name = owner.get("full_name") or to_email.split("@")[0]
+    biz = vendor.get("name") or "your business"
+    amount = float(payout.get("amount", 0))
+    month = payout.get("month") or ""
+    try:
+        month_label = datetime.strptime(month, "%Y-%m").strftime("%B %Y") if month else ""
+    except Exception:
+        month_label = month
+    method = payout.get("payout_method") or "Wire (USD)"
+    reference = payout.get("reference") or ""
+    invoices = int(payout.get("commission_count", 0))
+    note = payout.get("note") or ""
+
+    subject = f"💸 Your ${amount:,.2f} BotNira payout is on its way"
+
+    body_text = (
+        f"Hi {owner_name},\n\n"
+        f"Great news — your BotNira referral payout for {month_label} has been sent!\n\n"
+        f"Amount:   ${amount:,.2f} USD\n"
+        f"Month:    {month_label}\n"
+        f"Invoices: {invoices} commission{'s' if invoices != 1 else ''}\n"
+        f"Method:   {method}\n"
+        + (f"Reference: {reference}\n" if reference else "")
+        + (f"Note: {note}\n" if note else "")
+        + f"\nIt typically takes 3–5 business days to land in your bank account.\n\n"
+        f"View your referral dashboard:\n"
+        f"https://botnira.com/app/referrals\n\n"
+        f"Thank you for being part of BotNira ({biz}).\n"
+        f"— Team BotNira\n"
+    )
+
+    body_html = f"""<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
+    <div style="background:#002FA7;color:#fff;padding:20px 24px;border-bottom:2px solid #000;">
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.85;">BotNira · Referral payout</div>
+      <div style="font-size:24px;font-weight:900;margin-top:6px;line-height:1.2;">💸 Your payout is on its way!</div>
+    </div>
+    <div style="padding:24px;">
+      <p style="margin:0 0 14px;font-size:14px;line-height:1.5;">
+        Hi <strong>{owner_name}</strong>, your BotNira referral commission for
+        <strong>{month_label}</strong> has been sent — ${amount:,.2f} USD on its way to your bank.
+      </p>
+      <div style="border:2px solid #000;padding:16px 18px;background:#FFD600;margin:16px 0;text-align:center;">
+        <div style="font-size:10px;letter-spacing:.22em;text-transform:uppercase;font-weight:bold;">Amount sent</div>
+        <div style="font-size:42px;font-weight:900;line-height:1;margin-top:6px;">${amount:,.2f}</div>
+        <div style="font-size:11px;font-family:monospace;margin-top:6px;">USD · {method}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
+        <tr><td style="padding:6px 0;color:#666;">Period</td><td style="padding:6px 0;text-align:right;font-family:monospace;">{month_label}</td></tr>
+        <tr><td style="padding:6px 0;color:#666;">Invoices</td><td style="padding:6px 0;text-align:right;font-family:monospace;">{invoices}</td></tr>
+        {f'<tr><td style="padding:6px 0;color:#666;">Reference</td><td style="padding:6px 0;text-align:right;font-family:monospace;">{reference}</td></tr>' if reference else ''}
+      </table>
+      <p style="margin:16px 0;font-size:12px;color:#666;line-height:1.5;">
+        It typically takes 3–5 business days for a USD wire to clear, depending on your bank.
+      </p>
+      <div style="margin-top:22px;">
+        <a href="https://botnira.com/app/referrals" style="display:inline-block;background:#002FA7;color:#fff;text-decoration:none;padding:10px 18px;border:2px solid #000;font-weight:bold;font-size:13px;box-shadow:4px 4px 0 #000;">View dashboard</a>
+      </div>
+    </div>
+    <div style="background:#000;color:#999;padding:12px 24px;font-size:11px;font-family:monospace;line-height:1.5;">
+      Questions? Just reply to this email.<br/>© 2026 BotNira · Referral Program
+    </div>
+  </div>
+</body>
+</html>"""
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+    msg["To"] = to_email
+    msg.set_content(body_text)
+    msg.add_alternative(body_html, subtype="html")
+
+    def _send_sync():
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.send_message(msg)
+
+    try:
+        await asyncio.to_thread(_send_sync)
+        logger.info("Payout email sent to %s (vendor=%s, $%.2f, %s)",
+                    to_email, vendor_id, amount, month)
+    except Exception as e:
+        logger.warning("Payout email send failed for %s: %s", to_email, e)

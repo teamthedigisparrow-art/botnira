@@ -14,13 +14,21 @@ const Nav = () => (
         <BrandMark size={32} />
         <span className="font-display font-black text-xl tracking-tight">BotNira</span>
       </Link>
-      <div className="hidden md:flex items-center gap-8 text-sm font-medium">
+      <div className="hidden lg:flex items-center gap-7 text-sm font-medium">
         <a href="#features" className="hover:text-[#002FA7]" data-testid="nav-features">Features</a>
         <a href="#channels" className="hover:text-[#002FA7]" data-testid="nav-channels">Channels</a>
         <a href="#how" className="hover:text-[#002FA7]" data-testid="nav-how">How it works</a>
         <a href="#try" className="hover:text-[#002FA7]" data-testid="nav-try">Try live</a>
         <a href="#usecases" className="hover:text-[#002FA7]" data-testid="nav-usecases">Use cases</a>
         <a href="#pricing" className="hover:text-[#002FA7]" data-testid="nav-pricing">Pricing</a>
+        <Link
+          to="/referrals"
+          data-testid="nav-referrals-page"
+          className="hover:text-[#002FA7] inline-flex items-center gap-1"
+        >
+          Referrals
+          <span className="text-[9px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-1 leading-tight">earn 15%</span>
+        </Link>
         <a href="#faq" className="hover:text-[#002FA7]" data-testid="nav-faq">FAQ</a>
         <a href="#contact" className="hover:text-[#002FA7]" data-testid="nav-contact">Contact</a>
       </div>
@@ -748,6 +756,7 @@ const Footer = () => (
           <li><a href="#features" className="hover:underline">Features</a></li>
           <li><a href="#channels" className="hover:underline">Channels</a></li>
           <li><a href="#pricing" className="hover:underline">Pricing</a></li>
+          <li><Link to="/referrals" className="hover:underline" data-testid="footer-referrals">Referrals · earn 15%</Link></li>
           <li><a href="#faq" className="hover:underline">FAQ</a></li>
           <li><a href="#contact" className="hover:underline">Contact</a></li>
           <li><a href="#try" className="hover:underline">Try live</a></li>

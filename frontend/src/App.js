@@ -11,6 +11,7 @@ import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import UseCasePage from "./pages/UseCasePage";
 import SeoLandingPage from "./pages/SeoLandingPage";
+import ReferralsMarketing from "./pages/ReferralsMarketing";
 import { SEO_PAGES } from "./data/seoPages";
 import VendorLayout from "./layouts/VendorLayout";
 import AdminLayout from "./layouts/AdminLayout";
@@ -64,6 +65,7 @@ function App() {
           <RouteAnalytics />
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/referrals" element={<ReferralsMarketing />} />
             <Route path="/r/:code" element={<ReferralRedirect />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
