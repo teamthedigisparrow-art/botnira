@@ -573,6 +573,11 @@ function FeaturedImageInput({ value, onChange }) {
   const handle = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 6 * 1024 * 1024) {
+      toast.error("Image too large — max 6MB");
+      if (ref.current) ref.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();
@@ -636,6 +641,11 @@ function InlineImageUploader({ onUploaded }) {
   const handle = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 6 * 1024 * 1024) {
+      toast.error("Image too large — max 6MB");
+      if (ref.current) ref.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();
