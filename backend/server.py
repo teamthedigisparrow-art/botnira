@@ -1,5 +1,5 @@
 """BotNira - Multi-tenant AI Receptionist platform backend."""
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Response, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Response, UploadFile, File, Request as FastAPIRequest
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -139,6 +139,7 @@ class SignupReq(BaseModel):
     password: str = Field(min_length=6)
     full_name: str
     business_name: str
+    referral_code: Optional[str] = None
 
 
 class LoginReq(BaseModel):
@@ -481,9 +482,17 @@ async def seed_admin():
 
 # ------------------------------ Auth routes ----------------------------------
 @api_router.post("/auth/signup")
-async def signup(req: SignupReq):
+async def signup(req: SignupReq, request: FastAPIRequest = None):
     if await db.users.find_one({"email": req.email}):
         raise HTTPException(status_code=400, detail="Email already registered")
+    # Capture client IP for referral self-attribution checks (best-effort).
+    signup_ip = ""
+    try:
+        if request is not None:
+            xf = request.headers.get("x-forwarded-for", "")
+            signup_ip = (xf.split(",")[0].strip() if xf else (request.client.host if request.client else "")) or ""
+    except Exception:
+        signup_ip = ""
     vid = new_id()
     trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
     await db.vendors.insert_one(
@@ -517,6 +526,7 @@ async def signup(req: SignupReq):
             "role": "vendor",
             "vendor_id": vid,
             "email_verified": False,
+            "signup_ip": signup_ip,
             "created_at": now_iso(),
         }
     )
@@ -547,6 +557,19 @@ async def signup(req: SignupReq):
                 "updated_at": now_iso(),
             }
         )
+    # Provision this vendor's own referral code immediately so they can start
+    # sharing their link from minute one.
+    try:
+        await _ensure_referral_code(vid, req.business_name)
+    except Exception as e:
+        logger.warning("referral code provisioning failed for %s: %s", vid, e)
+    # If the signup came in with a ?ref=<code>, attribute the new vendor to
+    # the referrer (15% recurring commission on any future paid invoice).
+    if req.referral_code:
+        try:
+            await _attach_referral_on_signup(vid, req.email.lower(), req.referral_code, signup_ip)
+        except Exception as e:
+            logger.warning("referral attribution failed: %s", e)
     token = create_token(uid, "vendor")
     # Fire verification OTP (non-blocking)
     try:
@@ -3517,6 +3540,31 @@ async def stripe_webhook(request: _StripeRequest):
                             "last_invoice_at": now_iso(),
                         }},
                     )
+                # Referral commission accrual — 15% of the subtotal paid on this
+                # invoice goes to the vendor that referred this customer.
+                try:
+                    inv_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
+                    # `amount_paid` is in cents on the invoice object. Prefer
+                    # subtotal_excluding_tax when present so HST isn't paid out
+                    # as commission.
+                    sub_excl = (
+                        data_obj.get("subtotal_excluding_tax") if isinstance(data_obj, dict)
+                        else getattr(data_obj, "subtotal_excluding_tax", None)
+                    )
+                    if sub_excl is None:
+                        sub_excl = (
+                            data_obj.get("subtotal") if isinstance(data_obj, dict)
+                            else getattr(data_obj, "subtotal", None)
+                        )
+                    amount_cents = sub_excl if sub_excl is not None else (
+                        data_obj.get("amount_paid") if isinstance(data_obj, dict)
+                        else getattr(data_obj, "amount_paid", 0)
+                    )
+                    amount_usd = (float(amount_cents) / 100.0) if amount_cents else 0.0
+                    if amount_usd > 0:
+                        await _record_referral_commission(vendor["id"], inv_id or "", amount_usd, now_iso())
+                except Exception as e:
+                    logger.warning("referral commission record failed: %s", e)
 
     elif etype == "invoice.payment_failed":
         sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
@@ -3544,6 +3592,11 @@ async def stripe_webhook(request: _StripeRequest):
                 {"id": vendor_id},
                 {"$set": {"subscription_status": "canceled", "canceled_at": now_iso()}},
             )
+            # Stop future referral commissions for this referred vendor.
+            try:
+                await _mark_referral_cancelled(vendor_id)
+            except Exception as e:
+                logger.warning("mark_referral_cancelled failed: %s", e)
             # CRITICAL: Release Twilio phone number to stop billing
             try:
                 released = await _release_vendor_phone_number(vendor_id)
@@ -5448,6 +5501,16 @@ app.add_event_handler("startup", _email_start)
 from sales_routes import router as _sales_router, _start_sales_sender as _sales_start  # noqa: E402
 api_router.include_router(_sales_router, prefix="/sales")
 app.add_event_handler("startup", _sales_start)
+
+# Referral program — 15% recurring commission, paid monthly
+from referral_routes import (  # noqa: E402
+    router as _referral_router,
+    ensure_referral_code as _ensure_referral_code,
+    attach_referral_on_signup as _attach_referral_on_signup,
+    record_commission_for_invoice as _record_referral_commission,
+    mark_referral_cancelled as _mark_referral_cancelled,
+)
+api_router.include_router(_referral_router, prefix="/referrals")
 
 app.include_router(api_router)
 app.add_middleware(

@@ -1,0 +1,39 @@
+{
+  "summary": "Referrals module end-to-end testing. 17/17 backend pytest tests pass covering /me, /customers, /commissions, /payouts, /bank-account (POST+GET), /public/resolve/{code}, signup attribution, invalid-code silent ignore, self-referral block, Stripe invoice.paid 15% commission accrual, idempotency on duplicate stripe_invoice_id, and customer.subscription.deleted → status=cancelled. Frontend Referrals page renders correctly, copy button + all 4 stat tiles + 5 tabs work, bank form saves successfully and toast shows. /r/<valid-code> redirects to /signup?ref=<code> and ref banner renders. Paywall bypass on /app/referrals works (no overlay rendered on this route).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Signup.jsx ref banner", "issue": "Banner shows the raw referral CODE ('Referred by acme-dental-clinic-60afb5') instead of the referrer's business name ('Acme Dental Clinic'). The /api/referrals/public/resolve/{code} endpoint correctly returns referrer_business_name but the signup page does not appear to be using it (or call fails silently). Backend resolve endpoint verified working.", "selector": "[data-testid='signup-ref-banner']", "priority": "MEDIUM"},
+      {"component": "Referrals payouts tab", "issue": "Expected data-testid='payouts-empty' element is NOT present when payouts list is empty (count=0). Other empty-state markers like customers-empty should also be verified.", "selector": "[data-testid='payouts-empty']", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Paywalled sidebar nav → Referrals", "issue": "When the trial paywall overlay is active (e.g., on /app Overview), the full-screen paywall-overlay (fixed inset-0 z-50) intercepts pointer events on the sidebar, so a paywalled user CANNOT click the 'Referrals' nav link to reach the page — they can only get to /app/referrals via direct URL or browser refresh. PaywallGuard correctly bypasses the overlay ONCE the user is already on /app/referrals, but the entry path via sidebar click is blocked. Fix: either lower overlay z-index relative to sidebar, OR have PaywallGuard render the overlay only inside the main content area (not fixed inset-0), OR let the overlay ignore pointer events on the sidebar region.", "affected_selectors": ["[data-testid='nav-referrals']", "[data-testid='paywall-overlay']"]},
+      {"flow": "/r/<invalid-code> redirect", "issue": "Invalid referral codes still redirect to /signup?ref=<invalid>. Consider validating via /api/referrals/public/resolve/{code} before redirect — if invalid, either drop the ref param or redirect to /signup without ref. Today the signup page would display 'Referred by <invalid-code>' which is misleading.", "affected_selectors": ["[data-testid='signup-ref-banner']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_referrals.py", "/app/test_reports/pytest/iter9_referrals.xml"],
+  "action_items": [
+    "Signup.jsx: when ?ref=<code> is present, call GET /api/referrals/public/resolve/{code} and render banner text using referrer_business_name (not the raw code). If valid=false, hide banner (or show generic) and avoid attributing on submit.",
+    "Add data-testid='payouts-empty' to the empty-state element on the Payouts tab (and confirm customers-empty exists too).",
+    "Fix paywall overlay vs. sidebar interaction so a paywalled vendor can actually click the Referrals nav link. Either render paywall overlay only over the <main> area, give the sidebar a higher z-index than the overlay, OR make the overlay pointer-events:none on the sidebar region.",
+    "ReferralRedirect.jsx: optionally validate the code server-side before redirecting; if invalid, redirect to /signup with no ref param so the misleading 'Referred by <bad-code>' banner is never shown."
+  ],
+  "critical_code_review_comments": [
+    "referral_routes.py L82: resolve_referrer_by_code lowercases input — good. attach_referral_on_signup also lowercases. Codes stored lowercase. Consistent.",
+    "referral_routes.py L160-163: commission_amount = round(payment_amount_usd * 0.15, 2) — for $49 produces 7.35 (verified). Edge case: rounding bias on penny-level invoices is acceptable.",
+    "referral_routes.py L143-148: only credits if referrals row has status='active' — correct, prevents commissions accruing after cancellation.",
+    "referral_routes.py L149-155: idempotency keyed on stripe_invoice_id — verified by test_invoice_paid_is_idempotent. Good. However a blank invoice_id ('' string) would bypass dedup; if Stripe ever sends a paid invoice without id this could double-credit. Consider rejecting empty invoice_id outright.",
+    "server.py L3559-3563: amount selection prefers subtotal_excluding_tax → falls back to subtotal → amount_paid. Good defensive ordering so HST/VAT isn't commissioned out.",
+    "server.py L568-572: referral attribution wrapped in try/except, never raises — signup never fails because of a bad referral code. Matches the 'silently ignored' spec.",
+    "Self-referral IP defense (referral_routes.py L110-111): only triggers when BOTH IPs are non-empty AND match. In dev/preview behind ingress, every signup carries the ingress IP — could mis-block legitimate referrals if behind shared NAT. Already mitigated by 'both must be non-empty', but worth flagging once you turn on x-forwarded-for trust in production.",
+    "PaywallGuard bypass list should be confirmed to include exactly /app/referrals — verified in browser: paywall-overlay count = 0 on /app/referrals."
+  ],
+  "updated_files": ["/app/backend/tests/test_referrals.py"],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "85% (page renders, tabs work, bank save works, /r/ redirect works; ref-banner shows code not business name + sidebar nav blocked under paywall)"},
+  "test_credentials": "demo@botnira.com / demo123 (referrer in tests). Brand-new vendors created with TEST_ prefix via /api/auth/signup using demo's referral code.",
+  "seed_data_creation": "Tests create (a) two TEST_-prefixed referred vendors via signup, (b) attach stripe_subscription_id directly via Mongo to one of them so the invoice.paid webhook can match, (c) two referral_commissions rows (one $49, one $29) and a TEST bank account row for demo vendor. All tagged 'TEST_' for cleanup.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with: set -a; source /app/backend/.env; set +a; export REACT_APP_BACKEND_URL=https://chatbot-suite-4.preview.emergentagent.com; pytest /app/backend/tests/test_referrals.py -v. STRIPE_WEBHOOK_SECRET IS set in .env (whsec_mPK1LkadeGrrw29ZxTB1yNCsomMDRcdB), contrary to the review_request which said it was unset — the test helper _post_stripe_webhook computes the v1 HMAC signature. Newer Stripe SDK requires 'object':'event' field at root; helper sets it. Demo vendor's referral code is auto-generated on first /api/referrals/me call and is stable after that (acme-dental-clinic-<6hex>)."
+}

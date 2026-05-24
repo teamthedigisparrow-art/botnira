@@ -11,8 +11,9 @@ export default function PaywallGuard({ children }) {
   const loc = useLocation();
   const paywall = access?.paywall && !access?.is_exempt;
 
-  // Always allow billing page itself
-  if (!paywall || loc.pathname.startsWith("/app/billing")) {
+  // Always allow billing + referrals pages (referrals stays accessible even
+  // post-trial so vendors who joined just to earn can keep working).
+  if (!paywall || loc.pathname.startsWith("/app/billing") || loc.pathname.startsWith("/app/referrals")) {
     return children;
   }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
-import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard, PanelLeftClose, PanelLeftOpen, Megaphone } from "lucide-react";
+import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard, PanelLeftClose, PanelLeftOpen, Megaphone, Gift } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import PaywallGuard from "../components/PaywallGuard";
 import BrandMark from "../components/BrandMark";
@@ -15,6 +15,7 @@ const links = [
   { to: "/app/analytics", label: "Analytics", icon: BarChart3, tid: "nav-analytics" },
   { to: "/app/billing", label: "Billing", icon: CreditCard, tid: "nav-billing" },
   { to: "/app/settings", label: "Settings", icon: SettingsIcon, tid: "nav-settings" },
+  { to: "/app/referrals", label: "Referrals", icon: Gift, tid: "nav-referrals" },
 ];
 
 const STORAGE_KEY = "botnira.vendor.sidebar.collapsed";

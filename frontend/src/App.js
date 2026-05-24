@@ -23,6 +23,8 @@ import Analytics from "./pages/vendor/Analytics";
 import Billing from "./pages/vendor/Billing";
 import Settings from "./pages/vendor/Settings";
 import SalesAssistant from "./pages/vendor/SalesAssistant";
+import Referrals from "./pages/vendor/Referrals";
+import ReferralRedirect from "./pages/ReferralRedirect";
 import AdminOverview from "./pages/admin/AdminOverview";
 import AdminVendors from "./pages/admin/AdminVendors";
 import AdminBilling from "./pages/admin/AdminBilling";
@@ -61,6 +63,7 @@ function App() {
           <RouteAnalytics />
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/r/:code" element={<ReferralRedirect />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -81,6 +84,7 @@ function App() {
               <Route path="analytics" element={<Analytics />} />
               <Route path="billing" element={<Billing />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="referrals" element={<Referrals />} />
             </Route>
 
             <Route path="/admin" element={<Protected role="superadmin"><AdminLayout /></Protected>}>

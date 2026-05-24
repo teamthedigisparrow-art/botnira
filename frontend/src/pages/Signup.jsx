@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import { Gift } from "lucide-react";
 
 export default function Signup() {
   const [form, setForm] = useState({ email: "", password: "", full_name: "", business_name: "" });
@@ -10,16 +11,43 @@ export default function Signup() {
   const [otp, setOtp] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [step, setStep] = useState(1); // 1 = form, 2 = verify
+  const [refCode, setRefCode] = useState("");
+  const [refBiz, setRefBiz] = useState("");
   const { signup } = useAuth();
   const nav = useNavigate();
+  const [params] = useSearchParams();
   const upd = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  // Capture referral code from ?ref= or localStorage (set by /r/:code) and
+  // validate it so we can greet the referrer's business by name.
+  useEffect(() => {
+    const fromUrl = (params.get("ref") || "").trim().toLowerCase();
+    let code = fromUrl;
+    if (!code) {
+      try { code = (localStorage.getItem("botnira_ref_code") || "").trim().toLowerCase(); }
+      catch { code = ""; }
+    }
+    if (!code) return;
+    setRefCode(code);
+    api.get(`/referrals/public/resolve/${encodeURIComponent(code)}`)
+      .then(({ data }) => {
+        if (data?.valid) {
+          setRefBiz(data.referrer_business_name || "");
+          try { localStorage.setItem("botnira_ref_code", code); } catch { /* ignore */ }
+        } else {
+          setRefCode("");
+        }
+      })
+      .catch(() => { setRefCode(""); });
+  }, [params]);
 
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await signup(form);
+      await signup({ ...form, referral_code: refCode || undefined });
       toast.success("Workspace created! Check your email for the verification code.");
+      try { localStorage.removeItem("botnira_ref_code"); } catch { /* ignore */ }
       setStep(2);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Signup failed");
@@ -57,6 +85,14 @@ export default function Signup() {
           <form onSubmit={submit} className="w-full max-w-md border-2 border-black bg-white p-8 shadow-brutal-lg" data-testid="signup-form">
             <h1 className="font-display text-3xl font-black tracking-tighter">Create your workspace</h1>
             <p className="text-sm text-neutral-600 mt-1">5-day free trial. No credit card. Each business is isolated.</p>
+            {refCode && (
+              <div className="mt-4 border-2 border-black bg-yellow-200 px-3 py-2 text-sm flex items-center gap-2" data-testid="signup-ref-banner">
+                <Gift size={14} />
+                <div>
+                  Referred by <strong>{refBiz || refCode}</strong>
+                </div>
+              </div>
+            )}
             <div className="mt-6 space-y-4">
               {[
                 { k: "business_name", label: "Business name", type: "text", tid: "signup-business-input" },
