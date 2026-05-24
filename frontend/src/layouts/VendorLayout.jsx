@@ -42,7 +42,7 @@ export default function VendorLayout() {
       data-testid="vendor-shell"
     >
       <aside
-        className={`border-r-2 border-black bg-white flex flex-col transition-[width] duration-200 ${collapsed ? "items-center" : ""}`}
+        className={`border-r-2 border-black bg-white flex flex-col transition-[width] duration-200 relative z-[60] ${collapsed ? "items-center" : ""}`}
         data-testid="vendor-sidebar"
         data-collapsed={collapsed ? "1" : "0"}
       >

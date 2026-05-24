@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration_10 — Retest of 3 frontend fixes from iteration_9 for the Referrals module (vendor side). All 3 fixes verified PASS via Playwright against the public preview URL. No backend tests run (per request: backend was 17/17 in iter_9, no backend changes since).",
+  "fixes_verified": {
+    "fix1_signup_banner_business_name": {
+      "valid_ref_shows_business_name": "PASS — /signup?ref=acme-dental-clinic-60afb5 → signup-ref-banner appeared after backend resolve completed, text = 'Referred by Acme Dental Clinic' (NOT the raw code).",
+      "invalid_ref_shows_no_banner": "PASS — /signup?ref=totally-bogus-xyz → no signup-ref-banner element in DOM after resolve (waited 2.5s for the API to respond)."
+    },
+    "fix2_referral_redirect_validates": {
+      "valid_code_redirects_with_ref": "PASS — /r/acme-dental-clinic-60afb5 → redirected to /signup?ref=acme-dental-clinic-60afb5 and banner shows 'Acme Dental Clinic'.",
+      "invalid_code_redirects_clean": "PASS — /r/totally-bogus-xyz → redirected to /signup (no ref= query param) and no signup-ref-banner."
+    },
+    "fix3_sidebar_clickable_under_paywall": {
+      "paywall_overlay_on_app": "PASS — accounts@thedigisparrow.com logged in, /app shows paywall-overlay.",
+      "z_index_layering": "PASS — computed styles: vendor-sidebar position=relative z-index=60, paywall-overlay z-index=50 (sidebar sits ABOVE overlay).",
+      "nav_referrals_clickable": "PASS — non-force click on data-testid='nav-referrals' worked (overlay does not intercept).",
+      "navigates_to_referrals_page": "PASS — URL changed to /app/referrals.",
+      "overlay_hidden_on_referrals": "PASS — paywall-overlay not present on /app/referrals (PaywallGuard bypasses /app/referrals path).",
+      "referrals_page_renders": "PASS — data-testid='referrals-page' rendered, referral link visible (immipro-6c306f), tabs (Overview, My Referrals, Commissions, Payouts, Bank Account) all visible."
+    }
+  },
+  "backend_resolve_endpoint_sanity": {
+    "/api/referrals/public/resolve/<valid>": "200 {valid:true, code, referrer_business_name:'Acme Dental Clinic'}",
+    "/api/referrals/public/resolve/<invalid>": "200 {valid:false}",
+    "/api/referrals/me (demo@botnira.com)": "200 — code = acme-dental-clinic-60afb5"
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_10.json",
+    "/app/backend/tests/test_referrals.py (from iter_9, unchanged)"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Signup.jsx resolve guard correctly gates banner on (refCode && refBiz) — both are set only after a successful backend confirmation. Good defensive pattern.",
+    "ReferralRedirect.jsx network-failure branch still pushes ref=<code> into URL and localStorage even when validity cannot be confirmed. Signup re-validates so banner won't appear, but the ?ref= param remains attached and will be sent on signup submit as referral_code. Backend must reject unknown codes (it already does — see /api/referrals/public/resolve returning valid:false), but worth confirming the signup endpoint also tolerates an unknown referral_code without 500. Non-blocking; informational.",
+    "PaywallGuard correctly whitelists /app/billing and /app/referrals via startsWith — good.",
+    "VendorLayout aside z-[60] with position:relative is sufficient because the overlay is position:fixed z-50 — verified via getComputedStyle in the live page."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not_tested_this_iteration", "frontend": "100% (3/3 fixes verified, 7/7 sub-checks PASS)"},
+  "test_credentials": "Used demo@botnira.com / demo123 (referrer) and accounts@thedigisparrow.com / TestExpiredTrial!1 (paywalled). Both authenticated successfully against the live API.",
+  "seed_data_creation": "None — used existing seeded vendors.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 3 referral-module frontend fixes from iter_9 are confirmed working. Note that POST /api/auth/login returns the JWT under the key 'token' (not 'access_token') — important for any future pytest fixture. The Payouts empty-state issue noted in iter_9 is by-design (only renders when Payouts tab is active) and was not retested. No further action needed on the referrals module."
+}

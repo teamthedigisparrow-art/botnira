@@ -19,7 +19,9 @@ export default function Signup() {
   const upd = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   // Capture referral code from ?ref= or localStorage (set by /r/:code) and
-  // validate it so we can greet the referrer's business by name.
+  // validate it so we can greet the referrer's business by name. We only
+  // expose refCode (and show the banner) AFTER the backend confirms it's a
+  // valid code — that way the banner never shows a raw token to the user.
   useEffect(() => {
     const fromUrl = (params.get("ref") || "").trim().toLowerCase();
     let code = fromUrl;
@@ -28,17 +30,17 @@ export default function Signup() {
       catch { code = ""; }
     }
     if (!code) return;
-    setRefCode(code);
     api.get(`/referrals/public/resolve/${encodeURIComponent(code)}`)
       .then(({ data }) => {
         if (data?.valid) {
+          setRefCode(code);
           setRefBiz(data.referrer_business_name || "");
           try { localStorage.setItem("botnira_ref_code", code); } catch { /* ignore */ }
         } else {
-          setRefCode("");
+          try { localStorage.removeItem("botnira_ref_code"); } catch { /* ignore */ }
         }
       })
-      .catch(() => { setRefCode(""); });
+      .catch(() => { /* network glitch — ignore, no banner */ });
   }, [params]);
 
   const submit = async (e) => {
@@ -85,11 +87,11 @@ export default function Signup() {
           <form onSubmit={submit} className="w-full max-w-md border-2 border-black bg-white p-8 shadow-brutal-lg" data-testid="signup-form">
             <h1 className="font-display text-3xl font-black tracking-tighter">Create your workspace</h1>
             <p className="text-sm text-neutral-600 mt-1">5-day free trial. No credit card. Each business is isolated.</p>
-            {refCode && (
+            {refCode && refBiz && (
               <div className="mt-4 border-2 border-black bg-yellow-200 px-3 py-2 text-sm flex items-center gap-2" data-testid="signup-ref-banner">
                 <Gift size={14} />
                 <div>
-                  Referred by <strong>{refBiz || refCode}</strong>
+                  Referred by <strong>{refBiz}</strong>
                 </div>
               </div>
             )}

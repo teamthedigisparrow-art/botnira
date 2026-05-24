@@ -3,10 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 
 /**
- * Lands at /r/<code>. Stores the code in localStorage so the signup form can
- * attribute the new vendor to the referrer, then forwards to /signup.
- * Validation is best-effort — we still pass the code to /signup even if the
- * resolve call fails (the backend re-validates).
+ * Lands at /r/<code>. Validates the code against the backend. If valid we
+ * store it for the signup form to attach, and forward to /signup?ref=<code>.
+ * Invalid codes are dropped so the signup page never shows a misleading
+ * "Referred by <bad code>" banner.
  */
 export default function ReferralRedirect() {
   const { code } = useParams();
@@ -18,15 +18,26 @@ export default function ReferralRedirect() {
       nav("/", { replace: true });
       return;
     }
-    try {
-      localStorage.setItem("botnira_ref_code", clean);
-      // 30-day persistence window
-      localStorage.setItem("botnira_ref_code_set_at", String(Date.now()));
-    } catch { /* ignore */ }
-    // Fire validation lookup but don't block on it
     api.get(`/referrals/public/resolve/${encodeURIComponent(clean)}`)
-      .catch(() => { /* ignore — backend will re-validate at signup */ });
-    nav(`/signup?ref=${encodeURIComponent(clean)}`, { replace: true });
+      .then(({ data }) => {
+        if (data?.valid) {
+          try {
+            localStorage.setItem("botnira_ref_code", clean);
+            localStorage.setItem("botnira_ref_code_set_at", String(Date.now()));
+          } catch { /* ignore */ }
+          nav(`/signup?ref=${encodeURIComponent(clean)}`, { replace: true });
+        } else {
+          // Bad code → silently drop and send to plain signup.
+          try { localStorage.removeItem("botnira_ref_code"); } catch { /* ignore */ }
+          nav("/signup", { replace: true });
+        }
+      })
+      .catch(() => {
+        // Network failure — fall back to signup with the code in localStorage
+        // (signup page will re-validate before showing a banner).
+        try { localStorage.setItem("botnira_ref_code", clean); } catch { /* ignore */ }
+        nav(`/signup?ref=${encodeURIComponent(clean)}`, { replace: true });
+      });
   }, [code, nav]);
 
   return (
