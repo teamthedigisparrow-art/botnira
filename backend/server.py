@@ -1081,6 +1081,7 @@ async def _ensure_conversation(
         "updated_at": now_iso(),
     }
     await db.conversations.insert_one(conv)
+    conv.pop("_id", None)
     return conv
 
 
@@ -4661,6 +4662,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 OPENAI_REALTIME_API_KEY = os.environ.get("OPENAI_REALTIME_API_KEY", "")
+# OpenAI rotates Realtime model snapshots periodically. We default to the GA
+# stable tag (`gpt-realtime`) but allow override via env so we never need a
+# code redeploy when OpenAI publishes a new snapshot.
+OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
 
 _twilio_master: Optional[TwilioClient] = None
 
@@ -4696,6 +4701,7 @@ async def _get_or_create_subaccount(vendor_id: str, vendor_name: str) -> dict:
         "created_at": now_iso(),
     }
     await db.voice_subaccounts.insert_one(rec)
+    rec.pop("_id", None)
     return rec
 
 
@@ -5184,8 +5190,12 @@ async def voice_stream(ws: WebSocket, call_id: str):
     )
 
     import websockets as _ws
-    oai_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
-    oai_headers = [("Authorization", f"Bearer {OPENAI_REALTIME_API_KEY}"), ("OpenAI-Beta", "realtime=v1")]
+    # `gpt-realtime` is the GA replacement for the retired `gpt-4o-realtime-preview-*`
+    # snapshots. Beta endpoint + `OpenAI-Beta: realtime=v1` header are no
+    # longer required (the beta was sunset and beta header is now ignored / can
+    # cause rejection on GA).
+    oai_url = f"wss://api.openai.com/v1/realtime?model={OPENAI_REALTIME_MODEL}"
+    oai_headers = [("Authorization", f"Bearer {OPENAI_REALTIME_API_KEY}")]
     stream_sid = None
     # Create ONE persistent conversation for this whole call (not per-message)
     conv = await _ensure_conversation(
