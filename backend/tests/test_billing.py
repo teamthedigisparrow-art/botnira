@@ -19,7 +19,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://chatbot-suite-4.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://receptionist-hub-5.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN = ("admin@botnira.com", "admin123")
@@ -135,7 +135,7 @@ class TestBillingMe:
 # ---------------- Checkout ----------------
 class TestCheckout:
     def test_checkout_subscription_starter(self, http, demo_auth, mongo):
-        origin = "https://chatbot-suite-4.preview.emergentagent.com"
+        origin = "https://receptionist-hub-5.preview.emergentagent.com"
         r = http.post(f"{API}/billing/checkout/subscription",
                       json={"plan": "starter", "origin_url": origin},
                       headers=h(demo_auth["token"]), timeout=30)
@@ -151,7 +151,7 @@ class TestCheckout:
 
     def test_checkout_topup_spark(self, http, demo_auth):
         r = http.post(f"{API}/billing/checkout/topup",
-                      json={"pack": "spark", "origin_url": "https://chatbot-suite-4.preview.emergentagent.com"},
+                      json={"pack": "spark", "origin_url": "https://receptionist-hub-5.preview.emergentagent.com"},
                       headers=h(demo_auth["token"]), timeout=30)
         assert r.status_code == 200, r.text
         d = r.json()
