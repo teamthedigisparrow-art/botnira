@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 14 — E2E test of new WhatsApp / Email list-type feature in Sales Assistant. Backend (8/8 pytest pass): GET /api/sales/lists returns list_type on every item; 'Inbox Leads' auto-created with list_type='whatsapp'; POST /api/sales/lists with list_type='whatsapp' succeeds; invalid list_type rejected with 400; /api/sales/prospects/template.csv?list_type=whatsapp returns name,country_code,phone header (no email column); /api/sales/prospects/template.csv?list_type=email still returns email-bearing header; WhatsApp CSV upload via /api/sales/prospects/upload?list_id=<wa> correctly inserts 3 (valid Alice, separate-cc Dave, non-10-digit-but-kept Eve), invalid_skipped=1 (missing CC Bob), warned=1 (Eve), in-file duplicate Charlie deduped; re-uploading identical CSV produces inserted=0 (full E.164 dedup against DB); Email-list CSV with blank-email row still returns invalid_skipped>=1. Frontend (all critical flows pass): Sales Assistant Prospects sidebar shows EMAIL/WA badges (data-testid sales-list-type-<id>); Inbox Leads auto-list present with WA badge; '+ New' modal shows two list-type cards (list-type-email + list-type-whatsapp); creating a WhatsApp list works and lands in sidebar with WA badge; WA help banner correctly reads 'WhatsApp list · CSV columns: name, country_code, phone. Country code (like +1, +91) and phone are required — no email needed'; WA table header is Name | WhatsApp number | Status | Actions (no Email/Company columns); Download WhatsApp CSV link href ends with ?list_type=whatsapp; uploading a 5-row WA CSV shows toast 'Added 3 new · 0 merged · 0 already in list · 1 invalid · 4 not 10 digits (kept)'; uploaded contacts render with NO email column (just name + +CC phone); prospect edit modal on a WA contact shows ONLY name/country_code/phone fields (no email/company) and saves successfully; Email list (Main list) still shows Email | Name | Phone | Company | Status | Actions; Email-composer list picker shows ONLY email lists (Main list, saloon brampton) — Inbox Leads and QA WA UI correctly filtered out; WhatsApp-composer list picker shows ALL 4 lists with 'Email'/'WA' tags and a 'w/ phone' reach count next to each; deleting a WA list cascades and removes its prospects (toast 'List deleted · 3 prospects removed, 0 kept').",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "WaComposer template <select>", "issues": ["React hydration warning: '<span> cannot be a child of <option>'. The dev-mode source-tracking instrumentation injects <span style={display:contents}> inside the <option> rendering of approved templates (SalesAssistant.jsx line ~1208). Cosmetic / dev-only — does not affect functionality but pollutes the console. Verify whether the inner expression can be unwrapped or whether the source-tracker should skip <option>."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sales_wa_lists.py",
+    "/app/test_reports/pytest/iter14_sales_wa_lists.xml"
+  ],
+  "action_items": [
+    "Optional: clean up the React hydration warning emitted by the WA composer template <select> (span-in-option from x-source-editable instrumentation). Non-blocking.",
+    "Optional: extend backend test_sales_wa_lists.py with a true E2E test of capture_inbox_lead by POSTing a synthetic WhatsApp webhook once a deterministic test path is set up — currently only validated indirectly that the Inbox Leads list exists and is WA-typed."
+  ],
+  "critical_code_review_comments": [
+    "sales_routes.py is now 1908 lines and growing — exceeds the 700-line guideline by 2.7×. Split into lists.py / prospects.py / campaigns_email.py / campaigns_wa.py / inbox_capture.py for maintainability before adding more channels.",
+    "WhatsApp CSV upload toast text exposes implementation jargon ('not 10 digits (kept)') — consider 'flagged: <n> numbers do not look like 10-digit local mobile numbers' for friendlier UX. Minor copy nit.",
+    "Email composer filter uses client-side filter (lists.filter(l => l.list_type === 'email')). Works correctly today, but consider a server-side query param ?type=email on /api/sales/lists to avoid leaking WA list names/counts to the email composer over the wire.",
+    "WA composer 'w/ phone' reach count uses sales_prospects.phone != '' on the server (good), but is presented per-list even for Email lists that have zero phone-enriched rows ('Email · 0 w/ phone'). UX-wise consider hiding the WA tag/reach for Email lists with 0 reachable rows, OR show a tooltip explaining why the list still appears (because email lists carry phone too).",
+    "Partial unique indexes uniq_vendor_email (email>'') and uniq_vendor_wa_phone (list_type='whatsapp') were dropped/recreated migration-style at app startup — make sure a fresh deployment also runs this path; otherwise legacy uniq_vendor_id_1_email_1 collisions could resurface on environments that didn't go through iter-13's migration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales_wa_lists.py (new — 8 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (all 8 review-request flows verified)"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu (exempt vendor — never paywalled).",
+  "seed_data_creation": "Tests create QA-prefixed lists ('QA WA <uuid>', 'QA WA Upload <uuid>', 'QA Email <uuid>') and TEST/QA-prefixed prospects, then delete them in a session-scoped cleanup fixture. UI test also created and deleted 'QA WA UI' end-to-end (list-deleted toast confirmed). No persistent residue.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "WA/Email list-type feature is solid end-to-end. Regression suite: pytest /app/backend/tests/test_sales_wa_lists.py -v. Upload endpoint is /api/sales/prospects/upload?list_id=<id> (NOT /api/sales/lists/{id}/upload). Server returns counts {inserted, invalid_skipped, warned} for WA uploads; email uploads return inserted/invalid_skipped/merged/already_in_list (different shape). UI uses these data-testids: sales-new-list-btn, list-type-email, list-type-whatsapp, list-form-name, list-form-save, sales-list-row-<id>, sales-list-type-<id>, sales-prospects-help, sales-prospects-template-download (anchor), sales-prospects-upload-input (hidden <input type=file> — use page.set_input_files), prospect-row-<email-or-phone>, prospect-edit-<email-or-phone>, prospect-edit-{name,country_code,phone}, prospect-edit-save, sales-new-campaign-btn, composer-list-<id>, wa-composer-list-<id>, wa-composer-modal, composer-close. Email composer filters list_type=='email' client-side; WA composer shows all lists with EMAIL/WA tags and 'N w/ phone' reach. The Prospects/Emails/WhatsApp tab switchers are <button> not <a> (use button:has-text). For WA list deletion, the delete confirmation is a window.confirm() — handle with page.on('dialog', d => d.accept())."
+}

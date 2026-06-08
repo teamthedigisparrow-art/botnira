@@ -175,6 +175,7 @@ async def _ensure_default_list(vid: str) -> str:
     lid = _s.new_id()
     await _s.db.sales_prospect_lists.insert_one({
         "id": lid, "vendor_id": vid, "name": "Main list", "description": "",
+        "list_type": "email",
         "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
     })
     # Fold any legacy prospect (pre-list era) into this list
@@ -185,15 +186,86 @@ async def _ensure_default_list(vid: str) -> str:
     return lid
 
 
+VALID_LIST_TYPES = {"email", "whatsapp"}
+INBOX_LEADS_LIST_NAME = "Inbox Leads"
+
+
+async def _ensure_inbox_leads_list(vid: str) -> str:
+    """Every vendor has a WhatsApp-type 'Inbox Leads' list that auto-collects
+    the phone numbers of customers who message them on WhatsApp, so those
+    numbers can be reused for outbound WhatsApp marketing. Returns its id."""
+    existing = await _s.db.sales_prospect_lists.find_one(
+        {"vendor_id": vid, "is_inbox_leads": True}, {"_id": 0, "id": 1}
+    )
+    if existing:
+        return existing["id"]
+    lid = _s.new_id()
+    await _s.db.sales_prospect_lists.insert_one({
+        "id": lid, "vendor_id": vid, "name": INBOX_LEADS_LIST_NAME,
+        "description": "Auto-collected from customers who message you on WhatsApp.",
+        "list_type": "whatsapp", "is_inbox_leads": True,
+        "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
+    })
+    return lid
+
+
+async def capture_inbox_lead(vendor_id: str, phone: str, name: str = "") -> None:
+    """Called from the WhatsApp inbound webhook. Upserts the customer's number
+    into the vendor's 'Inbox Leads' WhatsApp list (deduped by full E.164 phone)
+    so it becomes available for outbound WhatsApp marketing. Best-effort: never
+    raises into the webhook."""
+    try:
+        ph = _norm_phone_digits(phone)
+        if not ph:
+            return
+        lid = await _ensure_inbox_leads_list(vendor_id)
+        existing = await _s.db.sales_prospects.find_one(
+            {"vendor_id": vendor_id, "list_type": "whatsapp", "phone": ph},
+            {"_id": 0, "id": 1, "list_ids": 1, "name": 1},
+        )
+        nm = (name or "").strip()
+        if existing:
+            set_fields: Dict[str, Any] = {}
+            ops: Dict[str, Any] = {}
+            if lid not in (existing.get("list_ids") or []):
+                ops["$addToSet"] = {"list_ids": lid}
+            if nm and not existing.get("name"):
+                set_fields["name"] = nm
+            if ops or set_fields:
+                set_fields["updated_at"] = _s.now_iso()
+                ops["$set"] = set_fields
+                await _s.db.sales_prospects.update_one({"id": existing["id"]}, ops)
+            return
+        await _s.db.sales_prospects.insert_one({
+            "id": _s.new_id(),
+            "vendor_id": vendor_id,
+            "email": "",
+            "name": nm,
+            "company": "",
+            "country_code": "",
+            "phone": ph,
+            "list_ids": [lid],
+            "list_type": "whatsapp",
+            "status": "active",
+            "source": "inbox",
+            "created_at": _s.now_iso(),
+            "updated_at": _s.now_iso(),
+        })
+    except Exception as e:
+        _s.logger.warning("capture_inbox_lead failed: %s", e)
+
+
 class ListIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     description: Optional[str] = Field("", max_length=300)
+    list_type: Optional[str] = "email"
 
 
 @router.get("/lists")
 async def list_lists(user: dict = Depends(_require_sales_vendor)):
     vid = user["vendor_id"]
     await _ensure_default_list(vid)
+    await _ensure_inbox_leads_list(vid)
     cur = _s.db.sales_prospect_lists.find({"vendor_id": vid}, {"_id": 0}).sort("created_at", 1)
     items = await cur.to_list(200)
     # Attach counts per list (single aggregate)
@@ -210,8 +282,19 @@ async def list_lists(user: dict = Depends(_require_sales_vendor)):
         counts.setdefault(lid, {"active": 0, "unsubscribed": 0, "bounced": 0})
         if st in counts[lid]:
             counts[lid][st] += row["n"]
+    # Active prospects that actually carry a phone number — used to show the
+    # real reach of a list inside the WhatsApp campaign composer.
+    phone_pipeline = [
+        {"$match": {"vendor_id": vid, "status": "active", "phone": {"$nin": ["", None]}}},
+        {"$unwind": "$list_ids"},
+        {"$group": {"_id": "$list_ids", "n": {"$sum": 1}}},
+    ]
+    phone_agg = await _s.db.sales_prospects.aggregate(phone_pipeline).to_list(5000)
+    phone_counts = {row["_id"]: row["n"] for row in phone_agg}
     for it in items:
+        it.setdefault("list_type", "email")
         c = counts.get(it["id"], {"active": 0, "unsubscribed": 0, "bounced": 0})
+        c["active_with_phone"] = phone_counts.get(it["id"], 0)
         it["counts"] = c
         it["total"] = c["active"] + c["unsubscribed"] + c["bounced"]
     return {"items": items}
@@ -220,11 +303,15 @@ async def list_lists(user: dict = Depends(_require_sales_vendor)):
 @router.post("/lists")
 async def create_list(payload: ListIn, user: dict = Depends(_require_sales_vendor)):
     vid = user["vendor_id"]
+    ltype = (payload.list_type or "email").lower()
+    if ltype not in VALID_LIST_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid list type")
     lid = _s.new_id()
     doc = {
         "id": lid, "vendor_id": vid,
         "name": payload.name.strip(),
         "description": (payload.description or "").strip(),
+        "list_type": ltype,
         "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
     }
     await _s.db.sales_prospect_lists.insert_one(doc.copy())
@@ -276,7 +363,7 @@ async def delete_list(lid: str, user: dict = Depends(_require_sales_vendor)):
 
 # ---------------------------------------------------------------- prospects ---
 class ProspectIn(BaseModel):
-    email: EmailStr
+    email: Optional[str] = ""
     name: Optional[str] = ""
     company: Optional[str] = ""
     country_code: Optional[str] = ""  # e.g. "+1", "+91" — display-friendly
@@ -310,7 +397,7 @@ async def list_prospects(
         flt["status"] = status
     if q:
         rx = {"$regex": re.escape(q), "$options": "i"}
-        flt["$or"] = [{"email": rx}, {"name": rx}, {"company": rx}]
+        flt["$or"] = [{"email": rx}, {"name": rx}, {"company": rx}, {"phone": rx}]
     total = await _s.db.sales_prospects.count_documents(flt)
     cur = _s.db.sales_prospects.find(flt, {"_id": 0}).sort("created_at", -1).skip(offset).limit(limit)
     items = await cur.to_list(limit)
@@ -330,11 +417,39 @@ async def add_prospect(p: ProspectIn, user: dict = Depends(_require_sales_vendor
     vid = user["vendor_id"]
     lid = p.list_id or await _ensure_default_list(vid)
     # Confirm list belongs to vendor
-    target_list = await _s.db.sales_prospect_lists.find_one({"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1})
+    target_list = await _s.db.sales_prospect_lists.find_one(
+        {"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1, "list_type": 1})
     if not target_list:
         raise HTTPException(status_code=404, detail="List not found")
+    ltype = (target_list.get("list_type") or "email").lower()
 
-    em = _norm_email(p.email)
+    if ltype == "whatsapp":
+        cc_disp = _norm_country_code(p.country_code or "")
+        if not cc_disp:
+            raise HTTPException(status_code=400, detail="Country code is required for WhatsApp contacts")
+        phone_full = _combine_e164(p.country_code or "", p.phone or "")
+        if not phone_full:
+            raise HTTPException(status_code=400, detail="Phone number is required for WhatsApp contacts")
+        existing = await _s.db.sales_prospects.find_one(
+            {"vendor_id": vid, "list_type": "whatsapp", "phone": phone_full}, {"_id": 0})
+        if existing:
+            if lid not in (existing.get("list_ids") or []):
+                await _s.db.sales_prospects.update_one(
+                    {"id": existing["id"]},
+                    {"$addToSet": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}})
+                existing["list_ids"] = list(set((existing.get("list_ids") or []) + [lid]))
+            return {"prospect": existing, "duplicate": True}
+        doc = {
+            "id": _s.new_id(), "vendor_id": vid, "email": "",
+            "name": (p.name or "").strip(), "company": "",
+            "country_code": cc_disp, "phone": phone_full,
+            "list_ids": [lid], "list_type": "whatsapp", "status": "active",
+            "source": "manual", "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
+        }
+        await _s.db.sales_prospects.insert_one(doc.copy())
+        return {"prospect": doc, "duplicate": False}
+
+    em = _norm_email(p.email or "")
     if not _EMAIL_RE.match(em):
         raise HTTPException(status_code=400, detail="Invalid email")
     cc_disp = _norm_country_code(p.country_code or "")
@@ -368,6 +483,7 @@ async def add_prospect(p: ProspectIn, user: dict = Depends(_require_sales_vendor
         "country_code": cc_disp,
         "phone": phone_full,
         "list_ids": [lid],
+        "list_type": "email",
         "status": "active",
         "source": "manual",
         "created_at": _s.now_iso(),
@@ -464,6 +580,101 @@ async def clear_prospects(
     return {"deleted": res.deleted_count, "scope": "all"}
 
 
+_WA_PHONE_HDR = {"phone", "phone number", "mobile", "whatsapp", "whatsapp number", "number"}
+_WA_CC_HDR = {"country_code", "country code", "country", "code", "dial code", "cc"}
+_WA_NAME_HDR = {"name", "full name", "first name", "contact", "contact name"}
+
+
+async def _upload_whatsapp_rows(vid: str, lid: str, rows: List[List[str]]) -> dict:
+    """Upload handler for WhatsApp-type lists. Recognised columns: name,
+    country_code, phone. Country code + phone are required; email is never
+    used. Dedupe by full E.164 phone within the vendor's WhatsApp prospect
+    pool (same number + same country code = duplicate; same local number with
+    a different country code = a different lead). Numbers whose local part
+    isn't 10 digits are accepted but counted as warnings."""
+    header = [h.strip().lower() for h in rows[0]]
+    has_header = any(h in (_WA_PHONE_HDR | _WA_CC_HDR | _WA_NAME_HDR) for h in header)
+    if has_header:
+        idx_name = next((i for i, h in enumerate(header) if h in _WA_NAME_HDR), -1)
+        idx_cc = next((i for i, h in enumerate(header) if h in _WA_CC_HDR), -1)
+        idx_phone = next((i for i, h in enumerate(header) if h in _WA_PHONE_HDR), -1)
+        data_rows = rows[1:]
+    else:
+        # Default positional ordering: name, country_code, phone
+        idx_name, idx_cc, idx_phone = 0, 1, 2
+        data_rows = rows
+
+    existing_by_phone: Dict[str, dict] = {}
+    cur = _s.db.sales_prospects.find(
+        {"vendor_id": vid, "list_type": "whatsapp"},
+        {"_id": 0, "id": 1, "phone": 1, "list_ids": 1},
+    )
+    async for d in cur:
+        if d.get("phone"):
+            existing_by_phone[d["phone"]] = d
+
+    inserted = merged_into_list = already_in_list = invalid = warned = 0
+    seen: set = set()
+    docs_to_insert: List[dict] = []
+    ids_to_add_list: List[str] = []
+
+    for r in data_rows:
+        nm = r[idx_name].strip() if 0 <= idx_name < len(r) else ""
+        cc_raw = r[idx_cc].strip() if 0 <= idx_cc < len(r) else ""
+        ph_raw = r[idx_phone].strip() if 0 <= idx_phone < len(r) else ""
+        cc_disp = _norm_country_code(cc_raw)
+        local_digits = _norm_phone_digits(ph_raw)
+        # Country code AND phone are both required for WhatsApp leads.
+        if not cc_disp or not local_digits:
+            invalid += 1
+            continue
+        phone_full = _combine_e164(cc_raw, ph_raw)
+        if not phone_full:
+            invalid += 1
+            continue
+        # Warn (but accept) when the local number isn't exactly 10 digits.
+        cc_digits = _norm_phone_digits(cc_disp)
+        local_only = phone_full[len(cc_digits):] if phone_full.startswith(cc_digits) else local_digits
+        if len(local_only) != 10:
+            warned += 1
+        if phone_full in seen:
+            continue
+        seen.add(phone_full)
+        existing = existing_by_phone.get(phone_full)
+        if existing:
+            lists = existing.get("list_ids") or []
+            if lid in lists:
+                already_in_list += 1
+            else:
+                ids_to_add_list.append(existing["id"])
+                merged_into_list += 1
+            continue
+        docs_to_insert.append({
+            "id": _s.new_id(), "vendor_id": vid, "email": "",
+            "name": nm, "company": "",
+            "country_code": cc_disp, "phone": phone_full,
+            "list_ids": [lid], "list_type": "whatsapp", "status": "active",
+            "source": "csv", "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
+        })
+        inserted += 1
+
+    if docs_to_insert:
+        await _s.db.sales_prospects.insert_many([d.copy() for d in docs_to_insert])
+    if ids_to_add_list:
+        await _s.db.sales_prospects.update_many(
+            {"id": {"$in": ids_to_add_list}, "vendor_id": vid},
+            {"$addToSet": {"list_ids": lid}, "$set": {"updated_at": _s.now_iso()}},
+        )
+    return {
+        "inserted": inserted,
+        "duplicates_skipped": already_in_list,
+        "merged_into_list": merged_into_list,
+        "invalid_skipped": invalid,
+        "warned": warned,
+        "total_in_file": len(data_rows),
+    }
+
+
 @router.post("/prospects/upload")
 async def upload_prospects(
     file: UploadFile = File(...),
@@ -485,9 +696,11 @@ async def upload_prospects(
     """
     vid = user["vendor_id"]
     lid = list_id or await _ensure_default_list(vid)
-    target_list = await _s.db.sales_prospect_lists.find_one({"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1})
+    target_list = await _s.db.sales_prospect_lists.find_one(
+        {"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1, "list_type": 1})
     if not target_list:
         raise HTTPException(status_code=404, detail="List not found")
+    ltype = (target_list.get("list_type") or "email").lower()
 
     raw = await file.read()
     if not raw:
@@ -501,6 +714,9 @@ async def upload_prospects(
     rows = [r for r in reader if any((c or "").strip() for c in r)]
     if not rows:
         raise HTTPException(status_code=400, detail="CSV has no rows")
+
+    if ltype == "whatsapp":
+        return await _upload_whatsapp_rows(vid, lid, rows)
 
     header = [h.strip().lower() for h in rows[0]]
     has_header = any(h in {"email", "e-mail", "email address"} for h in header)
@@ -578,6 +794,7 @@ async def upload_prospects(
             "country_code": cc_disp,
             "phone": phone_full,
             "list_ids": [lid],
+            "list_type": "email",
             "status": "active",
             "source": "csv",
             "created_at": _s.now_iso(),
@@ -608,22 +825,33 @@ async def upload_prospects(
 
 
 @router.get("/prospects/template.csv")
-async def prospects_template_csv(user: dict = Depends(_require_sales_vendor)):
+async def prospects_template_csv(user: dict = Depends(_require_sales_vendor),
+                                 list_type: str = Query("email")):
     """Returns a ready-to-fill CSV template with the recognised column
     headers and a handful of example rows. Vendors download this, edit
     in Excel / Google Sheets, then upload back via /prospects/upload."""
-    sample = (
-        "email,name,company,country_code,phone\n"
-        "alex.morgan@acmedental.com,Alex Morgan,Acme Dental Clinic,+1,4165550101\n"
-        "priya.shah@example.in,Priya Shah,Example Pvt Ltd,+91,9876543210\n"
-        "john.doe@example.co.uk,John Doe,Example Ltd,+44,7700900123\n"
-        "noemail-prospect@example.com,Jane Doe,,,\n"
-    )
+    if (list_type or "email").lower() == "whatsapp":
+        sample = (
+            "name,country_code,phone\n"
+            "Alex Morgan,+1,4165550101\n"
+            "Priya Shah,+91,9876543210\n"
+            "John Doe,+44,7700900123\n"
+        )
+        fname = "botnira-whatsapp-list-template.csv"
+    else:
+        sample = (
+            "email,name,company,country_code,phone\n"
+            "alex.morgan@acmedental.com,Alex Morgan,Acme Dental Clinic,+1,4165550101\n"
+            "priya.shah@example.in,Priya Shah,Example Pvt Ltd,+91,9876543210\n"
+            "john.doe@example.co.uk,John Doe,Example Ltd,+44,7700900123\n"
+            "noemail-prospect@example.com,Jane Doe,,,\n"
+        )
+        fname = "botnira-prospects-template.csv"
     return Response(
         content=sample,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": 'attachment; filename="botnira-prospects-template.csv"',
+            "Content-Disposition": f'attachment; filename="{fname}"',
             "Cache-Control": "no-store",
         },
     )
@@ -670,7 +898,10 @@ async def create_campaign(payload: CampaignIn, user: dict = Depends(_require_sal
 
     # Snapshot ACTIVE prospects from the selected list(s) (union, deduped
     # by prospect identity since each email is one entity per vendor).
-    prospect_filter: Dict[str, Any] = {"vendor_id": vid, "status": "active"}
+    # Only prospects that actually have an email are eligible — WhatsApp-only
+    # leads (no email) are skipped so an email campaign never targets them.
+    prospect_filter: Dict[str, Any] = {"vendor_id": vid, "status": "active",
+                                       "email": {"$nin": ["", None]}}
     # Dedupe incoming list_ids to protect the count check below.
     target_list_ids = list(dict.fromkeys(payload.list_ids or []))
     if target_list_ids:
@@ -1629,7 +1860,21 @@ async def _start_sales_sender():
     asyncio.create_task(_sales_wa_sender_loop())
     # Ensure useful indexes
     try:
-        await _s.db.sales_prospects.create_index([("vendor_id", 1), ("email", 1)], unique=True)
+        # Drop the legacy non-partial unique email index if present — it would
+        # otherwise reject multiple WhatsApp-only leads (which share email "").
+        try:
+            await _s.db.sales_prospects.drop_index("vendor_id_1_email_1")
+        except Exception:
+            pass
+        # Email uniqueness is enforced ONLY for non-empty emails, so WhatsApp-only
+        # leads (email == "") can coexist freely.
+        await _s.db.sales_prospects.create_index(
+            [("vendor_id", 1), ("email", 1)], unique=True,
+            partialFilterExpression={"email": {"$gt": ""}}, name="uniq_vendor_email")
+        # WhatsApp leads are unique per (vendor, phone) within the WhatsApp pool.
+        await _s.db.sales_prospects.create_index(
+            [("vendor_id", 1), ("phone", 1)], unique=True,
+            partialFilterExpression={"list_type": "whatsapp"}, name="uniq_vendor_wa_phone")
         await _s.db.sales_prospects.create_index([("vendor_id", 1), ("status", 1)])
         await _s.db.sales_prospects.create_index([("vendor_id", 1), ("list_ids", 1)])
         await _s.db.sales_prospect_lists.create_index([("vendor_id", 1), ("created_at", 1)])

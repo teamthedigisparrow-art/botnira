@@ -2378,6 +2378,13 @@ async def whatsapp_webhook(request: _FastAPIRequest):
                     conv = conv or await _ensure_conversation(
                         vendor_id, None, "whatsapp", name or wa_from, wa_from
                     )
+                    # Capture the number into the vendor's "Inbox Leads"
+                    # WhatsApp marketing list (best-effort, never blocks reply).
+                    try:
+                        from sales_routes import capture_inbox_lead
+                        await capture_inbox_lead(vendor_id, wa_from, name)
+                    except Exception:
+                        pass
                     await _push_message(conv["id"], vendor_id, "user", text)
                     # Gate: vendor must have active plan + messages balance
                     ok, reason = await _vendor_can_use_channel(vendor_id, "whatsapp")

@@ -54,14 +54,14 @@ function LockedScreen({ reason }) {
 function ListSidebar({ lists, activeId, onSelect, onCreated, onRenamed, onDeleted }) {
   const [editing, setEditing] = useState(null); // list obj being renamed
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: "", description: "" });
+  const [form, setForm] = useState({ name: "", description: "", list_type: "email" });
 
   const saveCreate = async () => {
     if (!form.name.trim()) return toast.error("Name required");
     try {
       const { data } = await api.post("/sales/lists", form);
-      toast.success(`List "${data.list.name}" created`);
-      setCreating(false); setForm({ name: "", description: "" });
+      toast.success(`${data.list.list_type === "whatsapp" ? "WhatsApp" : "Email"} list "${data.list.name}" created`);
+      setCreating(false); setForm({ name: "", description: "", list_type: "email" });
       onCreated(data.list.id);
     } catch (e) { toast.error(e?.response?.data?.detail || "Create failed"); }
   };
@@ -93,7 +93,7 @@ function ListSidebar({ lists, activeId, onSelect, onCreated, onRenamed, onDelete
           <Folder size={11} className="inline -mt-0.5 mr-1" /> Lists
         </div>
         <button
-          onClick={() => { setCreating(true); setForm({ name: "", description: "" }); }}
+          onClick={() => { setCreating(true); setForm({ name: "", description: "", list_type: "email" }); }}
           className="border border-black px-1.5 py-0.5 text-[11px] font-bold hover-lift bg-white"
           data-testid="sales-new-list-btn"
           title="New list"
@@ -111,7 +111,20 @@ function ListSidebar({ lists, activeId, onSelect, onCreated, onRenamed, onDelete
           >
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <div className="font-bold text-sm truncate">{l.name}</div>
+                <div className="font-bold text-sm truncate flex items-center gap-1.5">
+                  <span className="truncate">{l.name}</span>
+                  <span
+                    data-testid={`sales-list-type-${l.id}`}
+                    className={`shrink-0 text-[8px] font-black uppercase tracking-wide px-1 py-px border ${
+                      (l.list_type || "email") === "whatsapp"
+                        ? (activeId === l.id ? "bg-[#25D366] text-black border-black" : "bg-[#25D366]/20 text-[#0b7a3b] border-[#0b7a3b]")
+                        : (activeId === l.id ? "bg-white text-[#002FA7] border-black" : "bg-[#002FA7]/10 text-[#002FA7] border-[#002FA7]")
+                    }`}
+                    title={(l.list_type || "email") === "whatsapp" ? "WhatsApp list" : "Email list"}
+                  >
+                    {(l.list_type || "email") === "whatsapp" ? "WA" : "Email"}
+                  </span>
+                </div>
                 <div className={`text-[10px] font-mono ${activeId === l.id ? "text-white/80" : "text-neutral-500"}`}>
                   {l.counts?.active || 0} active · {l.total || 0} total
                 </div>
@@ -157,6 +170,37 @@ function ListFormModal({ editing, form, setForm, onCancel, onSave }) {
           <button onClick={onCancel} className="border-2 border-black p-1"><X size={13} /></button>
         </div>
         <div className="p-5 space-y-3">
+          {!editing && (
+            <div>
+              <label className="text-xs font-bold uppercase tracking-widest">List type</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, list_type: "email" }))}
+                  data-testid="list-type-email"
+                  className={`border-2 border-black p-3 text-left transition-colors ${form.list_type === "whatsapp" ? "bg-white" : "bg-[#002FA7] text-white"}`}
+                >
+                  <Mail size={16} />
+                  <div className="font-bold text-sm mt-1">Email list</div>
+                  <div className={`text-[11px] mt-0.5 ${form.list_type === "whatsapp" ? "text-neutral-600" : "text-white/85"}`}>
+                    Email required. Powers email campaigns.
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, list_type: "whatsapp" }))}
+                  data-testid="list-type-whatsapp"
+                  className={`border-2 border-black p-3 text-left transition-colors ${form.list_type === "whatsapp" ? "bg-[#25D366] text-black" : "bg-white"}`}
+                >
+                  <MessageCircle size={16} />
+                  <div className="font-bold text-sm mt-1">WhatsApp list</div>
+                  <div className="text-[11px] mt-0.5 text-neutral-700">
+                    Name + country code + number. No email needed.
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
           <div>
             <label className="text-xs font-bold uppercase tracking-widest">Name</label>
             <input
@@ -191,9 +235,9 @@ function ListFormModal({ editing, form, setForm, onCancel, onSave }) {
 }
 
 // ---------------------------------------------------------- prospect editor ---
-function ProspectEditModal({ prospect, onClose, onSaved }) {
+function ProspectEditModal({ prospect, isWa, onClose, onSaved }) {
   const [form, setForm] = useState({
-    email: prospect.email,
+    email: prospect.email || "",
     name: prospect.name || "",
     company: prospect.company || "",
     country_code: prospect.country_code || "",
@@ -204,8 +248,11 @@ function ProspectEditModal({ prospect, onClose, onSaved }) {
   const save = async () => {
     setSaving(true);
     try {
-      await api.patch(`/sales/prospects/${prospect.id}`, form);
-      toast.success("Prospect updated");
+      const payload = isWa
+        ? { name: form.name, country_code: form.country_code, phone: form.phone }
+        : form;
+      await api.patch(`/sales/prospects/${prospect.id}`, payload);
+      toast.success("Contact updated");
       onSaved();
       onClose();
     } catch (e) {
@@ -213,15 +260,17 @@ function ProspectEditModal({ prospect, onClose, onSaved }) {
     } finally { setSaving(false); }
   };
 
+  const fields = isWa ? ["name", "country_code", "phone"] : ["email", "name", "company", "country_code", "phone"];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" data-testid="prospect-edit-modal">
       <div className="bg-white border-2 border-black shadow-brutal w-full max-w-md">
         <div className="px-5 py-3 border-b-2 border-black flex items-center justify-between">
-          <h3 className="font-display font-black text-xl">Edit prospect</h3>
+          <h3 className="font-display font-black text-xl">Edit {isWa ? "WhatsApp contact" : "prospect"}</h3>
           <button onClick={onClose} className="border-2 border-black p-1"><X size={13} /></button>
         </div>
         <div className="p-5 space-y-3">
-          {["email", "name", "company", "country_code", "phone"].map((k) => (
+          {fields.map((k) => (
             <div key={k}>
               <label className="text-xs font-bold uppercase tracking-widest">{k.replace("_", " ")}</label>
               <input
@@ -261,6 +310,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
   const [editing, setEditing] = useState(null);
   const fileRef = useRef(null);
   const activeList = lists.find((l) => l.id === activeListId);
+  const isWa = (activeList?.list_type || "email") === "whatsapp";
 
   const load = async () => {
     if (!activeListId) return;
@@ -291,7 +341,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
         headers: { "Content-Type": "multipart/form-data" },
       });
       toast.success(
-        `Added ${r.inserted} new · ${r.merged_into_list} merged from other lists · ${r.duplicates_skipped} already in list${r.invalid_skipped ? ` · ${r.invalid_skipped} invalid` : ""}`,
+        `Added ${r.inserted} new · ${r.merged_into_list} merged from other lists · ${r.duplicates_skipped} already in list${r.invalid_skipped ? ` · ${r.invalid_skipped} invalid` : ""}${r.warned ? ` · ${r.warned} not 10 digits (kept)` : ""}`,
       );
       await Promise.all([load(), reloadLists()]);
     } catch (err) {
@@ -306,7 +356,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
     const inMultiple = (prospect.list_ids || []).length > 1;
     const msg = inMultiple
       ? `This prospect is in ${prospect.list_ids.length} lists. Remove from "${activeList?.name}" only? (they remain in other lists)`
-      : `Permanently remove ${prospect.email}?`;
+      : `Permanently remove ${prospect.email || prospect.phone || "this contact"}?`;
     if (!window.confirm(msg)) return;
     try {
       await api.delete(`/sales/prospects/${prospect.id}?list_id=${activeListId}`);
@@ -338,22 +388,34 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
         <div className="border-2 border-black bg-amber-50 p-4 flex gap-3 items-start" data-testid="sales-prospects-help">
           <ShieldCheck size={18} className="mt-0.5 text-amber-700 shrink-0" />
           <div className="text-sm flex-1">
-            <strong>CSV columns:</strong>{" "}
-            <code className="bg-white border border-black px-1 font-mono text-xs">email, name, company, country_code, phone</code>.{" "}
-            Only <strong>email</strong> is required. Use <code className="font-mono">country_code</code> like <code className="font-mono">+1</code>, <code className="font-mono">+91</code> — we'll combine it with the phone to make WhatsApp sends work out of the box.{" "}
-            Duplicates are merged automatically — same email in a different list is treated as the <strong>same person</strong>, so campaigns touching multiple lists still deliver one email per prospect.
+            {isWa ? (
+              <>
+                <strong>WhatsApp list · CSV columns:</strong>{" "}
+                <code className="bg-white border border-black px-1 font-mono text-xs">name, country_code, phone</code>.{" "}
+                <strong>Country code</strong> (like <code className="font-mono">+1</code>, <code className="font-mono">+91</code>) and <strong>phone</strong> are required — <strong>no email needed</strong>.
+                Phone numbers should be the local <strong>10-digit</strong> number (other lengths are kept but flagged).
+                Same number + same country code is a duplicate and is skipped; the same number under a different country code is treated as a separate lead.
+              </>
+            ) : (
+              <>
+                <strong>Email list · CSV columns:</strong>{" "}
+                <code className="bg-white border border-black px-1 font-mono text-xs">email, name, company, country_code, phone</code>.{" "}
+                Only <strong>email</strong> is required. Use <code className="font-mono">country_code</code> like <code className="font-mono">+1</code>, <code className="font-mono">+91</code> — we'll combine it with the phone so WhatsApp campaigns can reach them too.{" "}
+                Duplicates are merged automatically — same email in a different list is the <strong>same person</strong>.
+              </>
+            )}
             <div className="mt-2">
               <a
-                href={`${process.env.REACT_APP_BACKEND_URL}/api/sales/prospects/template.csv`}
+                href={`${process.env.REACT_APP_BACKEND_URL}/api/sales/prospects/template.csv?list_type=${isWa ? "whatsapp" : "email"}`}
                 onClick={async (e) => {
                   // Send Authorization header via fetch (anchor tag can't); fallback to JS download
                   e.preventDefault();
                   try {
-                    const res = await api.get("/sales/prospects/template.csv", { responseType: "blob" });
+                    const res = await api.get(`/sales/prospects/template.csv?list_type=${isWa ? "whatsapp" : "email"}`, { responseType: "blob" });
                     const url = window.URL.createObjectURL(new Blob([res.data]));
                     const link = document.createElement("a");
                     link.href = url;
-                    link.setAttribute("download", "botnira-prospects-template.csv");
+                    link.setAttribute("download", isWa ? "botnira-whatsapp-list-template.csv" : "botnira-prospects-template.csv");
                     document.body.appendChild(link);
                     link.click();
                     link.remove();
@@ -365,7 +427,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
                 data-testid="sales-prospects-template-download"
                 className="inline-flex items-center gap-1.5 border-2 border-black bg-white text-black font-bold text-xs px-3 py-1.5 hover-lift no-underline"
               >
-                <Upload size={12} className="rotate-180" /> Download sample CSV
+                <Upload size={12} className="rotate-180" /> Download {isWa ? "WhatsApp" : "sample"} CSV
               </a>
             </div>
           </div>
@@ -405,7 +467,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
         <div className="flex gap-2 items-center flex-wrap">
           <input
             data-testid="sales-prospects-search"
-            placeholder="Search email, name, company"
+            placeholder="Search name, phone, email"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && load()}
@@ -427,36 +489,57 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
 
         {/* Table */}
         <div className="border-2 border-black bg-white shadow-brutal overflow-hidden">
-          <div className="grid grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px] text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2">
-            <div>Email</div><div>Name</div><div>Phone</div><div>Company</div><div>Status</div><div className="text-right">Actions</div>
+          <div className={`grid ${isWa ? "grid-cols-[1.6fr_1.4fr_110px_90px]" : "grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px]"} text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2`}>
+            {isWa ? (
+              <><div>Name</div><div>WhatsApp number</div><div>Status</div><div className="text-right">Actions</div></>
+            ) : (
+              <><div>Email</div><div>Name</div><div>Phone</div><div>Company</div><div>Status</div><div className="text-right">Actions</div></>
+            )}
           </div>
           {loading ? (
             <div className="p-10 text-center text-sm text-neutral-500">Loading…</div>
           ) : data.items.length === 0 ? (
             <div className="p-10 text-center text-sm text-neutral-500">
-              No prospects in this list. Upload a CSV to get started.
+              No contacts in this list. {isWa ? "Upload a WhatsApp CSV (name, country code, number) to get started." : "Upload a CSV to get started."}
             </div>
           ) : (
             data.items.map((p) => (
               <div key={p.id}
-                   data-testid={`prospect-row-${p.email}`}
-                   className="grid grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px] px-4 py-2.5 text-sm border-t border-black/10 items-center">
-                <div className="font-mono text-xs truncate">
-                  {p.email}
-                  {(p.list_ids?.length || 0) > 1 && (
-                    <span className="ml-1.5 text-[9px] font-bold bg-neutral-200 border border-black px-1" title="In multiple lists">
-                      ×{p.list_ids.length}
-                    </span>
-                  )}
-                  {p.source === "landing_inquiry" && (
-                    <span className="ml-1.5 text-[9px] font-bold bg-amber-200 border border-black px-1" title="Came from website Contact form">
-                      INQUIRY
-                    </span>
-                  )}
-                </div>
-                <div className="truncate">{p.name || "—"}</div>
-                <div className="font-mono text-xs truncate">{p.phone || "—"}</div>
-                <div className="truncate text-neutral-600">{p.company || "—"}</div>
+                   data-testid={`prospect-row-${p.email || p.phone}`}
+                   className={`grid ${isWa ? "grid-cols-[1.6fr_1.4fr_110px_90px]" : "grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px]"} px-4 py-2.5 text-sm border-t border-black/10 items-center`}>
+                {isWa ? (
+                  <>
+                    <div className="truncate flex items-center gap-1.5">
+                      <span className="truncate">{p.name || "—"}</span>
+                      {(p.list_ids?.length || 0) > 1 && (
+                        <span className="text-[9px] font-bold bg-neutral-200 border border-black px-1" title="In multiple lists">×{p.list_ids.length}</span>
+                      )}
+                      {p.source === "inbox" && (
+                        <span className="text-[9px] font-bold bg-[#25D366]/40 border border-black px-1" title="Auto-collected from your WhatsApp inbox">INBOX</span>
+                      )}
+                    </div>
+                    <div className="font-mono text-xs truncate">{p.phone ? `+${p.phone}` : "—"}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-mono text-xs truncate">
+                      {p.email}
+                      {(p.list_ids?.length || 0) > 1 && (
+                        <span className="ml-1.5 text-[9px] font-bold bg-neutral-200 border border-black px-1" title="In multiple lists">
+                          ×{p.list_ids.length}
+                        </span>
+                      )}
+                      {p.source === "landing_inquiry" && (
+                        <span className="ml-1.5 text-[9px] font-bold bg-amber-200 border border-black px-1" title="Came from website Contact form">
+                          INQUIRY
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate">{p.name || "—"}</div>
+                    <div className="font-mono text-xs truncate">{p.phone || "—"}</div>
+                    <div className="truncate text-neutral-600">{p.company || "—"}</div>
+                  </>
+                )}
                 <div>
                   <span className={`inline-block text-[10px] px-2 py-0.5 border border-black font-bold uppercase ${
                     p.status === "active" ? "bg-green-100" :
@@ -465,12 +548,12 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
                 </div>
                 <div className="flex gap-1 justify-end">
                   <button onClick={() => setEditing(p)} title="Edit"
-                          data-testid={`prospect-edit-${p.email}`}
+                          data-testid={`prospect-edit-${p.email || p.phone}`}
                           className="text-neutral-600 hover:text-[#002FA7] p-1">
                     <Pencil size={13} />
                   </button>
                   <button onClick={() => remove(p)} title="Remove"
-                          data-testid={`prospect-remove-${p.email}`}
+                          data-testid={`prospect-remove-${p.email || p.phone}`}
                           className="text-neutral-500 hover:text-red-700 p-1">
                     <Trash2 size={13} />
                   </button>
@@ -483,6 +566,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
         {editing && (
           <ProspectEditModal
             prospect={editing}
+            isWa={isWa}
             onClose={() => setEditing(null)}
             onSaved={load}
           />
@@ -494,6 +578,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
 
 // ---------------------------------------------------------- composer modal ---
 function ComposerModal({ open, onClose, onCreated, lists }) {
+  const emailLists = lists.filter((l) => (l.list_type || "email") === "email");
   const [form, setForm] = useState({
     name: "", subject: "", body_type: "html", body: "", list_ids: [],
   });
@@ -501,10 +586,11 @@ function ComposerModal({ open, onClose, onCreated, lists }) {
 
   useEffect(() => {
     if (open) {
-      // Preselect all lists by default
+      // Preselect all email lists with active prospects by default
       setForm({ name: "", subject: "", body_type: "html", body: "",
-                list_ids: lists.filter((l) => (l.counts?.active || 0) > 0).map((l) => l.id) });
+                list_ids: emailLists.filter((l) => (l.counts?.active || 0) > 0).map((l) => l.id) });
     }
+    // eslint-disable-next-line
   }, [open, lists]);
 
   if (!open) return null;
@@ -516,7 +602,7 @@ function ComposerModal({ open, onClose, onCreated, lists }) {
     }));
   };
 
-  const targetCount = lists
+  const targetCount = emailLists
     .filter((l) => form.list_ids.includes(l.id))
     .reduce((s, l) => s + (l.counts?.active || 0), 0);
 
@@ -570,9 +656,9 @@ function ComposerModal({ open, onClose, onCreated, lists }) {
               <ListPlus size={12} /> Send to these lists
             </label>
             <div className="border-2 border-black bg-neutral-50 p-3 space-y-1.5 max-h-48 overflow-y-auto">
-              {lists.length === 0 ? (
-                <div className="text-xs text-neutral-500">No lists yet.</div>
-              ) : lists.map((l) => {
+              {emailLists.length === 0 ? (
+                <div className="text-xs text-neutral-500">No email lists yet. Create an Email-type list in the Prospects tab.</div>
+              ) : emailLists.map((l) => {
                 const checked = form.list_ids.includes(l.id);
                 const active = l.counts?.active || 0;
                 return (
@@ -682,7 +768,8 @@ function CampaignsPanel({ lists }) {
   const [showComposer, setShowComposer] = useState(false);
   const [expanded, setExpanded] = useState(null); // campaign id whose recipients are shown
   const [recipients, setRecipients] = useState([]);
-  const totalActive = lists.reduce((s, l) => s + (l.counts?.active || 0), 0);
+  const emailLists = lists.filter((l) => (l.list_type || "email") === "email");
+  const totalActive = emailLists.reduce((s, l) => s + (l.counts?.active || 0), 0);
 
   const load = async () => {
     setLoading(true);
@@ -726,7 +813,7 @@ function CampaignsPanel({ lists }) {
     <div className="space-y-4" data-testid="sales-campaigns-panel">
       <div className="flex items-center justify-between">
         <p className="text-sm text-neutral-700">
-          {totalActive} active prospects across {lists.length} list{lists.length === 1 ? "" : "s"}.
+          {totalActive} active email prospects across {emailLists.length} email list{emailLists.length === 1 ? "" : "s"}.
         </p>
         <button
           onClick={() => setShowComposer(true)}
@@ -1185,22 +1272,27 @@ function WaComposer({ lists, onClose, onLaunched }) {
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-neutral-600">Target lists</label>
             <p className="text-[11px] text-neutral-500">
-              Leave empty to broadcast to <strong>all active prospects with a phone number</strong>. Prospects without a phone are skipped automatically.
+              Pick from <strong>both</strong> your WhatsApp lists and Email lists — email lists carry phone numbers too. Leave empty to broadcast to <strong>all active contacts with a phone number</strong>. Contacts without a phone are skipped automatically.
             </p>
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-              {lists.map((l) => (
-                <label key={l.id} className="border-2 border-black p-2 flex items-center gap-2 text-sm cursor-pointer hover:bg-neutral-50"
-                       data-testid={`wa-composer-list-${l.id}`}>
-                  <input
-                    type="checkbox"
-                    checked={form.list_ids.includes(l.id)}
-                    onChange={() => toggleList(l.id)}
-                  />
-                  <Folder size={12} />
-                  <span className="font-bold">{l.name}</span>
-                  <span className="ml-auto text-[10px] font-mono text-neutral-500">{l.counts?.active || 0} active</span>
-                </label>
-              ))}
+              {lists.map((l) => {
+                const wa = (l.list_type || "email") === "whatsapp";
+                const reach = l.counts?.active_with_phone ?? l.counts?.active ?? 0;
+                return (
+                  <label key={l.id} className="border-2 border-black p-2 flex items-center gap-2 text-sm cursor-pointer hover:bg-neutral-50"
+                         data-testid={`wa-composer-list-${l.id}`}>
+                    <input
+                      type="checkbox"
+                      checked={form.list_ids.includes(l.id)}
+                      onChange={() => toggleList(l.id)}
+                    />
+                    {wa ? <MessageCircle size={12} className="text-[#0b7a3b]" /> : <Mail size={12} className="text-[#002FA7]" />}
+                    <span className="font-bold truncate">{l.name}</span>
+                    <span className={`text-[8px] font-black uppercase px-1 border ${wa ? "bg-[#25D366]/20 text-[#0b7a3b] border-[#0b7a3b]" : "bg-[#002FA7]/10 text-[#002FA7] border-[#002FA7]"}`}>{wa ? "WA" : "Email"}</span>
+                    <span className="ml-auto text-[10px] font-mono text-neutral-500 shrink-0">{reach} w/ phone</span>
+                  </label>
+                );
+              })}
             </div>
           </div>
         </div>
