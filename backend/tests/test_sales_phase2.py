@@ -140,7 +140,7 @@ class TestListsCRUD:
     def test_delete_only_list_recreates_main(self, exempt_client):
         # delete every TEST_ list, then delete each remaining list — ensure Main always exists
         r = exempt_client.get(f"{API}/sales/lists", timeout=20)
-        before = r.json()["items"]
+        _ = r.json()["items"]
         # We won't actually delete real lists — just delete a freshly created one and confirm
         r = exempt_client.post(f"{API}/sales/lists",
                                json={"name": "TEST_temp_only", "description": ""}, timeout=20)

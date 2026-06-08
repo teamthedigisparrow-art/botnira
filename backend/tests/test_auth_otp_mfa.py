@@ -225,7 +225,7 @@ class TestMFA:
         r = http.put(f"{API}/auth/mfa", json={"enabled": True, "password": "wrong-pw"},
                      headers=h(kamal_token), timeout=15)
         assert r.status_code == 401
-        v = mongo.vendors.find_one({"id": None} if False else {"email": KAMAL[0].lower()}) or \
+        _ = mongo.vendors.find_one({"id": None} if False else {"email": KAMAL[0].lower()}) or \
             mongo.vendors.find_one({"owner_email": KAMAL[0].lower()})
         # Verify via mfa-status that it's still disabled
         r2 = http.get(f"{API}/auth/mfa-status", headers=h(kamal_token), timeout=15)

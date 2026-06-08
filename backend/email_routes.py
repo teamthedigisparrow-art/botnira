@@ -152,13 +152,17 @@ def _strip_quoted_reply(body: str) -> str:
     for i, ln in enumerate(lines):
         s = ln.strip()
         if s.startswith(">"):
-            cut = i; break
+            cut = i
+            break
         if s.startswith("-----Original Message-----"):
-            cut = i; break
+            cut = i
+            break
         if "wrote:" in s and any(s.startswith(m) for m in markers):
-            cut = i; break
+            cut = i
+            break
         if i > 0 and s.lower().startswith("from:") and "@" in s:
-            cut = i; break
+            cut = i
+            break
     return "\n".join(lines[:cut]).strip()
 
 
@@ -248,10 +252,14 @@ def _imap_fetch_unseen(conn: dict) -> List[dict]:
                 except Exception:
                     pass
         finally:
-            try: M.close()
-            except Exception: pass
-            try: M.logout()
-            except Exception: pass
+            try:
+                M.close()
+            except Exception:
+                pass
+            try:
+                M.logout()
+            except Exception:
+                pass
     except Exception as e:
         _s.logger.warning("[email poll] IMAP error for %s: %s", conn.get("email_address"), e)
         return []
@@ -609,8 +617,10 @@ def _verify_imap_smtp_sync(email_address: str, password: str,
                         except Exception:
                             pass
         finally:
-            try: M.logout()
-            except Exception: pass
+            try:
+                M.logout()
+            except Exception:
+                pass
         out["imap_ok"] = True
     except imaplib.IMAP4.error as e:
         out["error"] = f"IMAP login failed: {e}"

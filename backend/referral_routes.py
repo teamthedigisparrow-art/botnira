@@ -121,6 +121,7 @@ async def attach_referral_on_signup(
         "signup_at": now_iso(),
     }
     await db.referrals.insert_one(rec)
+    rec.pop("_id", None)
     await db.vendors.update_one(
         {"id": new_vendor_id},
         {"$set": {
@@ -177,6 +178,7 @@ async def record_commission_for_invoice(
         "created_at": now_iso(),
     }
     await db.referral_commissions.insert_one(doc)
+    doc.pop("_id", None)
     return doc
 
 
