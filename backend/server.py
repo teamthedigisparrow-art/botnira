@@ -260,7 +260,6 @@ def slugify(txt: str) -> str:
 
 
 # ------------------------------ Seed superadmin ------------------------------
-@app.on_event("startup")
 async def seed_admin():
     # Canonical seed credentials — kept in sync with /app/memory/test_credentials.md.
     # The superadmin login was rotated to a personal email; we migrate the old
@@ -2792,7 +2791,6 @@ async def _ensure_hst_tax_rate():
         logger.exception("Failed to provision HST tax rate: %s", e)
 
 
-@app.on_event("startup")
 async def startup_stripe():
     # Backfill billing fields on existing vendors (idempotent migration).
     # CRITICAL: trial_ends_at must be derived from the vendor's actual
@@ -5582,4 +5580,3 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
-()
