@@ -5225,30 +5225,42 @@ async def voice_stream(ws: WebSocket, call_id: str):
             # - silence_duration_ms 600 (wait 0.6s of silence before ending user's turn)
             # - prefix_padding_ms 300 (keep 0.3s of audio before detected speech)
             # - temperature 0.7 (natural but on-topic)
+            # OpenAI Realtime GA (`gpt-realtime`) session schema. The LEGACY beta
+            # schema (top-level `modalities`, `input_audio_format` strings,
+            # top-level `turn_detection`, `temperature`) is now REJECTED by the GA
+            # endpoint with "Missing required parameter: 'session.type'" — which
+            # silently breaks audio config and makes the call go totally SILENT.
+            # Twilio streams μ-law 8kHz → format "audio/pcmu".
             session_cfg = {
                 "type": "session.update",
                 "session": {
-                    "modalities": ["audio", "text"],
-                    "voice": "alloy",
-                    "input_audio_format": "g711_ulaw",
-                    "output_audio_format": "g711_ulaw",
+                    "type": "realtime",
+                    "output_modalities": ["audio"],
                     "instructions": system_instructions,
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.6,
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 600,
-                        "create_response": True,
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcmu"},
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "threshold": 0.6,
+                                "prefix_padding_ms": 300,
+                                "silence_duration_ms": 600,
+                                "create_response": True,
+                            },
+                            "transcription": {"model": "whisper-1"},
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcmu"},
+                            "voice": "alloy",
+                        },
                     },
-                    "input_audio_transcription": {"model": "whisper-1"},
-                    "temperature": 0.7,
                 },
             }
             await oai.send(json.dumps(session_cfg))
-            # Proactive greeting
+            # Proactive greeting (GA uses `output_modalities`, not `modalities`).
             await oai.send(json.dumps({
                 "type": "response.create",
-                "response": {"modalities": ["audio", "text"], "instructions": f"Greet the caller warmly in one short sentence: {greeting}"},
+                "response": {"output_modalities": ["audio"], "instructions": f"Greet the caller warmly in one short sentence: {greeting}"},
             }))
 
             # Barge-in bookkeeping
@@ -5353,7 +5365,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
                             item = ev.get("item") or {}
                             if item.get("type") == "message":
                                 state["latest_assistant_item_id"] = item.get("id")
-                        elif etype == "response.audio.delta" and stream_sid:
+                        elif etype == "response.output_audio.delta" and stream_sid:
                             await ws.send_text(json.dumps({
                                 "event": "media",
                                 "streamSid": stream_sid,
@@ -5364,7 +5376,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
                             state["bot_speaking"] = False
                             state["latest_assistant_item_id"] = None
                             state["response_start_timestamp"] = None
-                        elif etype == "response.audio_transcript.done":
+                        elif etype == "response.output_audio_transcript.done":
                             text = ev.get("transcript", "")
                             if text:
                                 await _push_message(conv_id, vendor_id, "bot", text)
