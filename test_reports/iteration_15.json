@@ -1,0 +1,23 @@
+{
+  "summary": "Iter 15 — Frontend-only mobile responsiveness verification for ALL vendor pages under /app. Mobile (390x844) and Desktop (1920x800) tested with kamal@thedigisparrow.com (exempt). MOBILE: ✅ Hamburger top bar (vendor-mobile-menu-btn) opens slide-out drawer (vendor-sidebar slides from x=-260 to x=0); ✅ overlay (vendor-mobile-overlay) appears at 50% black; ✅ closes via X (vendor-mobile-close), overlay tap, AND nav-link click (verified nav-bot route changes and sidebar returns to x=-260); ✅ EVERY vendor route renders with NO horizontal page overflow (scrollWidth == clientWidth == 390 on /app, /app/bot, /app/channels, /app/appointments, /app/sales, /app/analytics, /app/billing, /app/settings, /app/referrals, /app/inbox); ✅ Inbox single-pane behavior: list shown initially with m-filter-all/m-filter-open/m-filter-resolved/m-channel-filter all visible, tapping a thread switches to detail (thread-messages visible, m-filter-all hidden, inbox-mobile-back visible) with NO page overflow, tapping back returns to list (m-filter-all visible again); ✅ Sales /app/sales prospects: sales-lists-sidebar stacks above content (x=16, y=312, w=358 — full-width, not side-by-side); ✅ Mobile Appointments table is 1093px wide but wrapped in overflow-x-auto container (parentW=358) — scrolls horizontally within container, no page overflow. DESKTOP REGRESSION: ✅ Sidebar fixed left column at x=0 w=260 h=800; ✅ vendor-mobile-menu-btn hidden; ✅ sidebar-collapse-btn collapses to w=64; ✅ sidebar-expand-btn restores to w=260; ✅ Inbox 3-pane confirmed (filters column + threads list + conversation detail visible simultaneously, screenshot verified); ✅ Desktop hides m-filter-all and inbox-mobile-back as expected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Pre-existing (not related to this iteration's responsiveness work): React hydration warning '<span> cannot be a child of <option>' still emits on every page that loads SalesAssistant.jsx WaComposer template <select>. Carried over from iter 14. Cosmetic dev-only.",
+    "VendorLayout.jsx uses md: breakpoint (768px) for sidebar transition while pages use sm:p-8 (640px) for padding. Inconsistent breakpoints could be confusing at 640-768px tablet range — though within review-request scope this works correctly at 390px and 1920x800. Consider standardizing on one breakpoint family (lg: per Inbox.jsx) for a more cohesive responsive contract."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (all 6 review-request scenarios pass)"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu (exempt vendor — all channels unlocked).",
+  "seed_data_creation": "None — read-only UI navigation tests, no data created.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Mobile responsiveness is solid. Key data-testids verified: vendor-mobile-menu-btn (open), vendor-mobile-close (X), vendor-mobile-overlay (tap to close), vendor-sidebar (slide-out drawer; bounding box x=-260 closed, x=0 open at 390px viewport), sidebar-collapse-btn / sidebar-expand-btn (desktop only — toggles w=260↔w=64), m-filter-all/open/resolved + m-channel-filter (mobile inbox list pill bar — hidden on lg), inbox-mobile-back (mobile detail), sales-lists-sidebar (stacks above prospects on mobile, side-by-side on lg). For thread click in inbox, MUST filter out non-thread testids (thread-count, thread-search, thread-search-clear, thread-time-*, thread-unread-dot-*, thread-messages) — only thread-<uuid> is the actual clickable thread button.",
+  "rca of the issue": "n/a — no issues found in the responsiveness implementation."
+}

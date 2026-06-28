@@ -114,7 +114,7 @@ export default function Appointments() {
   const hasActiveFilters = filters.date_from || filters.date_to || filters.source !== "all" || filters.status !== "all" || filters.attended !== "all";
 
   return (
-    <div className="p-8" data-testid="appointments-page">
+    <div className="p-4 sm:p-8" data-testid="appointments-page">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Calendar</div>

@@ -192,7 +192,7 @@ export default function Billing() {
   const planMeta = plans.find(p => p.id === planSlug);
 
   return (
-    <div className="p-8 space-y-8" data-testid="billing-page">
+    <div className="p-4 sm:p-8 space-y-8" data-testid="billing-page">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Billing</div>

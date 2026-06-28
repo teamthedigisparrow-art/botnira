@@ -159,7 +159,7 @@ export default function Channels() {
   };
 
   return (
-    <div className="p-8 space-y-8" data-testid="channels-page">
+    <div className="p-4 sm:p-8 space-y-8" data-testid="channels-page">
       <div>
         <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Channels</div>
         <h1 className="font-display text-4xl font-black tracking-tighter">Plug in your front desk.</h1>

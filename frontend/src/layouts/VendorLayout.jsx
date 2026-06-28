@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
-import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard, PanelLeftClose, PanelLeftOpen, Megaphone, Gift } from "lucide-react";
+import { Inbox, Bot, Cable, CalendarDays, BarChart3, Settings as SettingsIcon, LogOut, LayoutDashboard, CreditCard, PanelLeftClose, PanelLeftOpen, Megaphone, Gift, Menu, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import PaywallGuard from "../components/PaywallGuard";
 import BrandMark from "../components/BrandMark";
@@ -33,45 +33,105 @@ export default function VendorLayout() {
     try { localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0"); } catch { /* ignore */ }
   }, [collapsed]);
 
+  // Mobile slide-out drawer state
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Collapse only applies on desktop; the mobile drawer is always full-width.
+  const [isDesktop, setIsDesktop] = useState(() => {
+    try { return window.matchMedia("(min-width: 768px)").matches; } catch { return true; }
+  });
+  useEffect(() => {
+    const m = window.matchMedia("(min-width: 768px)");
+    const h = (e) => setIsDesktop(e.matches);
+    m.addEventListener("change", h);
+    return () => m.removeEventListener("change", h);
+  }, []);
+
+  const effCollapsed = isDesktop ? collapsed : false;
   const sidebarWidth = collapsed ? "64px" : "260px";
 
   return (
     <div
-      className="min-h-screen grid"
+      className="min-h-screen md:grid"
       style={{ gridTemplateColumns: `${sidebarWidth} 1fr` }}
       data-testid="vendor-shell"
     >
+      {/* Mobile top bar */}
+      <header className="md:hidden sticky top-0 z-[55] h-14 bg-white border-b-2 border-black flex items-center justify-between px-4">
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="p-1 text-black"
+          data-testid="vendor-mobile-menu-btn"
+          aria-label="Open menu"
+        >
+          <Menu size={24} />
+        </button>
+        <Link to="/app" className="flex items-center gap-2" title="BotNira">
+          <BrandMark size={24} />
+          <span className="font-display font-black text-lg">BotNira</span>
+        </Link>
+        <button
+          onClick={() => { logout(); nav("/"); }}
+          className="p-1 text-black"
+          data-testid="vendor-mobile-logout"
+          aria-label="Log out"
+        >
+          <LogOut size={20} />
+        </button>
+      </header>
+
+      {/* Mobile drawer overlay */}
+      {mobileOpen && (
+        <div
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden fixed inset-0 bg-black/50 z-[65]"
+          data-testid="vendor-mobile-overlay"
+        />
+      )}
+
       <aside
-        className={`border-r-2 border-black bg-white flex flex-col transition-[width] duration-200 relative z-[60] ${collapsed ? "items-center" : ""}`}
+        className={`border-r-2 border-black bg-white flex flex-col fixed inset-y-0 left-0 w-[260px] z-[70] transition-transform duration-200 md:static md:z-[60] md:translate-x-0 md:w-auto ${mobileOpen ? "translate-x-0" : "-translate-x-full"} ${effCollapsed ? "md:items-center" : ""}`}
         data-testid="vendor-sidebar"
-        data-collapsed={collapsed ? "1" : "0"}
+        data-collapsed={effCollapsed ? "1" : "0"}
       >
         {/* Brand row + collapse toggle */}
-        <div className={`h-16 border-b-2 border-black flex items-center ${collapsed ? "justify-center px-0" : "px-5 justify-between"}`}>
-          <Link to="/app" className="flex items-center gap-2" data-testid="vendor-brand" title="BotNira">
+        <div className={`h-16 border-b-2 border-black flex items-center ${effCollapsed ? "justify-center px-0" : "px-5 justify-between"}`}>
+          <Link to="/app" onClick={() => setMobileOpen(false)} className="flex items-center gap-2" data-testid="vendor-brand" title="BotNira">
             <BrandMark size={28} />
-            {!collapsed && <span className="font-display font-black text-lg">BotNira</span>}
+            {!effCollapsed && <span className="font-display font-black text-lg">BotNira</span>}
           </Link>
-          {!collapsed && (
-            <button
-              onClick={() => setCollapsed(true)}
-              className="text-neutral-600 hover:text-black p-1"
-              data-testid="sidebar-collapse-btn"
-              title="Collapse sidebar"
-              aria-label="Collapse sidebar"
-            >
-              <PanelLeftClose size={18} />
-            </button>
+          {!effCollapsed && (
+            <>
+              {/* Desktop collapse */}
+              <button
+                onClick={() => setCollapsed(true)}
+                className="hidden md:block text-neutral-600 hover:text-black p-1"
+                data-testid="sidebar-collapse-btn"
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeftClose size={18} />
+              </button>
+              {/* Mobile close */}
+              <button
+                onClick={() => setMobileOpen(false)}
+                className="md:hidden text-neutral-600 hover:text-black p-1"
+                data-testid="vendor-mobile-close"
+                aria-label="Close menu"
+              >
+                <X size={22} />
+              </button>
+            </>
           )}
         </div>
 
         {/* Workspace block hidden when collapsed (purely informational) */}
-        {!collapsed && (
+        {!effCollapsed && (
           <div className="px-5 py-4 border-b-2 border-black">
             <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-neutral-500">Workspace</div>
             <div className="font-display font-bold truncate" data-testid="vendor-name-display">{vendor?.name || "—"}</div>
             {access?.trial && !access?.is_exempt && (
-              <Link to="/app/billing" data-testid="sidebar-trial-pill" className="mt-2 inline-block text-[10px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-2 py-0.5">
+              <Link to="/app/billing" onClick={() => setMobileOpen(false)} data-testid="sidebar-trial-pill" className="mt-2 inline-block text-[10px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-2 py-0.5">
                 Trial · {access.trial_days_left}d left
               </Link>
             )}
@@ -81,8 +141,8 @@ export default function VendorLayout() {
           </div>
         )}
 
-        {/* Expand handle when collapsed */}
-        {collapsed && (
+        {/* Expand handle when collapsed (desktop only) */}
+        {effCollapsed && (
           <button
             onClick={() => setCollapsed(false)}
             className="my-3 text-neutral-600 hover:text-black p-1"
@@ -94,37 +154,38 @@ export default function VendorLayout() {
           </button>
         )}
 
-        <nav className={`flex-1 ${collapsed ? "p-2 space-y-1 w-full" : "p-3 space-y-1"}`}>
+        <nav className={`flex-1 overflow-y-auto ${effCollapsed ? "p-2 space-y-1 w-full" : "p-3 space-y-1"}`}>
           {links.map(l => (
             <NavLink
               key={l.to}
               to={l.to}
               end={l.end}
+              onClick={() => setMobileOpen(false)}
               data-testid={l.tid}
-              title={collapsed ? l.label : undefined}
-              aria-label={collapsed ? l.label : undefined}
+              title={effCollapsed ? l.label : undefined}
+              aria-label={effCollapsed ? l.label : undefined}
               className={({isActive}) =>
-                `${collapsed ? "flex items-center justify-center px-2 py-2.5" : "flex items-center gap-3 px-3 py-2"} text-sm font-bold border-2 ${isActive ? "bg-[#002FA7] text-white border-black" : "border-transparent hover:border-black"}`
+                `${effCollapsed ? "flex items-center justify-center px-2 py-2.5" : "flex items-center gap-3 px-3 py-2"} text-sm font-bold border-2 ${isActive ? "bg-[#002FA7] text-white border-black" : "border-transparent hover:border-black"}`
               }
             >
-              <l.icon size={collapsed ? 18 : 16} />
-              {!collapsed && <span>{l.label}</span>}
+              <l.icon size={effCollapsed ? 18 : 16} />
+              {!effCollapsed && <span>{l.label}</span>}
             </NavLink>
           ))}
         </nav>
 
-        <div className={`border-t-2 border-black ${collapsed ? "p-2 w-full" : "p-3"}`}>
-          {!collapsed && (
+        <div className={`border-t-2 border-black ${effCollapsed ? "p-2 w-full" : "p-3"}`}>
+          {!effCollapsed && (
             <div className="text-xs font-mono truncate" data-testid="vendor-user-email">{user?.email}</div>
           )}
           <button
             onClick={() => { logout(); nav("/"); }}
             data-testid="vendor-logout"
-            title={collapsed ? "Log out" : undefined}
-            className={`${collapsed ? "flex items-center justify-center px-2 py-2.5 w-full" : "mt-2 w-full text-sm font-bold flex items-center gap-2 px-3 py-2"} border-2 border-black hover-lift`}
+            title={effCollapsed ? "Log out" : undefined}
+            className={`${effCollapsed ? "flex items-center justify-center px-2 py-2.5 w-full" : "mt-2 w-full text-sm font-bold flex items-center gap-2 px-3 py-2"} border-2 border-black hover-lift`}
           >
             <LogOut size={14} />
-            {!collapsed && <span className="text-sm font-bold">Log out</span>}
+            {!effCollapsed && <span className="text-sm font-bold">Log out</span>}
           </button>
         </div>
       </aside>

@@ -109,7 +109,7 @@ export default function Referrals() {
   const s = me.summary || {};
 
   return (
-    <div className="p-8 space-y-6 max-w-6xl" data-testid="referrals-page">
+    <div className="p-4 sm:p-8 space-y-6 max-w-6xl" data-testid="referrals-page">
       {/* Header */}
       <div>
         <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Earn alongside BotNira</div>

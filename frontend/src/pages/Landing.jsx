@@ -274,8 +274,8 @@ const MultiLanguage = () => (
 );
 
 const TryLive = () => {
-  const PHONE = "+18259574205";
-  const PHONE_DISPLAY = "+1 (825) 957-4205";
+  const PHONE = "+12897784594";
+  const PHONE_DISPLAY = "+1 (289) 778-4594";
   const WA = "919041710721";
   const WA_DISPLAY = "+91 90417 10721";
   const prefilled = encodeURIComponent("Hi BotNira — How you work for me?.");

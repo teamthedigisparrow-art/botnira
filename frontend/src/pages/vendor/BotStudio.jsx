@@ -53,7 +53,7 @@ export default function BotStudio() {
   if (!bot) return <div className="p-10 font-mono">Loading bot…</div>;
 
   return (
-    <div className="p-8 grid lg:grid-cols-[1fr_420px] gap-6" data-testid="bot-studio">
+    <div className="p-4 sm:p-8 grid lg:grid-cols-[1fr_420px] gap-6" data-testid="bot-studio">
       <div className="space-y-6">
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div>

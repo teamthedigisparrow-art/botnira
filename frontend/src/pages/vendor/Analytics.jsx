@@ -8,7 +8,7 @@ export default function Analytics() {
   if (!data) return <div className="p-10 font-mono">Loading…</div>;
   const t = data.totals;
   return (
-    <div className="p-8 space-y-6" data-testid="analytics-page">
+    <div className="p-4 sm:p-8 space-y-6" data-testid="analytics-page">
       <div>
         <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Analytics</div>
         <h1 className="font-display text-4xl font-black tracking-tighter">How's your bot doing?</h1>

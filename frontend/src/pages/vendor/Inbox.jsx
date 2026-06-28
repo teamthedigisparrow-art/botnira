@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
-import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe, Search, Sparkles, Loader2, X, Dot } from "lucide-react";
+import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe, Search, Sparkles, Loader2, X, Dot, ChevronLeft } from "lucide-react";
 import DOMPurify from "dompurify";
 import RichText from "../../components/botnira/RichText";
 
@@ -67,6 +67,7 @@ export default function Inbox() {
 
   const [reply, setReply] = useState("");
   const [drafting, setDrafting] = useState(false);
+  const [mobileDetail, setMobileDetail] = useState(false); // mobile: show detail pane
   const scrollRef = useRef(null);
 
   // Debounce the search input so we don't hit the server on every keystroke.
@@ -197,9 +198,9 @@ export default function Inbox() {
   const isEmailConv = detail?.conversation?.channel === "email";
 
   return (
-    <div className="h-screen grid grid-cols-[320px_360px_1fr] overflow-hidden" data-testid="inbox-page">
+    <div className="h-[calc(100dvh-3.5rem)] md:h-screen flex flex-col lg:grid lg:grid-cols-[300px_340px_1fr] overflow-hidden" data-testid="inbox-page">
       {/* filters */}
-      <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto">
+      <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto hidden lg:block">
         <div className="h-16 border-b-2 border-black px-5 flex items-center justify-between">
           <h2 className="font-display font-black text-xl tracking-tight">Inbox</h2>
           {unreadTotal > 0 && (
@@ -245,7 +246,7 @@ export default function Inbox() {
       </div>
 
       {/* list */}
-      <div className="border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto flex flex-col">
+      <div className={`${mobileDetail ? "hidden" : "flex"} lg:flex border-r-2 border-black bg-white h-full min-h-0 overflow-y-auto flex-col`}>
         <div className="h-16 border-b-2 border-black px-5 flex items-center justify-between flex-shrink-0">
           <span className="text-xs font-bold tracking-widest uppercase">
             Threads <span data-testid="thread-count">({convs.length}/{total})</span>
@@ -255,6 +256,25 @@ export default function Inbox() {
               {channelFilter.toUpperCase()} only
             </span>
           )}
+        </div>
+        {/* Mobile-only filters (the dedicated filter pane is hidden < lg) */}
+        <div className="lg:hidden border-b-2 border-black px-3 py-2 space-y-2 bg-neutral-50 flex-shrink-0" data-testid="inbox-mobile-filters">
+          <div className="flex gap-1">
+            {["all", "open", "resolved"].map(f => (
+              <button key={f} data-testid={`m-filter-${f}`} onClick={() => setStatusFilter(f)} className={`flex-1 text-xs font-bold px-2 py-1.5 border-2 ${statusFilter === f ? "bg-black text-white border-black" : "border-black/20 hover:border-black"}`}>
+                {f.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <select
+            data-testid="m-channel-filter"
+            value={channelFilter}
+            onChange={(e) => setChannelFilter(e.target.value)}
+            className="w-full border-2 border-black px-3 py-2 text-sm font-bold bg-white"
+          >
+            <option value="all">All channels ({channelCounts.all})</option>
+            {CHANNELS.map(c => <option key={c} value={c}>{c.toUpperCase()} ({channelCounts[c] || 0})</option>)}
+          </select>
         </div>
         {/* search */}
         <div className="border-b-2 border-black px-3 py-2 flex items-center gap-2 bg-neutral-50 flex-shrink-0">
@@ -291,7 +311,7 @@ export default function Inbox() {
                 key={c.id}
                 data-testid={`thread-${c.id}`}
                 data-unread={unread ? "1" : "0"}
-                onClick={() => setActive(c.id)}
+                onClick={() => { setActive(c.id); setMobileDetail(true); }}
                 className={`w-full text-left px-5 py-4 border-b border-black/10 relative ${active === c.id ? "bg-neutral-100" : "hover:bg-neutral-50"} ${unread ? "bg-blue-50/40" : ""}`}
               >
                 {unread && (
@@ -347,21 +367,31 @@ export default function Inbox() {
       </div>
 
       {/* detail */}
-      <div className="flex flex-col h-full min-h-0">
-        <div className="h-16 border-b-2 border-black px-6 flex items-center justify-between bg-white">
-          <div>
-            <div className="font-display font-black text-lg flex items-center gap-2">
-              {detail?.conversation?.customer_name || "—"}
-              {detail?.conversation?.channel === "voice" && (
-                <span className="badge bg-[#002FA7] text-white border-black"><Phone size={10}/> VOICE CALL</span>
-              )}
-              {isEmailConv && (
-                <span className="badge bg-[#FBBC04] text-black border-black"><Mail size={10}/> EMAIL</span>
-              )}
+      <div className={`${mobileDetail ? "flex" : "hidden"} lg:flex flex-col h-full min-h-0`}>
+        <div className="h-16 border-b-2 border-black px-4 sm:px-6 flex items-center justify-between bg-white gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setMobileDetail(false)}
+              className="lg:hidden p-1.5 border-2 border-black shrink-0"
+              data-testid="inbox-mobile-back"
+              aria-label="Back to list"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div className="min-w-0">
+              <div className="font-display font-black text-base sm:text-lg flex items-center gap-2 truncate">
+                <span className="truncate">{detail?.conversation?.customer_name || "—"}</span>
+                {detail?.conversation?.channel === "voice" && (
+                  <span className="badge bg-[#002FA7] text-white border-black shrink-0"><Phone size={10}/> VOICE CALL</span>
+                )}
+                {isEmailConv && (
+                  <span className="badge bg-[#FBBC04] text-black border-black shrink-0"><Mail size={10}/> EMAIL</span>
+                )}
+              </div>
+              <div className="text-xs font-mono text-neutral-600 truncate">{detail?.conversation?.customer_contact || ""}</div>
             </div>
-            <div className="text-xs font-mono text-neutral-600">{detail?.conversation?.customer_contact || ""}</div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {detail?.call?.recording_url && (
               <a
                 href={detail.call.recording_url}
@@ -378,7 +408,7 @@ export default function Inbox() {
             )}
           </div>
         </div>
-        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 bg-neutral-50" data-testid="thread-messages">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 bg-neutral-50" data-testid="thread-messages">
           {detail?.messages?.map(m => {
             const label = m.role === "bot" ? "BOTNIRA" : m.role === "agent" ? "AGENT" : "CUSTOMER";
             const hasHtml = m.role === "user" && m.body_html;

@@ -44,7 +44,7 @@ export default function Settings() {
   if (!v) return <div className="p-10 font-mono">Loading…</div>;
 
   return (
-    <div className="p-8 max-w-3xl space-y-6" data-testid="settings-page">
+    <div className="p-4 sm:p-8 max-w-3xl space-y-6" data-testid="settings-page">
       <div>
         <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Settings</div>
         <h1 className="font-display text-4xl font-black tracking-tighter">Workspace</h1>

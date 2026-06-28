@@ -87,7 +87,7 @@ function ListSidebar({ lists, activeId, onSelect, onCreated, onRenamed, onDelete
   };
 
   return (
-    <aside className="w-60 shrink-0 border-2 border-black bg-white shadow-brutal" data-testid="sales-lists-sidebar">
+    <aside className="w-full lg:w-60 shrink-0 border-2 border-black bg-white shadow-brutal" data-testid="sales-lists-sidebar">
       <div className="px-3 py-2 border-b-2 border-black flex items-center justify-between">
         <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-600">
           <Folder size={11} className="inline -mt-0.5 mr-1" /> Lists
@@ -367,7 +367,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
   };
 
   return (
-    <div className="flex gap-4" data-testid="sales-prospects-panel">
+    <div className="flex flex-col lg:flex-row gap-4" data-testid="sales-prospects-panel">
       <ListSidebar
         lists={lists}
         activeId={activeListId}
@@ -488,8 +488,8 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
         </div>
 
         {/* Table */}
-        <div className="border-2 border-black bg-white shadow-brutal overflow-hidden">
-          <div className={`grid ${isWa ? "grid-cols-[1.6fr_1.4fr_110px_90px]" : "grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px]"} text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2`}>
+        <div className="border-2 border-black bg-white shadow-brutal overflow-x-auto">
+          <div className={`min-w-[560px] lg:min-w-0 grid ${isWa ? "grid-cols-[1.6fr_1.4fr_110px_90px]" : "grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px]"} text-[11px] font-bold uppercase tracking-widest bg-black text-white px-4 py-2`}>
             {isWa ? (
               <><div>Name</div><div>WhatsApp number</div><div>Status</div><div className="text-right">Actions</div></>
             ) : (
@@ -506,7 +506,7 @@ function ProspectsPanel({ lists, activeListId, setActiveListId, reloadLists }) {
             data.items.map((p) => (
               <div key={p.id}
                    data-testid={`prospect-row-${p.email || p.phone}`}
-                   className={`grid ${isWa ? "grid-cols-[1.6fr_1.4fr_110px_90px]" : "grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px]"} px-4 py-2.5 text-sm border-t border-black/10 items-center`}>
+                   className={`min-w-[560px] lg:min-w-0 grid ${isWa ? "grid-cols-[1.6fr_1.4fr_110px_90px]" : "grid-cols-[1.4fr_1.2fr_1fr_1.1fr_100px_90px]"} px-4 py-2.5 text-sm border-t border-black/10 items-center`}>
                 {isWa ? (
                   <>
                     <div className="truncate flex items-center gap-1.5">
@@ -909,11 +909,11 @@ function CampaignsPanel({ lists }) {
                 </div>
 
                 {expanded === c.id && (
-                  <div className="mt-4 border-2 border-black bg-neutral-50" data-testid={`campaign-recipients-${c.id}`}>
-                    <div className="grid grid-cols-[1fr_120px_160px_1fr] text-[10px] font-bold uppercase tracking-widest bg-black text-white px-3 py-1.5">
+                  <div className="mt-4 border-2 border-black bg-neutral-50 overflow-x-auto" data-testid={`campaign-recipients-${c.id}`}>
+                    <div className="min-w-[480px] grid grid-cols-[1fr_120px_160px_1fr] text-[10px] font-bold uppercase tracking-widest bg-black text-white px-3 py-1.5">
                       <div>Email</div><div>Status</div><div>Sent / Opened</div><div>Error</div>
                     </div>
-                    <div className="max-h-72 overflow-y-auto">
+                    <div className="max-h-72 overflow-y-auto min-w-[480px]">
                       {recipients.map((r) => (
                         <div key={r.id} className="grid grid-cols-[1fr_120px_160px_1fr] px-3 py-1.5 text-xs border-t border-black/10">
                           <div className="font-mono truncate">{r.email}</div>
@@ -1620,7 +1620,7 @@ export default function SalesAssistant() {
   if (!access?.enabled) return <LockedScreen reason={access?.reason} />;
 
   return (
-    <div className="p-6 space-y-5" data-testid="sales-assistant-page">
+    <div className="p-4 sm:p-6 space-y-5" data-testid="sales-assistant-page">
       <header>
         <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7] flex items-center gap-2">
           <Megaphone size={12} /> Sales Assistant

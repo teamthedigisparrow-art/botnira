@@ -20,7 +20,7 @@ export default function Overview() {
   useEffect(() => { api.get("/analytics").then(r => setData(r.data)).catch(()=>{}); }, []);
   const t = data?.totals || { conversations: 0, resolved: 0, appointments: 0, messages: 0, resolution_rate: 0 };
   return (
-    <div className="p-8" data-testid="overview-page">
+    <div className="p-4 sm:p-8" data-testid="overview-page">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Workspace</div>
