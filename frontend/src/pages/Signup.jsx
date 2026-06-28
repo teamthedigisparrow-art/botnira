@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import { Gift } from "lucide-react";
+import GoogleAuthButton from "../components/GoogleAuthButton";
 
 export default function Signup() {
   const [form, setForm] = useState({ email: "", password: "", full_name: "", business_name: "" });
@@ -82,9 +83,9 @@ export default function Signup() {
 
   return (
     <div className="min-h-screen grid md:grid-cols-2">
-      <div className="flex items-center justify-center p-8 order-2 md:order-1">
+      <div className="flex items-center justify-center p-4 sm:p-8 order-2 md:order-1">
         {step === 1 ? (
-          <form onSubmit={submit} className="w-full max-w-md border-2 border-black bg-white p-8 shadow-brutal-lg" data-testid="signup-form">
+          <form onSubmit={submit} className="w-full max-w-md border-2 border-black bg-white p-6 sm:p-8 shadow-brutal-lg" data-testid="signup-form">
             <h1 className="font-display text-3xl font-black tracking-tighter">Create your workspace</h1>
             <p className="text-sm text-neutral-600 mt-1">5-day free trial. No credit card. Each business is isolated.</p>
             {refCode && refBiz && (
@@ -109,10 +110,16 @@ export default function Signup() {
               ))}
             </div>
             <button data-testid="signup-submit-btn" disabled={loading} className="mt-6 w-full bg-[#002FA7] text-white font-bold py-3 border-2 border-black shadow-brutal hover-lift disabled:opacity-60">{loading ? "Creating…" : "Create workspace"}</button>
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-black/20" />
+              <span className="text-[10px] font-bold tracking-widest uppercase text-neutral-500">or</span>
+              <div className="h-px flex-1 bg-black/20" />
+            </div>
+            <GoogleAuthButton label="Sign up with Google" testid="signup-google-btn" />
             <div className="mt-4 text-sm">Already a vendor? <Link to="/login" className="font-bold underline" data-testid="signup-to-login">Log in</Link></div>
           </form>
         ) : (
-          <form onSubmit={verify} className="w-full max-w-md border-2 border-black bg-white p-8 shadow-brutal-lg" data-testid="signup-verify-form">
+          <form onSubmit={verify} className="w-full max-w-md border-2 border-black bg-white p-6 sm:p-8 shadow-brutal-lg" data-testid="signup-verify-form">
             <h1 className="font-display text-3xl font-black tracking-tighter">Verify your email</h1>
             <p className="text-sm text-neutral-600 mt-1">
               We sent a 6-digit code to <strong className="font-mono">{form.email}</strong>. It expires in 10 minutes.

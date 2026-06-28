@@ -1,0 +1,29 @@
+{
+  "summary": "Iter 16 — End-to-end verification of Google OAuth wiring + mobile responsiveness of /login and /signup. Backend (3/3 pytest passed via deployed preview URL): (a) password login regression with kamal@thedigisparrow.com → 200 + JWT; (b) passwordless google-only user (auth_provider='google', no password_hash) attempting /api/auth/login returns HTTP 400 with EXACT detail 'This account uses Google sign-in. Please continue with Google.'; (c) POST /api/auth/google/session {session_id:'bogus'} returns 401 (NOT 500) with EXACT detail 'Google sign-in failed. Please try again.'. Frontend: /login + /signup verified at 390x844 (mobile) and 1280x900 (desktop): brand panel hidden <md, only form rendered, no horizontal page overflow (scrollWidth==clientWidth), data-testid='login-google-btn' / 'signup-google-btn' visible below an OR divider. Both buttons trigger window.location.href to https://auth.emergentagent.com/?redirect=<origin>/auth/callback (URL-encoded). /auth/callback with no #session_id fragment correctly redirects to /login. UI password-login regression: form submit → /app dashboard with botnira_token set in localStorage. Signup form submit advances to step-2 OTP verify (signup-verify-form) — created+deleted qa_iter16_<ts>@example.com.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_google_auth_iter16.py",
+    "/app/test_reports/pytest/iter16_google_auth.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "BUG FOUND & FIXED by testing agent: /app/frontend/src/pages/Signup.jsx used <GoogleAuthButton> at line 117 but never imported it. The original Signup page crashed at mobile load with ReferenceError 'GoogleAuthButton is not defined' (React error boundary caught it — full red-screen runtime error overlay visible). Added 'import GoogleAuthButton from \"../components/GoogleAuthButton\";' next to the Gift import. Main agent must have hand-edited Signup.jsx without dropping the matching import — please double-check similar component additions elsewhere.",
+    "Carry-over from iter 14/15 (NOT in scope of this iter, low priority): React hydration warning '<span> cannot be a child of <option>' still emits from SalesAssistant.jsx WaComposer template <select>. Dev-only cosmetic."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Signup.jsx (added missing GoogleAuthButton import)",
+    "/app/backend/tests/test_google_auth_iter16.py (new pytest module — 3 backend tests, all pass)"
+  ],
+  "success_rate": {"backend": "100% (3/3 pytest)", "frontend": "100% (login/signup mobile+desktop, google redirect target, /auth/callback no-session redirect, password-login regression, signup-advances-to-OTP all pass)"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu (used for password regression). Passwordless google user is created+cleaned inside the pytest module. Signup test email qa_iter16_<ts>@example.com was created via the UI and deleted from MongoDB after.",
+  "seed_data_creation": "Transient: 1 google-only user (gtest_qa_<hex>@example.com) created+deleted inside test_passwordless_user_returns_google_only_message; 1 signup-form user qa_iter16_<ts>@example.com created via UI submit and deleted post-run via pymongo. No persistent seed data left behind.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Google OAuth wiring is solid. Key facts: (1) The 'Continue with Google' button uses raw window.location.href — to verify the redirect target in Playwright, register a page.on('request', ...) listener BEFORE the click and combine with page.route('**/*', abort if auth.emergentagent.com) so the browser doesn't actually navigate away. Watching framenavigated alone gives 'chrome-error://chromewebdata/' because the abort fires before Playwright records the final URL. (2) Passwordless-user detection key fields in db.users: missing password_hash AND auth_provider='google' — backend uses exact string detail 'This account uses Google sign-in. Please continue with Google.' (frontend toast keys off detail string). (3) Backend google-session endpoint maps ALL upstream errors (Emergent demobackend session-data) to 401 with 'Google sign-in failed. Please try again.' — never 500. (4) JWT is in localStorage as 'botnira_token' (not cookies). (5) Signup.jsx import bug was introduced this iteration and fixed here — confirm the import survives any subsequent main-agent edits.",
+  "rca of the issue": "Issue: /signup crashed at runtime with 'GoogleAuthButton is not defined'. RCA: Main agent added <GoogleAuthButton .../> JSX usage at Signup.jsx:117 plus the surrounding OR divider but forgot to add the corresponding ES import. Login.jsx had the import on line 6; Signup.jsx did not. Repro: visit /signup → red React error overlay 'Uncaught runtime errors: ReferenceError: GoogleAuthButton is not defined at Signup'. Fix: added 'import GoogleAuthButton from \"../components/GoogleAuthButton\";' on Signup.jsx line 7 (mirrors Login.jsx). Re-verified: /signup renders cleanly at 390x844 + 1280x900, signup-google-btn click correctly redirects to auth.emergentagent.com/?redirect=...%2Fauth%2Fcallback, signup form still submits and advances to OTP verify step."
+}

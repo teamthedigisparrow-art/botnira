@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import GoogleAuthButton from "../components/GoogleAuthButton";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -74,9 +75,9 @@ export default function Login() {
         </div>
         <div className="font-mono text-xs opacity-80">© BotNira 2026</div>
       </div>
-      <div className="flex items-center justify-center p-8">
+      <div className="flex items-center justify-center p-4 sm:p-8">
         {!mfaSession ? (
-          <form onSubmit={submit} className="w-full max-w-md border-2 border-black bg-white p-8 shadow-brutal-lg" data-testid="login-form">
+          <form onSubmit={submit} className="w-full max-w-md border-2 border-black bg-white p-6 sm:p-8 shadow-brutal-lg" data-testid="login-form">
             <h1 className="font-display text-3xl font-black tracking-tighter">Log in</h1>
             <p className="text-sm text-neutral-600 mt-1">Welcome back. Pick up where you left off.</p>
             <div className="mt-6 space-y-4">
@@ -93,10 +94,16 @@ export default function Login() {
               </div>
             </div>
             <button data-testid="login-submit-btn" disabled={loading} className="mt-6 w-full bg-[#002FA7] text-white font-bold py-3 border-2 border-black shadow-brutal hover-lift disabled:opacity-60">{loading ? "Signing in…" : "Sign in"}</button>
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-black/20" />
+              <span className="text-[10px] font-bold tracking-widest uppercase text-neutral-500">or</span>
+              <div className="h-px flex-1 bg-black/20" />
+            </div>
+            <GoogleAuthButton label="Sign in with Google" testid="login-google-btn" />
             <div className="mt-4 text-sm">No account? <Link to="/signup" className="font-bold underline" data-testid="login-to-signup">Create one</Link></div>
           </form>
         ) : (
-          <form onSubmit={verifyMfa} className="w-full max-w-md border-2 border-black bg-white p-8 shadow-brutal-lg" data-testid="login-mfa-form">
+          <form onSubmit={verifyMfa} className="w-full max-w-md border-2 border-black bg-white p-6 sm:p-8 shadow-brutal-lg" data-testid="login-mfa-form">
             <h1 className="font-display text-3xl font-black tracking-tighter">Two-factor code</h1>
             <p className="text-sm text-neutral-600 mt-1">We sent a 6-digit code to <strong className="font-mono">{email}</strong>. It expires in 10 minutes.</p>
             <div className="mt-6">
@@ -105,7 +112,7 @@ export default function Login() {
                 data-testid="login-mfa-input"
                 maxLength={6}
                 inputMode="numeric"
-                className="w-full mt-1 border-2 border-black px-3 py-3 font-mono text-3xl tracking-[0.4em] text-center focus:outline-none focus:ring-2 focus:ring-[#002FA7]"
+                className="w-full mt-1 border-2 border-black px-3 py-3 font-mono text-2xl sm:text-3xl tracking-[0.3em] sm:tracking-[0.4em] text-center focus:outline-none focus:ring-2 focus:ring-[#002FA7]"
                 value={otp}
                 onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 required

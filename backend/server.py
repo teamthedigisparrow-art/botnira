@@ -499,25 +499,26 @@ async def seed_admin():
 
 
 # ------------------------------ Auth routes ----------------------------------
-@api_router.post("/auth/signup")
-async def signup(req: SignupReq, request: FastAPIRequest = None):
-    if await db.users.find_one({"email": req.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    # Capture client IP for referral self-attribution checks (best-effort).
-    signup_ip = ""
-    try:
-        if request is not None:
-            xf = request.headers.get("x-forwarded-for", "")
-            signup_ip = (xf.split(",")[0].strip() if xf else (request.client.host if request.client else "")) or ""
-    except Exception:
-        signup_ip = ""
+async def _create_vendor_workspace(
+    business_name: str,
+    email: str,
+    full_name: str,
+    signup_ip: str = "",
+    referral_code: Optional[str] = None,
+    *,
+    password_hash: Optional[str] = None,
+    auth_provider: str = "password",
+    email_verified: bool = False,
+):
+    """Provision a brand-new vendor workspace (vendor + user + bot + channels +
+    referral code). Shared by both email/password signup and Google signup."""
     vid = new_id()
     trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
     await db.vendors.insert_one(
         {
             "id": vid,
-            "name": req.business_name,
-            "slug": slugify(req.business_name) + "-" + vid[:4],
+            "name": business_name,
+            "slug": slugify(business_name) + "-" + vid[:4],
             "business_description": "",
             "status": "active",
             "plan": "trial",
@@ -535,26 +536,27 @@ async def signup(req: SignupReq, request: FastAPIRequest = None):
         }
     )
     uid = new_id()
-    await db.users.insert_one(
-        {
-            "id": uid,
-            "email": req.email.lower(),
-            "password_hash": hash_password(req.password),
-            "full_name": req.full_name,
-            "role": "vendor",
-            "vendor_id": vid,
-            "email_verified": False,
-            "signup_ip": signup_ip,
-            "created_at": now_iso(),
-        }
-    )
+    user_doc = {
+        "id": uid,
+        "email": email.lower(),
+        "full_name": full_name,
+        "role": "vendor",
+        "vendor_id": vid,
+        "email_verified": email_verified,
+        "signup_ip": signup_ip,
+        "auth_provider": auth_provider,
+        "created_at": now_iso(),
+    }
+    if password_hash:
+        user_doc["password_hash"] = password_hash
+    await db.users.insert_one(user_doc)
     # default bot
     await db.bots.insert_one(
         {
             "id": new_id(),
             "vendor_id": vid,
             "bot_name": "BotNira",
-            "greeting": f"Hi! Welcome to {req.business_name}. How can I help?",
+            "greeting": f"Hi! Welcome to {business_name}. How can I help?",
             "tone": "friendly and professional",
             "business_description": "",
             "faqs": [],
@@ -575,19 +577,36 @@ async def signup(req: SignupReq, request: FastAPIRequest = None):
                 "updated_at": now_iso(),
             }
         )
-    # Provision this vendor's own referral code immediately so they can start
-    # sharing their link from minute one.
+    # Provision this vendor's own referral code immediately.
     try:
-        await _ensure_referral_code(vid, req.business_name)
+        await _ensure_referral_code(vid, business_name)
     except Exception as e:
         logger.warning("referral code provisioning failed for %s: %s", vid, e)
-    # If the signup came in with a ?ref=<code>, attribute the new vendor to
-    # the referrer (15% recurring commission on any future paid invoice).
-    if req.referral_code:
+    # Attribute the new vendor to a referrer if a valid code came through.
+    if referral_code:
         try:
-            await _attach_referral_on_signup(vid, req.email.lower(), req.referral_code, signup_ip)
+            await _attach_referral_on_signup(vid, email.lower(), referral_code, signup_ip)
         except Exception as e:
             logger.warning("referral attribution failed: %s", e)
+    return uid, vid
+
+
+@api_router.post("/auth/signup")
+async def signup(req: SignupReq, request: FastAPIRequest = None):
+    if await db.users.find_one({"email": req.email.lower()}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    # Capture client IP for referral self-attribution checks (best-effort).
+    signup_ip = ""
+    try:
+        if request is not None:
+            xf = request.headers.get("x-forwarded-for", "")
+            signup_ip = (xf.split(",")[0].strip() if xf else (request.client.host if request.client else "")) or ""
+    except Exception:
+        signup_ip = ""
+    uid, vid = await _create_vendor_workspace(
+        req.business_name, req.email, req.full_name, signup_ip, req.referral_code,
+        password_hash=hash_password(req.password), auth_provider="password", email_verified=False,
+    )
     token = create_token(uid, "vendor")
     # Fire verification OTP (non-blocking)
     try:
@@ -598,10 +617,83 @@ async def signup(req: SignupReq, request: FastAPIRequest = None):
     return {"token": token, "role": "vendor", "vendor_id": vid, "email_verified": False}
 
 
+class GoogleSessionReq(BaseModel):
+    session_id: str
+    referral_code: Optional[str] = None
+
+
+@api_router.post("/auth/google/session")
+async def google_session(req: GoogleSessionReq, request: FastAPIRequest = None):
+    """Exchange an Emergent Google OAuth session_id for the user's verified
+    profile, then either log in the existing account or create a new vendor
+    workspace — issuing our own app JWT either way so the rest of the app works
+    unchanged."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": req.session_id},
+            )
+        if r.status_code != 200:
+            raise HTTPException(status_code=401, detail="Google sign-in failed. Please try again.")
+        prof = r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("google session-data exchange failed: %s", e)
+        raise HTTPException(status_code=502, detail="Could not verify Google sign-in.")
+
+    email = (prof.get("email") or "").lower().strip()
+    name = (prof.get("name") or "").strip() or (email.split("@")[0] if email else "")
+    picture = prof.get("picture") or ""
+    if not email:
+        raise HTTPException(status_code=400, detail="Your Google account did not share an email address.")
+
+    user = await db.users.find_one({"email": email})
+    if user:
+        # Existing account → log in. Block suspended vendors like password login does.
+        if user.get("role") == "vendor" and user.get("vendor_id"):
+            vendor = await db.vendors.find_one({"id": user["vendor_id"]})
+            if vendor and vendor.get("status") == "suspended":
+                raise HTTPException(status_code=403, detail="Account suspended")
+        # Link Google to the account (so future Google logins are seamless).
+        updates = {"google_linked": True, "email_verified": True}
+        if not user.get("password_hash"):
+            updates["auth_provider"] = "google"
+        if picture and not user.get("picture"):
+            updates["picture"] = picture
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+        token = create_token(user["id"], user["role"])
+        return {"token": token, "role": user["role"], "vendor_id": user.get("vendor_id"), "is_new": False}
+
+    # New account → provision a Google-backed vendor workspace (email is
+    # already verified by Google, so no OTP needed).
+    signup_ip = ""
+    try:
+        if request is not None:
+            xf = request.headers.get("x-forwarded-for", "")
+            signup_ip = (xf.split(",")[0].strip() if xf else (request.client.host if request.client else "")) or ""
+    except Exception:
+        signup_ip = ""
+    uid, vid = await _create_vendor_workspace(
+        name, email, name, signup_ip, req.referral_code,
+        password_hash=None, auth_provider="google", email_verified=True,
+    )
+    if picture:
+        await db.users.update_one({"id": uid}, {"$set": {"picture": picture}})
+    token = create_token(uid, "vendor")
+    return {"token": token, "role": "vendor", "vendor_id": vid, "is_new": True}
+
+
 @api_router.post("/auth/login")
 async def login(req: LoginReq):
     user = await db.users.find_one({"email": req.email.lower()})
-    if not user or not verify_password(req.password, user["password_hash"]):
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    # Google-only accounts have no password — guide them to the right button.
+    if not user.get("password_hash"):
+        raise HTTPException(status_code=400, detail="This account uses Google sign-in. Please continue with Google.")
+    if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if user["role"] == "vendor":
         vendor = await db.vendors.find_one({"id": user["vendor_id"]})
