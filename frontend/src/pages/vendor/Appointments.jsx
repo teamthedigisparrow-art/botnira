@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
 import { Plus, CalendarDays, Globe, MessageCircle, Mail, MessageSquare, Phone, UserPlus, Check, X, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import AppointmentDetailDrawer from "../../components/scheduling/AppointmentDetailDrawer";
 
 const SOURCE_META = {
   web: { icon: Globe, label: "Web", color: "bg-blue-100 text-blue-900" },
@@ -55,6 +56,7 @@ export default function Appointments() {
     attended: "all",
   });
   const [busy, setBusy] = useState("");
+  const [drawerAppt, setDrawerAppt] = useState(null);
 
   const load = () => {
     const params = new URLSearchParams({
@@ -114,13 +116,8 @@ export default function Appointments() {
   const hasActiveFilters = filters.date_from || filters.date_to || filters.source !== "all" || filters.status !== "all" || filters.attended !== "all";
 
   return (
-    <div className="p-4 sm:p-8" data-testid="appointments-page">
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Calendar</div>
-          <h1 className="font-display text-4xl font-black tracking-tighter">Appointments</h1>
-          <p className="text-sm text-neutral-600 mt-1">Track where each booking came from and whether the customer showed up.</p>
-        </div>
+    <div data-testid="appointments-page">
+      <div className="flex items-center justify-end flex-wrap gap-2">
         <div className="flex gap-2">
           <button
             onClick={() => setShowFilters(!showFilters)}
@@ -249,7 +246,7 @@ export default function Appointments() {
               </td></tr>
             )}
             {items.map(a => (
-              <tr key={a.id} className={`border-t border-black/10 ${a.attended ? "bg-green-50" : ""}`} data-testid={`appt-${a.id}`}>
+              <tr key={a.id} onClick={() => setDrawerAppt(a)} className={`border-t border-black/10 cursor-pointer hover:bg-neutral-50 ${a.attended ? "bg-green-50" : ""}`} data-testid={`appt-${a.id}`}>
                 <td className="p-3 font-bold">{a.customer_name}</td>
                 <td className="p-3 font-mono text-xs">{a.customer_contact || "—"}</td>
                 <td className="p-3 font-mono text-xs">{a.scheduled_at || "—"}</td>
@@ -265,7 +262,7 @@ export default function Appointments() {
                 </td>
                 <td className="p-3 text-right">
                   <button
-                    onClick={() => toggleAttended(a)}
+                    onClick={(e) => { e.stopPropagation(); toggleAttended(a); }}
                     disabled={busy === a.id}
                     data-testid={`attended-toggle-${a.id}`}
                     className={`inline-flex items-center gap-1 px-3 py-1 border-2 border-black font-bold text-xs transition ${
@@ -355,6 +352,14 @@ export default function Appointments() {
             </div>
           </div>
         </div>
+      )}
+
+      {drawerAppt && (
+        <AppointmentDetailDrawer
+          appt={drawerAppt}
+          onClose={() => setDrawerAppt(null)}
+          onChanged={load}
+        />
       )}
     </div>
   );

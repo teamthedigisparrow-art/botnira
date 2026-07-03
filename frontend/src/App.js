@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import AuthCallback from "./pages/AuthCallback";
+import BookingPage from "./pages/BookingPage";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import UseCasePage from "./pages/UseCasePage";
@@ -25,6 +26,7 @@ import Inbox from "./pages/vendor/Inbox";
 import BotStudio from "./pages/vendor/BotStudio";
 import Channels from "./pages/vendor/Channels";
 import Appointments from "./pages/vendor/Appointments";
+import AppointmentsHub from "./pages/vendor/AppointmentsHub";
 import Analytics from "./pages/vendor/Analytics";
 import Billing from "./pages/vendor/Billing";
 import Settings from "./pages/vendor/Settings";
@@ -79,6 +81,7 @@ function App() {
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/book/:slug" element={<BookingPage />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/use-case/:slug" element={<UseCasePage />} />
@@ -91,7 +94,7 @@ function App() {
               <Route path="inbox" element={<Inbox />} />
               <Route path="bot" element={<BotStudio />} />
               <Route path="channels" element={<Channels />} />
-              <Route path="appointments" element={<Appointments />} />
+              <Route path="appointments" element={<AppointmentsHub />} />
               <Route path="sales" element={<SalesAssistant />} />
               <Route path="analytics" element={<Analytics />} />
               <Route path="billing" element={<Billing />} />

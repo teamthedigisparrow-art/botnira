@@ -5668,6 +5668,15 @@ async def _init_blog_storage():
     except Exception as e:
         logger.warning("blog storage init non-fatal: %s", e)
 
+# Scheduling Hub (Phase 1) — availability, appointment types, public booking
+# page + enhanced appointment ops. Extends the existing Appointments module.
+from scheduling_routes import (  # noqa: E402
+    router as _scheduling_router,
+    public_router as _scheduling_public_router,
+)
+api_router.include_router(_scheduling_router, prefix="/scheduling")
+api_router.include_router(_scheduling_public_router, prefix="/public/booking")
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
