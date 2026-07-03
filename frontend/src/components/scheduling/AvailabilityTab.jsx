@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "sonner";
-import { Plus, Trash2, Save, Plane } from "lucide-react";
+import { Plus, Trash2, Save, Plane, Bell } from "lucide-react";
 
 const DAYS = [
   { k: "mon", label: "Monday" },
@@ -61,6 +61,13 @@ export default function AvailabilityTab() {
   const rmException = (i) => setS({ ...s, exceptions: (s.exceptions || []).filter((_, idx) => idx !== i) });
 
   const vacation = s.vacation || { enabled: false, start: null, end: null };
+  const reminders = s.reminders || { email_enabled: true, offsets_hours: [24] };
+  const REMINDER_CHOICES = [48, 24, 12, 2, 1];
+  const toggleOffset = (h) => {
+    const cur = reminders.offsets_hours || [];
+    const next = cur.includes(h) ? cur.filter((x) => x !== h) : [...cur, h].sort((a, b) => b - a);
+    setS({ ...s, reminders: { ...reminders, offsets_hours: next } });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -76,6 +83,7 @@ export default function AvailabilityTab() {
         booking_enabled: !!s.booking_enabled,
         exceptions: (s.exceptions || []).filter((e) => e.date),
         vacation,
+        reminders: s.reminders || { email_enabled: true, offsets_hours: [24] },
       };
       const { data } = await api.put("/scheduling/settings", payload);
       setS(data);
@@ -187,6 +195,32 @@ export default function AvailabilityTab() {
             {(!s.exceptions || s.exceptions.length === 0) && <div className="text-xs text-neutral-500">No closed dates.</div>}
           </div>
         </div>
+      </div>
+
+      {/* Reminders */}
+      <div className="border-2 border-black bg-white p-4 sm:p-6 space-y-4" data-testid="reminders-section">
+        <div className="font-display font-black text-xl flex items-center gap-2"><Bell size={18} /> Email reminders</div>
+        <p className="text-sm text-neutral-600">Automatically email customers before their appointment to cut no-shows. (Booking confirmations are always sent.)</p>
+        <label className="flex items-center gap-2 text-sm font-bold">
+          <input type="checkbox" data-testid="reminders-enabled" checked={!!reminders.email_enabled} onChange={(e) => setS({ ...s, reminders: { ...reminders, email_enabled: e.target.checked } })} />
+          Send email reminders
+        </label>
+        {reminders.email_enabled && (
+          <div>
+            <div className="text-xs font-bold tracking-widest uppercase mb-2">Send reminders</div>
+            <div className="flex flex-wrap gap-2">
+              {REMINDER_CHOICES.map((h) => {
+                const on = (reminders.offsets_hours || []).includes(h);
+                return (
+                  <button key={h} type="button" onClick={() => toggleOffset(h)} data-testid={`reminder-${h}h`}
+                    className={`text-xs font-bold border-2 border-black px-3 py-1.5 ${on ? "bg-[#002FA7] text-white" : "bg-white hover:bg-neutral-50"}`}>
+                    {h >= 24 ? `${h / 24 === 1 ? "24" : h} hours` : `${h} hour${h > 1 ? "s" : ""}`} before
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <button onClick={save} disabled={saving} data-testid="avail-save" className="bg-[#002FA7] text-white font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift disabled:opacity-60 flex items-center gap-2">

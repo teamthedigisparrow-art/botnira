@@ -815,7 +815,16 @@ async def get_ai_reply(vendor_id: str, conversation_id: str, user_text: str) -> 
         return bot.get("fallback_message", "I'm not able to respond right now.")
 
     system_prompt = build_system_prompt(bot, vendor)
-    
+    # Give the receptionist real-time booking availability so it only offers /
+    # confirms open slots (prevents overbooking at the source).
+    try:
+        import scheduling_routes as _sched
+        avail = await _sched.availability_prompt(vendor_id)
+        if avail:
+            system_prompt += avail
+    except Exception as e:
+        logger.warning("availability prompt inject skipped: %s", e)
+
     # CRITICAL FIX: Fetch MORE history to prevent context loss during multi-turn
     # conversations (e.g., appointment booking where customer provides info across
     # 10-15 messages). Previous limit of 40 caused bot to forget phone numbers.
@@ -974,6 +983,35 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
             dup = await db.appointments.find_one({"conversation_id": conversation_id})
         if dup:
             return None
+        # ── Availability guard (Phase 5): never double-book / overbook ──────
+        # Verify the confirmed time is inside working hours AND conflict-free
+        # (incl. buffers + Google-synced events) before persisting.
+        verdict = {"ok": True, "start_at": None}
+        try:
+            import scheduling_routes as _sched
+            verdict = await _sched.is_ai_slot_bookable(vendor_id, scheduled_at)
+        except Exception as e:
+            logger.warning("availability guard errored (fail-open): %s", e)
+            verdict = {"ok": True, "start_at": None}
+        if scheduled_at and not verdict.get("ok"):
+            logger.info("AI booking BLOCKED (%s) vendor=%s time=%s", verdict.get("reason"), vendor_id, scheduled_at)
+            # Post a corrective reply into the thread offering real openings so
+            # the customer can pick again (no appointment row is created).
+            try:
+                sugg = await _sched.suggest_slots(vendor_id, limit=3)
+                offer = "; ".join(s["label"] for s in sugg) if sugg else ""
+                corrective = (
+                    "Apologies — that time isn't available. "
+                    + (f"The next open times are: {offer}. Which of these works for you?" if offer
+                       else "Could you please share another preferred date and time?")
+                )
+                await db.messages.insert_one({
+                    "id": new_id(), "conversation_id": conversation_id,
+                    "role": "assistant", "content": corrective, "created_at": now_iso(),
+                })
+            except Exception as e:
+                logger.warning("corrective reply failed: %s", e)
+            return None
         # Resolve source (channel) from the conversation
         conv = await db.conversations.find_one({"id": conversation_id}, {"_id": 0, "channel": 1})
         source = (conv or {}).get("channel") or "web"
@@ -990,8 +1028,24 @@ async def _maybe_book_appointment(vendor_id: str, conversation_id: str, latest_b
             "conversation_id": conversation_id,
             "created_at": now_iso(),
         }
+        # Attach normalized UTC window + duration (for Google sync + reminders)
+        if verdict.get("start_at"):
+            appt["start_at"] = verdict["start_at"]
+            appt["end_at"] = verdict.get("end_at")
+            appt["duration_minutes"] = verdict.get("duration")
+            try:
+                s2 = await _sched.get_settings(vendor_id)
+                appt["customer_timezone"] = s2.get("timezone")
+            except Exception:
+                pass
         await db.appointments.insert_one(appt)
         logger.info("Auto-booked appointment for vendor=%s conv=%s", vendor_id, conversation_id)
+        # Sync to the vendor's Google Calendar (best-effort, non-blocking).
+        try:
+            import google_calendar_routes as _gc
+            asyncio.create_task(_gc.push_appointment(vendor_id, appt))
+        except Exception as e:
+            logger.warning("gcal push (ai-book) skipped: %s", e)
         # Notify vendor by email (non-blocking)
         try:
             await _send_appointment_email(vendor_id, appt)
@@ -4187,8 +4241,9 @@ def _ics_for_appointment(appt: dict, biz_name: str) -> Optional[str]:
     return ics
 
 
-async def _send_customer_appointment_confirmation(vendor_id: str, appt: dict):
-    """Send the *customer* a friendly "you're booked" email.
+async def _send_customer_appointment_confirmation(vendor_id: str, appt: dict, kind: str = "confirmation"):
+    """Send the *customer* a friendly "you're booked" (confirmation) or a
+    "reminder" email. `kind` ∈ {"confirmation", "reminder"}.
 
     Skipped silently when:
       - The customer didn't share an email (e.g. WhatsApp / SMS / voice with no email captured)
@@ -4223,17 +4278,32 @@ async def _send_customer_appointment_confirmation(vendor_id: str, appt: dict):
         f"someone from our team will get back to you.\n\n"
         f"See you soon!\n— {biz_name}\n"
     )
+    eyebrow = "Appointment confirmed"
+    title = f"You're booked with {biz_name}"
+    intro = "Thanks for booking — here's everything you need to know:"
+    if kind == "reminder":
+        subject = f"Reminder: your appointment with {biz_name} · {scheduled}"
+        eyebrow = "Appointment reminder"
+        title = f"See you soon at {biz_name}"
+        intro = "This is a friendly reminder about your upcoming appointment:"
+        body_text = (
+            f"Hi {customer_name},\n\n"
+            f"Just a friendly reminder about your appointment with {biz_name}:\n\n"
+            f"• When: {scheduled}\n"
+            f"• Where / Notes: {notes or 'See attached calendar invite'}\n\n"
+            f"Need to reschedule? Just reply to this email.\n\nSee you soon!\n— {biz_name}\n"
+        )
     body_html = f"""<!DOCTYPE html>
 <html>
 <body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;">
   <div style="max-width:560px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:6px 6px 0 #000;">
     <div style="background:#FBBC04;color:#000;padding:18px 24px;border-bottom:2px solid #000;">
-      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.8;">Appointment confirmed</div>
-      <div style="font-size:22px;font-weight:900;margin-top:4px;">You're booked with {biz_name}</div>
+      <div style="font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:bold;opacity:.8;">{eyebrow}</div>
+      <div style="font-size:22px;font-weight:900;margin-top:4px;">{title}</div>
     </div>
     <div style="padding:24px;font-size:15px;line-height:1.6;color:#111;">
       <p style="margin:0 0 14px 0;">Hi {customer_name},</p>
-      <p style="margin:0 0 18px 0;">Thanks for booking — here's everything you need to know:</p>
+      <p style="margin:0 0 18px 0;">{intro}</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <tr><td style="padding:10px 0;border-bottom:1px dashed #ccc;width:120px;color:#666;">When</td>
             <td style="padding:10px 0;border-bottom:1px dashed #ccc;font-weight:bold;">{scheduled}</td></tr>
@@ -5694,6 +5764,16 @@ async def _start_gcal_poller():
         _aio.create_task(_gcal_poller_loop())
     except Exception as e:
         logger.warning("gcal poller start non-fatal: %s", e)
+
+
+@app.on_event("startup")
+async def _start_reminder_loop():
+    try:
+        import asyncio as _aio
+        from scheduling_routes import reminder_loop as _rl
+        _aio.create_task(_rl())
+    except Exception as e:
+        logger.warning("reminder loop start non-fatal: %s", e)
 
 app.include_router(api_router)
 app.add_middleware(
