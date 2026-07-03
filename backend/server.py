@@ -5677,6 +5677,24 @@ from scheduling_routes import (  # noqa: E402
 api_router.include_router(_scheduling_router, prefix="/scheduling")
 api_router.include_router(_scheduling_public_router, prefix="/public/booking")
 
+# Google Calendar + Meet (Phase 2) — per-vendor OAuth, two-way sync (polling)
+from google_calendar_routes import (  # noqa: E402
+    router as _gcal_router,
+    oauth_router as _gcal_oauth_router,
+    poller_loop as _gcal_poller_loop,
+)
+api_router.include_router(_gcal_router, prefix="/scheduling/google")
+api_router.include_router(_gcal_oauth_router, prefix="/oauth/calendar")
+
+
+@app.on_event("startup")
+async def _start_gcal_poller():
+    try:
+        import asyncio as _aio
+        _aio.create_task(_gcal_poller_loop())
+    except Exception as e:
+        logger.warning("gcal poller start non-fatal: %s", e)
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,

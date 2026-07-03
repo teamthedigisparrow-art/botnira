@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { CalendarDays, Clock, Tags, Link2 } from "lucide-react";
+import { CalendarDays, Clock, Tags, Link2, CalendarCheck } from "lucide-react";
 import Appointments from "./Appointments";
 import AvailabilityTab from "../../components/scheduling/AvailabilityTab";
 import AppointmentTypesTab from "../../components/scheduling/AppointmentTypesTab";
 import BookingPageTab from "../../components/scheduling/BookingPageTab";
+import CalendarsTab from "../../components/scheduling/CalendarsTab";
 
 const TABS = [
   { id: "list", label: "Appointments", icon: CalendarDays },
   { id: "availability", label: "Availability", icon: Clock },
   { id: "types", label: "Appointment Types", icon: Tags },
+  { id: "calendars", label: "Calendars", icon: CalendarCheck },
   { id: "booking", label: "Booking Page", icon: Link2 },
 ];
 
@@ -41,6 +43,7 @@ export default function AppointmentsHub() {
         {tab === "list" && <Appointments />}
         {tab === "availability" && <AvailabilityTab />}
         {tab === "types" && <AppointmentTypesTab />}
+        {tab === "calendars" && <CalendarsTab />}
         {tab === "booking" && <BookingPageTab />}
       </div>
     </div>

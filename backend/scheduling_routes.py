@@ -425,9 +425,15 @@ async def reschedule(appt_id: str, req: RescheduleReq, user: dict = Depends(_s.r
     await log_activity(user["vendor_id"], appt_id, "rescheduled",
                        f"{old} → {start.isoformat()}" + (f" ({req.reason})" if req.reason else ""),
                        actor=user.get("email", "vendor"))
-    return await _s.db.appointments.find_one(
+    updated = await _s.db.appointments.find_one(
         {"id": appt_id, "vendor_id": user["vendor_id"]}, {"_id": 0}
     )
+    try:
+        import google_calendar_routes as _gc, asyncio as _aio
+        _aio.create_task(_gc.update_appointment(user["vendor_id"], updated))
+    except Exception as e:
+        _s.logger.warning("gcal update (reschedule) skipped: %s", e)
+    return updated
 
 
 @router.post("/appointments/{appt_id}/cancel")
@@ -443,6 +449,11 @@ async def cancel(appt_id: str, req: StatusReq = None, user: dict = Depends(_s.re
         {"$set": {"status": "cancelled", "updated_at": _s.now_iso()}},
     )
     await log_activity(user["vendor_id"], appt_id, "cancelled", reason, actor=user.get("email", "vendor"))
+    try:
+        import google_calendar_routes as _gc, asyncio as _aio
+        _aio.create_task(_gc.delete_appointment(user["vendor_id"], appt))
+    except Exception as e:
+        _s.logger.warning("gcal delete (cancel) skipped: %s", e)
     return await _s.db.appointments.find_one(
         {"id": appt_id, "vendor_id": user["vendor_id"]}, {"_id": 0}
     )
@@ -559,6 +570,13 @@ async def public_book(slug: str, req: BookReq):
     await _s.db.appointments.insert_one(dict(appt))
     appt.pop("_id", None)
     await log_activity(vendor["id"], appt["id"], "created", f"Booked via booking page ({type_name})", actor="customer")
+    # Push to the vendor's Google Calendar (best-effort, non-blocking).
+    try:
+        import google_calendar_routes as _gc
+        import asyncio as _aio
+        _aio.create_task(_gc.push_appointment(vendor["id"], appt))
+    except Exception as e:
+        _s.logger.warning("gcal push (book) skipped: %s", e)
     # Reuse existing notification helpers (vendor + customer confirmation email).
     try:
         await _s._send_appointment_email(vendor["id"], appt)
