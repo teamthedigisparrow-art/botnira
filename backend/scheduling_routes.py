@@ -582,6 +582,16 @@ async def public_book(slug: str, req: BookReq):
         _aio.create_task(_gc.push_appointment(vendor["id"], appt))
     except Exception as e:
         _s.logger.warning("gcal push (book) skipped: %s", e)
+    # Reuse existing notification helpers (vendor + customer confirmation email).
+    try:
+        await _s._send_appointment_email(vendor["id"], appt)
+    except Exception as e:
+        _s.logger.warning("booking vendor email failed: %s", e)
+    try:
+        await _s._send_customer_appointment_confirmation(vendor["id"], appt)
+    except Exception as e:
+        _s.logger.warning("booking customer email failed: %s", e)
+    return {"ok": True, "appointment": appt}
 
 
 # ============================================================================
@@ -781,13 +791,3 @@ async def reminder_loop():
         except Exception as e:
             _s.logger.warning("reminder loop error: %s", e)
         await asyncio.sleep(300)
-    # Reuse existing notification helpers (vendor + customer confirmation email).
-    try:
-        await _s._send_appointment_email(vendor["id"], appt)
-    except Exception as e:
-        _s.logger.warning("booking vendor email failed: %s", e)
-    try:
-        await _s._send_customer_appointment_confirmation(vendor["id"], appt)
-    except Exception as e:
-        _s.logger.warning("booking customer email failed: %s", e)
-    return {"ok": True, "appointment": appt}
