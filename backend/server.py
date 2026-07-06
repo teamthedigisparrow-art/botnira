@@ -5710,6 +5710,11 @@ from sales_routes import router as _sales_router, _start_sales_sender as _sales_
 api_router.include_router(_sales_router, prefix="/sales")
 app.add_event_handler("startup", _sales_start)
 
+# Provision Stripe products/prices + HST tax rate at boot. (startup_stripe was
+# defined but never registered — without this, STRIPE_PRICE_IDS stays empty and
+# every upgrade/top-up fails with "Plan price not provisioned yet".)
+app.add_event_handler("startup", startup_stripe)
+
 # Referral program — 15% recurring commission, paid monthly
 from referral_routes import (  # noqa: E402
     router as _referral_router,
