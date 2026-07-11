@@ -347,6 +347,7 @@ async def _enqueue_prospects(camp: dict) -> Dict[str, int]:
         flt["list_ids"] = {"$in": camp["list_ids"]}
     cur = _s.db.sales_prospects.find(flt, {"_id": 0})
     seen = set()
+    dnc_set = set(await _s.db.dnc_numbers.distinct("phone", {"vendor_id": vid}))
     added = blocked_intl = invalid = dnc = 0
     async for p in cur:
         e164 = _combine_e164(p.get("country_code") or "", p.get("phone") or "")
@@ -357,7 +358,7 @@ async def _enqueue_prospects(camp: dict) -> Dict[str, int]:
         if digits in seen:
             continue
         seen.add(digits)
-        if p.get("do_not_call"):
+        if p.get("do_not_call") or digits in dnc_set:
             dnc += 1
             status = "do_not_call"
         elif not (digits.startswith("1") and len(digits) == 11):
@@ -420,6 +421,7 @@ async def pause_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
         {"$set": {"status": "paused", "paused_reason": "manual", "updated_at": _s.now_iso()}})
     if not r.matched_count:
         raise HTTPException(404, "Running campaign not found")
+    await _audit(user["vendor_id"], "pause", "campaign", cid)
     return {"ok": True, "status": "paused"}
 
 
@@ -434,6 +436,7 @@ async def resume_campaign(cid: str, user: dict = Depends(_require_sales_vendor))
         raise HTTPException(402, "No voice minutes remaining. Recharge from Billing to resume.")
     await _s.db.campaign_out.update_one({"id": cid}, {"$set": {
         "status": "running", "paused_reason": None, "updated_at": _s.now_iso()}})
+    await _audit(vid, "resume", "campaign", cid)
     return {"ok": True, "status": "running"}
 
 
@@ -444,6 +447,7 @@ async def cancel_campaign(cid: str, user: dict = Depends(_require_sales_vendor))
         {"$set": {"status": "cancelled", "updated_at": _s.now_iso()}})
     if not r.matched_count:
         raise HTTPException(404, "Campaign not found")
+    await _audit(user["vendor_id"], "cancel", "campaign", cid)
     return {"ok": True, "status": "cancelled"}
 
 
@@ -457,6 +461,7 @@ async def delete_campaign(cid: str, user: dict = Depends(_require_sales_vendor))
         raise HTTPException(400, "Pause or cancel the campaign before deleting")
     await _s.db.campaign_out.delete_one({"id": cid, "vendor_id": vid})
     await _s.db.campaign_prospects.delete_many({"campaign_id": cid})
+    await _audit(vid, "delete", "campaign", cid)
     return {"ok": True}
 
 
@@ -993,3 +998,164 @@ async def _generate_call_summary(call_id: str):
         if cc.get("campaign_prospect_id"):
             await _s.db.campaign_prospects.update_one(
                 {"id": cc["campaign_prospect_id"]}, {"$set": {"outcome": outcome}})
+    # Honour a spoken "do not call" — add the number to the vendor DNC list.
+    if outcome == "do_not_call":
+        phone = _norm_phone_digits(call.get("to_number") or "")
+        if phone:
+            await _s.db.dnc_numbers.update_one(
+                {"vendor_id": call["vendor_id"], "phone": phone},
+                {"$setOnInsert": {"id": _s.new_id(), "vendor_id": call["vendor_id"], "phone": phone,
+                                  "e164": f"+{phone}", "reason": "Requested on call", "source": "call",
+                                  "created_at": _s.now_iso()}}, upsert=True)
+            await _s.db.campaign_prospects.update_many(
+                {"vendor_id": call["vendor_id"], "phone": phone}, {"$set": {"do_not_call": True}})
+
+
+# ============================================================ PHASE 3 =======
+# Restart / duplicate / archive / add-lists, Do-Not-Call & audit logs.
+
+RESTART_OUTCOMES = {"failed", "no_answer", "busy", "voicemail"}
+
+
+async def _audit(vendor_id: str, action: str, entity: str, entity_id: str = "", meta: dict = None):
+    try:
+        await _s.db.audit_logs.insert_one({
+            "id": _s.new_id(), "vendor_id": vendor_id, "action": action,
+            "entity": entity, "entity_id": entity_id, "meta": meta or {}, "at": _s.now_iso(),
+        })
+    except Exception as e:
+        _s.logger.warning("[outbound] audit failed: %s", e)
+
+
+class RestartIn(BaseModel):
+    mode: str = "all_incomplete"          # failed|no_answer|busy|voicemail|all_incomplete|selected
+    prospect_ids: List[str] = Field(default_factory=list)
+
+
+@router.post("/campaigns/{cid}/restart")
+async def restart_calls(cid: str, payload: RestartIn, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    camp = await _s.db.campaign_out.find_one({"id": cid, "vendor_id": vid}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    q = {"campaign_id": cid, "status": "completed"}
+    if payload.mode == "selected":
+        if not payload.prospect_ids:
+            raise HTTPException(400, "No prospects selected")
+        q["id"] = {"$in": payload.prospect_ids}
+    elif payload.mode == "all_incomplete":
+        q["outcome"] = {"$in": list(RESTART_OUTCOMES)}
+    elif payload.mode in RESTART_OUTCOMES:
+        q["outcome"] = payload.mode
+    else:
+        raise HTTPException(400, "Invalid restart mode")
+    r = await _s.db.campaign_prospects.update_many(q, {"$set": {
+        "status": "pending", "attempts": 0, "next_attempt_at": None,
+        "outcome": None, "updated_at": _s.now_iso()}})
+    # Re-open the campaign if it had finished
+    if r.modified_count and camp["status"] in ("completed", "finished"):
+        await _s.db.campaign_out.update_one({"id": cid}, {"$set": {
+            "status": "running", "completed_at": None, "updated_at": _s.now_iso()}})
+    await _audit(vid, "restart_calls", "campaign", cid, {"mode": payload.mode, "requeued": r.modified_count})
+    return {"ok": True, "requeued": r.modified_count}
+
+
+@router.post("/campaigns/{cid}/duplicate")
+async def duplicate_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    src = await _s.db.campaign_out.find_one({"id": cid, "vendor_id": vid}, {"_id": 0})
+    if not src:
+        raise HTTPException(404, "Campaign not found")
+    doc = {**src}
+    doc.update({
+        "id": _s.new_id(), "name": f"{src['name']} (copy)", "status": "draft",
+        "paused_reason": None, "calls_today": 0, "day_key": None,
+        "stats": {"minutes_used": 0.0}, "created_at": _s.now_iso(), "updated_at": _s.now_iso(),
+        "started_at": None, "completed_at": None,
+    })
+    await _s.db.campaign_out.insert_one(doc.copy())
+    await _audit(vid, "duplicate", "campaign", doc["id"], {"from": cid})
+    return _clean(doc)
+
+
+@router.post("/campaigns/{cid}/archive")
+async def archive_campaign(cid: str, user: dict = Depends(_require_sales_vendor)):
+    r = await _s.db.campaign_out.update_one(
+        {"id": cid, "vendor_id": user["vendor_id"], "status": {"$nin": ["running"]}},
+        {"$set": {"status": "archived", "updated_at": _s.now_iso()}})
+    if not r.matched_count:
+        raise HTTPException(400, "Only non-running campaigns can be archived")
+    await _audit(user["vendor_id"], "archive", "campaign", cid)
+    return {"ok": True, "status": "archived"}
+
+
+class AddListsIn(BaseModel):
+    list_ids: List[str] = Field(default_factory=list)
+
+
+@router.post("/campaigns/{cid}/add-lists")
+async def add_lists(cid: str, payload: AddListsIn, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    camp = await _s.db.campaign_out.find_one({"id": cid, "vendor_id": vid}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    new_ids = []
+    for lid in payload.list_ids:
+        l = await _s.db.sales_prospect_lists.find_one({"id": lid, "vendor_id": vid}, {"_id": 0, "id": 1})
+        if l and lid not in (camp.get("list_ids") or []):
+            new_ids.append(lid)
+    if not new_ids:
+        raise HTTPException(400, "No new lists to add")
+    merged = list({*(camp.get("list_ids") or []), *new_ids})
+    await _s.db.campaign_out.update_one({"id": cid}, {"$set": {"list_ids": merged, "updated_at": _s.now_iso()}})
+    camp["list_ids"] = new_ids  # enqueue only the freshly added lists
+    stats = await _enqueue_prospects(camp)
+    await _audit(vid, "add_lists", "campaign", cid, {"lists": new_ids, "enqueue": stats})
+    return {"ok": True, "enqueue": stats}
+
+
+# --------------------------------------------------------- Do-Not-Call ---
+class DncIn(BaseModel):
+    phone: str
+    reason: Optional[str] = ""
+
+
+@router.get("/dnc")
+async def list_dnc(user: dict = Depends(_require_sales_vendor)):
+    items = await _s.db.dnc_numbers.find({"vendor_id": user["vendor_id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return {"items": items}
+
+
+@router.post("/dnc")
+async def add_dnc(payload: DncIn, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    digits = _norm_phone_digits(_combine_e164("", payload.phone) if not payload.phone.startswith("+") else payload.phone)
+    if not digits or len(digits) < 10:
+        raise HTTPException(400, "Enter a valid phone number")
+    await _s.db.dnc_numbers.update_one(
+        {"vendor_id": vid, "phone": digits},
+        {"$setOnInsert": {"id": _s.new_id(), "vendor_id": vid, "phone": digits, "e164": f"+{digits}",
+                          "reason": payload.reason or "", "source": "manual", "created_at": _s.now_iso()}},
+        upsert=True)
+    # Also stop any queued attempts for this number
+    await _s.db.campaign_prospects.update_many(
+        {"vendor_id": vid, "phone": digits}, {"$set": {"status": "do_not_call", "outcome": "do_not_call"}})
+    await _audit(vid, "dnc_add", "number", digits, {"reason": payload.reason})
+    return {"ok": True}
+
+
+@router.delete("/dnc/{dnc_id}")
+async def remove_dnc(dnc_id: str, user: dict = Depends(_require_sales_vendor)):
+    d = await _s.db.dnc_numbers.find_one({"id": dnc_id, "vendor_id": user["vendor_id"]}, {"_id": 0, "phone": 1})
+    r = await _s.db.dnc_numbers.delete_one({"id": dnc_id, "vendor_id": user["vendor_id"]})
+    if not r.deleted_count:
+        raise HTTPException(404, "Not found")
+    await _audit(user["vendor_id"], "dnc_remove", "number", (d or {}).get("phone", ""))
+    return {"ok": True}
+
+
+# --------------------------------------------------------- Audit logs ---
+@router.get("/audit")
+async def list_audit(user: dict = Depends(_require_sales_vendor), limit: int = Query(100, ge=1, le=500)):
+    items = await _s.db.audit_logs.find({"vendor_id": user["vendor_id"]}, {"_id": 0}).sort("at", -1).limit(limit).to_list(limit)
+    return {"items": items}

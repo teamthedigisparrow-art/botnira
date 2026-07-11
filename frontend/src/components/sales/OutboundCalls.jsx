@@ -6,6 +6,7 @@ import {
   Phone, PhoneCall, LayoutDashboard, Megaphone, History, BarChart3, Plus, Play, Pause,
   X, Trash2, ChevronRight, ChevronLeft, Check, AlertTriangle, Clock, Wallet, Loader2,
   Download, Search, Sparkles, Volume2, ArrowLeft,
+  MoreVertical, Copy, Archive, RotateCcw, ListPlus, Pencil, ShieldOff, ScrollText,
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, CartesianGrid } from "recharts";
 
@@ -38,6 +39,7 @@ const SUBTABS = [
   { id: "campaigns", label: "Campaigns", icon: Megaphone },
   { id: "history", label: "Call History", icon: History },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "compliance", label: "Compliance", icon: ShieldOff },
 ];
 
 const fmtDur = (s) => {
@@ -154,9 +156,15 @@ const DAYS = [["Mon", 0], ["Tue", 1], ["Wed", 2], ["Thu", 3], ["Fri", 4], ["Sat"
 const LANGS = ["English", "French", "Spanish", "Hindi", "Punjabi", "German", "Italian", "Arabic", "Portuguese"];
 const TZS = ["America/Toronto", "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax", "America/New_York", "America/Chicago", "America/Los_Angeles"];
 
-function Wizard({ options, lists, onClose, onSaved }) {
+function Wizard({ options, lists, editing, onClose, onSaved }) {
   const [step, setStep] = useState(1);
-  const [f, setF] = useState(BLANK);
+  const [f, setF] = useState(editing ? {
+    ...BLANK, ...editing,
+    voice: { ...BLANK.voice, ...(editing.voice || {}) },
+    business_hours: { ...BLANK.business_hours, ...(editing.business_hours || {}) },
+    retry: { ...BLANK.retry, ...(editing.retry || {}) },
+    list_ids: editing.list_ids || [],
+  } : BLANK);
   const [saving, setSaving] = useState(false);
   const set = (patch) => setF((p) => ({ ...p, ...patch }));
   const TOTAL = 11;
@@ -175,6 +183,11 @@ function Wizard({ options, lists, onClose, onSaved }) {
   const submit = async (launch) => {
     setSaving(true);
     try {
+      if (editing) {
+        await api.put(`${API}/campaigns/${editing.id}`, f);
+        toast.success("Campaign updated");
+        onSaved(); onClose(); return;
+      }
       const { data } = await api.post(`${API}/campaigns`, f);
       if (launch) {
         try {
@@ -205,7 +218,7 @@ function Wizard({ options, lists, onClose, onSaved }) {
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto" data-testid="oc-wizard">
       <div className="bg-white border-2 border-black shadow-brutal-lg w-full max-w-2xl my-4">
         <div className="flex items-center justify-between border-b-2 border-black px-5 py-3 bg-[#002FA7] text-white">
-          <div className="font-display font-black">New Outbound Campaign</div>
+          <div className="font-display font-black">{editing ? "Edit Campaign" : "New Outbound Campaign"}</div>
           <button onClick={onClose} data-testid="oc-wizard-close"><X size={20} /></button>
         </div>
         {/* progress */}
@@ -389,6 +402,10 @@ function Wizard({ options, lists, onClose, onSaved }) {
           </button>
           {step < TOTAL ? (
             <button onClick={() => canNext() ? setStep(step + 1) : toast.error("Please complete this step")} data-testid="wz-next" className="border-2 border-black px-5 py-2 font-bold bg-[#002FA7] text-white shadow-brutal hover-lift">Next <ChevronRight size={15} className="inline -mt-0.5" /></button>
+          ) : editing ? (
+            <button onClick={() => submit(false)} disabled={saving} data-testid="wz-save-edit" className="border-2 border-black px-5 py-2 font-bold bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-60">
+              {saving ? <Loader2 size={15} className="inline animate-spin" /> : "Save changes"}
+            </button>
           ) : (
             <div className="flex gap-2">
               <button onClick={() => submit(false)} disabled={saving} data-testid="wz-save-draft" className="border-2 border-black px-4 py-2 font-bold bg-white hover-lift disabled:opacity-60">Save draft</button>
@@ -403,22 +420,117 @@ function Wizard({ options, lists, onClose, onSaved }) {
   );
 }
 
+// ─────────────────────────────────────────────── Add lists modal ───
+function AddListsModal({ campaign, lists, onClose, onDone }) {
+  const [sel, setSel] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const available = lists.filter((l) => !(campaign.list_ids || []).includes(l.id));
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const { data } = await api.post(`${API}/campaigns/${campaign.id}/add-lists`, { list_ids: sel });
+      const e = data.enqueue || {};
+      toast.success(`Added — ${e.queued ?? 0} new prospects queued${e.blocked_international ? `, ${e.blocked_international} international skipped` : ""}`);
+      onDone(); onClose();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Could not add lists"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" data-testid="oc-addlists">
+      <div className="bg-white border-2 border-black shadow-brutal-lg w-full max-w-md">
+        <div className="flex items-center justify-between border-b-2 border-black px-5 py-3 bg-[#002FA7] text-white">
+          <div className="font-display font-black">Add prospect lists</div><button onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="border-2 border-black divide-y-2 divide-black max-h-64 overflow-y-auto">
+            {available.length === 0 && <div className="p-4 text-sm text-neutral-500">All your lists are already in this campaign.</div>}
+            {available.map((l) => {
+              const on = sel.includes(l.id);
+              return (
+                <label key={l.id} className={`flex items-center gap-3 p-3 cursor-pointer ${on ? "bg-blue-50" : ""}`}>
+                  <input type="checkbox" checked={on} onChange={() => setSel(on ? sel.filter((x) => x !== l.id) : [...sel, l.id])} />
+                  <span className="flex-1 font-bold">{l.name}</span>
+                  <span className="text-xs font-mono text-neutral-500">{l.counts?.active_with_phone ?? 0} contacts</span>
+                </label>
+              );
+            })}
+          </div>
+          <button onClick={submit} disabled={saving || sel.length === 0} data-testid="oc-addlists-submit" className="w-full border-2 border-black px-4 py-2 font-bold bg-[#002FA7] text-white shadow-brutal hover-lift disabled:opacity-50">
+            {saving ? <Loader2 size={15} className="inline animate-spin" /> : "Add & enqueue"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────── Restart modal ───
+const RESTART_MODES = [
+  { id: "all_incomplete", label: "All uncontacted (no-answer, busy, voicemail, failed)" },
+  { id: "no_answer", label: "No-answer calls" },
+  { id: "busy", label: "Busy calls" },
+  { id: "voicemail", label: "Voicemail calls" },
+  { id: "failed", label: "Failed calls" },
+];
+function RestartModal({ campaign, onClose, onDone }) {
+  const [mode, setMode] = useState("all_incomplete");
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const { data } = await api.post(`${API}/campaigns/${campaign.id}/restart`, { mode });
+      toast.success(`${data.requeued} call(s) re-queued`);
+      onDone(); onClose();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Restart failed"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" data-testid="oc-restart">
+      <div className="bg-white border-2 border-black shadow-brutal-lg w-full max-w-md">
+        <div className="flex items-center justify-between border-b-2 border-black px-5 py-3 bg-[#002FA7] text-white">
+          <div className="font-display font-black">Restart calls</div><button onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="p-5 space-y-2">
+          {RESTART_MODES.map((m) => (
+            <label key={m.id} className={`flex items-center gap-3 p-2 border-2 border-black cursor-pointer text-sm ${mode === m.id ? "bg-blue-50" : ""}`}>
+              <input type="radio" name="rmode" checked={mode === m.id} onChange={() => setMode(m.id)} /> {m.label}
+            </label>
+          ))}
+          <button onClick={submit} disabled={saving} data-testid="oc-restart-submit" className="w-full mt-2 border-2 border-black px-4 py-2 font-bold bg-green-500 shadow-brutal hover-lift disabled:opacity-50">
+            {saving ? <Loader2 size={15} className="inline animate-spin" /> : <><RotateCcw size={14} className="inline -mt-0.5 mr-1" />Restart selected calls</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────── Campaigns list ───
 function CampaignsPanel({ campaigns, options, lists, reload, onOpenHistory }) {
   const [wizard, setWizard] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [addListsFor, setAddListsFor] = useState(null);
+  const [restartFor, setRestartFor] = useState(null);
+  const [menuId, setMenuId] = useState(null);
   const act = async (id, action) => {
+    setMenuId(null);
     try {
       if (action === "delete") { await api.delete(`${API}/campaigns/${id}`); }
       else { await api.post(`${API}/campaigns/${id}/${action}`); }
-      toast.success(`Campaign ${action}d`);
+      toast.success(`Campaign ${action}${action.endsWith("e") ? "d" : "ed"}`);
       reload();
     } catch (e) { toast.error(e?.response?.data?.detail || `Could not ${action}`); }
   };
+  const openNew = () => { setEditing(null); setWizard(true); };
+  const openEdit = (c) => { setMenuId(null); setEditing(c); setWizard(true); };
+  const MenuItem = ({ icon: Ic, label, onClick, danger, testid }) => (
+    <button onClick={onClick} data-testid={testid} className={`w-full text-left px-3 py-2 text-sm font-bold flex items-center gap-2 hover:bg-neutral-100 ${danger ? "text-red-700" : ""}`}><Ic size={14} /> {label}</button>
+  );
   return (
     <div className="space-y-4" data-testid="oc-campaigns">
       <div className="flex justify-between items-center">
         <div className="text-sm text-neutral-600">{campaigns.length} campaign(s)</div>
-        <button onClick={() => setWizard(true)} data-testid="oc-new-campaign" className="bg-[#002FA7] text-white border-2 border-black shadow-brutal px-4 py-2 font-bold hover-lift"><Plus size={15} className="inline -mt-0.5 mr-1" /> New Campaign</button>
+        <button onClick={openNew} data-testid="oc-new-campaign" className="bg-[#002FA7] text-white border-2 border-black shadow-brutal px-4 py-2 font-bold hover-lift"><Plus size={15} className="inline -mt-0.5 mr-1" /> New Campaign</button>
       </div>
       {campaigns.length === 0 ? (
         <div className="border-2 border-black bg-white shadow-brutal p-10 text-center">
@@ -430,6 +542,7 @@ function CampaignsPanel({ campaigns, options, lists, reload, onOpenHistory }) {
         <div className="space-y-3">
           {campaigns.map((c) => {
             const pct = c.total_prospects ? Math.round((c.completed_prospects / c.total_prospects) * 100) : 0;
+            const editable = c.status === "draft" || c.status === "paused";
             return (
               <div key={c.id} data-testid={`oc-campaign-${c.id}`} className="border-2 border-black bg-white shadow-brutal p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -441,12 +554,22 @@ function CampaignsPanel({ campaigns, options, lists, reload, onOpenHistory }) {
                     </div>
                     <div className="text-xs text-neutral-500 mt-1">{c.industry || "—"} · goal: {c.goal} · {c.completed_prospects}/{c.total_prospects} done ({pct}%)</div>
                   </div>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {(c.status === "draft" || c.status === "paused") && <button onClick={() => act(c.id, c.status === "draft" ? "launch" : "resume")} data-testid={`oc-launch-${c.id}`} className="border-2 border-black px-3 py-1.5 text-sm font-bold bg-green-400 hover-lift"><Play size={13} className="inline -mt-0.5" /> {c.status === "draft" ? "Launch" : "Resume"}</button>}
+                  <div className="flex gap-1.5 flex-wrap items-center relative">
+                    {editable && <button onClick={() => act(c.id, c.status === "draft" ? "launch" : "resume")} data-testid={`oc-launch-${c.id}`} className="border-2 border-black px-3 py-1.5 text-sm font-bold bg-green-400 hover-lift"><Play size={13} className="inline -mt-0.5" /> {c.status === "draft" ? "Launch" : "Resume"}</button>}
                     {c.status === "running" && <button onClick={() => act(c.id, "pause")} data-testid={`oc-pause-${c.id}`} className="border-2 border-black px-3 py-1.5 text-sm font-bold bg-yellow-300 hover-lift"><Pause size={13} className="inline -mt-0.5" /> Pause</button>}
                     <button onClick={() => onOpenHistory(c)} className="border-2 border-black px-3 py-1.5 text-sm font-bold bg-white hover-lift"><History size={13} className="inline -mt-0.5" /> Calls</button>
-                    {c.status !== "running" && <button onClick={() => act(c.id, "cancel")} className="border-2 border-black px-2 py-1.5 text-sm font-bold bg-white hover-lift" title="Cancel"><X size={13} /></button>}
-                    {c.status !== "running" && <button onClick={() => { if (window.confirm("Delete this campaign?")) act(c.id, "delete"); }} data-testid={`oc-delete-${c.id}`} className="border-2 border-black px-2 py-1.5 text-sm font-bold bg-red-100 hover-lift"><Trash2 size={13} /></button>}
+                    <button onClick={() => setMenuId(menuId === c.id ? null : c.id)} data-testid={`oc-more-${c.id}`} className="border-2 border-black px-2 py-1.5 text-sm font-bold bg-white hover-lift"><MoreVertical size={15} /></button>
+                    {menuId === c.id && (
+                      <div className="absolute right-0 top-full mt-1 z-20 bg-white border-2 border-black shadow-brutal w-52" data-testid={`oc-menu-${c.id}`}>
+                        {editable && <MenuItem icon={Pencil} label="Edit campaign" onClick={() => openEdit(c)} testid={`oc-edit-${c.id}`} />}
+                        <MenuItem icon={ListPlus} label="Add prospect lists" onClick={() => { setMenuId(null); setAddListsFor(c); }} testid={`oc-addlists-${c.id}`} />
+                        <MenuItem icon={RotateCcw} label="Restart calls" onClick={() => { setMenuId(null); setRestartFor(c); }} testid={`oc-restart-${c.id}`} />
+                        <MenuItem icon={Copy} label="Duplicate" onClick={() => act(c.id, "duplicate")} testid={`oc-duplicate-${c.id}`} />
+                        {c.status !== "running" && <MenuItem icon={Archive} label="Archive" onClick={() => act(c.id, "archive")} testid={`oc-archive-${c.id}`} />}
+                        {c.status !== "running" && <MenuItem icon={X} label="Cancel" onClick={() => act(c.id, "cancel")} />}
+                        {c.status !== "running" && <MenuItem icon={Trash2} label="Delete" danger onClick={() => { if (window.confirm("Delete this campaign?")) act(c.id, "delete"); }} testid={`oc-delete-${c.id}`} />}
+                      </div>
+                    )}
                   </div>
                 </div>
                 {c.total_prospects > 0 && <div className="h-2 border-2 border-black mt-3"><div className="h-full bg-[#002FA7]" style={{ width: `${pct}%` }} /></div>}
@@ -455,7 +578,9 @@ function CampaignsPanel({ campaigns, options, lists, reload, onOpenHistory }) {
           })}
         </div>
       )}
-      {wizard && <Wizard options={options} lists={lists} onClose={() => setWizard(false)} onSaved={reload} />}
+      {wizard && <Wizard options={options} lists={lists} editing={editing} onClose={() => { setWizard(false); setEditing(null); }} onSaved={reload} />}
+      {addListsFor && <AddListsModal campaign={addListsFor} lists={lists} onClose={() => setAddListsFor(null)} onDone={reload} />}
+      {restartFor && <RestartModal campaign={restartFor} onClose={() => setRestartFor(null)} onDone={reload} />}
     </div>
   );
 }
@@ -802,6 +927,74 @@ function AnalyticsPanel({ campaigns }) {
   );
 }
 
+// ─────────────────────────────────────────────── Compliance ───
+function CompliancePanel() {
+  const [dnc, setDnc] = useState([]);
+  const [audit, setAudit] = useState([]);
+  const [phone, setPhone] = useState("");
+  const [reason, setReason] = useState("");
+  const load = async () => {
+    try {
+      const [d, a] = await Promise.all([api.get(`${API}/dnc`), api.get(`${API}/audit`)]);
+      setDnc(d.data.items); setAudit(a.data.items);
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    if (!phone.trim()) return;
+    try { await api.post(`${API}/dnc`, { phone, reason }); setPhone(""); setReason(""); toast.success("Added to Do-Not-Call"); load(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Could not add"); }
+  };
+  const remove = async (id) => {
+    try { await api.delete(`${API}/dnc/${id}`); load(); } catch { toast.error("Could not remove"); }
+  };
+  return (
+    <div className="space-y-6" data-testid="oc-compliance">
+      {/* DNC */}
+      <div className="border-2 border-black bg-white shadow-brutal p-5">
+        <div className="flex items-center gap-2 font-display font-black text-lg"><ShieldOff size={18} /> Do-Not-Call list</div>
+        <p className="text-sm text-neutral-600 mt-1">Numbers here are never dialed. Anyone who asks to be removed during a call is added automatically.</p>
+        <div className="flex flex-wrap gap-2 mt-4">
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 416 555 1234" data-testid="oc-dnc-phone" className="border-2 border-black px-3 py-2 text-sm" />
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" className="border-2 border-black px-3 py-2 text-sm flex-1 min-w-[160px]" />
+          <button onClick={add} data-testid="oc-dnc-add" className="border-2 border-black px-4 py-2 font-bold bg-[#002FA7] text-white shadow-brutal hover-lift"><Plus size={14} className="inline -mt-0.5" /> Add</button>
+        </div>
+        <div className="mt-4 border-2 border-black divide-y divide-neutral-200 max-h-64 overflow-y-auto">
+          {dnc.length === 0 && <div className="p-4 text-sm text-neutral-500">No blocked numbers yet.</div>}
+          {dnc.map((d) => (
+            <div key={d.id} data-testid={`oc-dnc-${d.id}`} className="flex items-center justify-between px-3 py-2 text-sm">
+              <div><span className="font-mono font-bold">{d.e164 || `+${d.phone}`}</span>{d.reason && <span className="text-neutral-500"> — {d.reason}</span>} <span className="text-[10px] uppercase tracking-widest text-neutral-400 ml-2">{d.source}</span></div>
+              <button onClick={() => remove(d.id)} data-testid={`oc-dnc-remove-${d.id}`} className="text-red-700 hover:underline text-xs font-bold">Remove</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Audit log */}
+      <div className="border-2 border-black bg-white shadow-brutal p-5">
+        <div className="flex items-center gap-2 font-display font-black text-lg"><ScrollText size={18} /> Audit log</div>
+        <p className="text-sm text-neutral-600 mt-1">A record of campaign and compliance actions for accountability.</p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-neutral-100 border-y-2 border-black"><tr className="text-left">{["When", "Action", "Entity", "Details"].map((h) => <th key={h} className="px-3 py-2 font-bold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-neutral-200">
+              {audit.length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-neutral-500">No activity yet.</td></tr>}
+              {audit.map((a) => (
+                <tr key={a.id}>
+                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{(a.at || "").slice(0, 16).replace("T", " ")}</td>
+                  <td className="px-3 py-2 font-bold whitespace-nowrap">{a.action}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{a.entity} {a.entity_id ? <span className="font-mono text-xs text-neutral-400">{String(a.entity_id).slice(0, 8)}</span> : ""}</td>
+                  <td className="px-3 py-2 text-xs text-neutral-600">{a.meta && Object.keys(a.meta).length ? JSON.stringify(a.meta) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────── Root ───
 export default function OutboundCalls() {
   const [sub, setSub] = useState("dashboard");
@@ -845,6 +1038,7 @@ export default function OutboundCalls() {
       {sub === "campaigns" && <CampaignsPanel campaigns={campaigns} options={data?.options} lists={lists} reload={reload} onOpenHistory={openHistory} />}
       {sub === "history" && <HistoryPanel campaigns={campaigns} initial={historyCamp} />}
       {sub === "analytics" && <AnalyticsPanel campaigns={campaigns} />}
+      {sub === "compliance" && <CompliancePanel />}
     </div>
   );
 }

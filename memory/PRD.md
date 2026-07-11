@@ -16,6 +16,16 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Outbound AI Sales Calling Engine — Phase 3 (2026-06 / this session)
+- **Restart actions**: `POST /campaigns/{cid}/restart` (modes: failed / no_answer / busy / voicemail / all_incomplete / selected) — re-queues matching prospects (attempts reset) and re-opens completed campaigns.
+- **Duplicate** (`/duplicate` → draft copy of config only), **Archive** (`/archive`, non-running), **Edit** (existing PUT, draft/paused), **Add-more-lists** (`/add-lists` merges lists + enqueues only new deduped prospects).
+- **Do-Not-Call**: `dnc_numbers` collection + `GET/POST/DELETE /dnc`. Enqueue skips DNC numbers; a spoken "do not call" outcome auto-adds the number (source=call) and flags the prospect.
+- **Audit logs**: `audit_logs` collection + `_audit()` helper wired into launch/pause/resume/cancel/delete/restart/duplicate/archive/add-lists/dnc; `GET /audit` feed.
+- **Frontend** (`OutboundCalls.jsx`): campaign card **"More" menu** (Edit / Add lists / Restart / Duplicate / Archive / Cancel / Delete), edit-mode Wizard (PUT), **AddLists** & **Restart** modals, and a new **Compliance** sub-tab (DNC add/list/remove + read-only Audit log table).
+- **Tested**: all endpoints via curl (200s) + UI (DNC add/remove + audit feed verified on screen).
+- **Still open (not requested this phase)**: in-dashboard notifications (started/finished/out-of-minutes/hot-lead/appointment/daily-limit).
+
+
 ### Outbound AI Sales Calling Engine — Phase 2 (2026-06 / this session)
 - **AI post-call analysis** (`_generate_call_summary`, Claude via Emergent LLM key): after an answered call, reads the transcript and stores in `call_ai_summaries` — summary, intent, sentiment, key questions, notes, next action, confidence, extracted entities (email/business/decision-maker/callback time/appointment date), and a **refined lead outcome** (interested/hot/warm/cold/appointment_booked/callback/transferred/etc.) that overrides the Twilio "answered" disposition on `campaign_calls` + `campaign_prospects`.
 - **Call recording**: `_place_call` now records; `/sales/outbound/recording/{call_id}` stores the media URL; `/sales/outbound/calls/{id}/recording` proxies the audio (parent-account Twilio basic auth) for authenticated playback.
