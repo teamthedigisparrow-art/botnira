@@ -7,12 +7,13 @@ import {
   Play, Pause, X, Trash2, ShieldCheck, Clock, Check, AlertTriangle,
   Eye, Send, Plus, Pencil, ListPlus, Folder, MessageCircle, Phone,
 } from "lucide-react";
+import OutboundCalls from "../../components/sales/OutboundCalls";
 
 const TABS = [
   { id: "prospects", label: "Prospects", icon: Users },
   { id: "emails", label: "Emails", icon: Mail },
   { id: "whatsapp", label: "WhatsApp", icon: MessageCircle },
-  { id: "calls", label: "Calls", icon: Phone, comingSoon: true },
+  { id: "calls", label: "Calls", icon: Phone },
 ];
 
 const STATUS_BADGE = {
@@ -1573,22 +1574,6 @@ function WaAnalyticsPanel() {
   );
 }
 
-function CallsComingSoon() {
-  return (
-    <div className="border-2 border-black bg-white shadow-brutal p-10 text-center max-w-2xl mx-auto" data-testid="sales-calls-coming-soon">
-      <div className="inline-flex items-center justify-center w-16 h-16 border-2 border-black bg-amber-300 mb-5">
-        <Phone size={28} />
-      </div>
-      <h2 className="font-display font-black text-3xl tracking-tight">Outbound calls — coming soon</h2>
-      <p className="mt-3 text-neutral-700 max-w-md mx-auto">
-        We're wiring up Twilio + our AI voice bridge to let you launch outbound call campaigns from
-        the same prospect lists you already use for email and WhatsApp.
-      </p>
-      <p className="mt-4 text-xs font-mono text-neutral-500">Want early access? Reach out via Contact Us on the landing page.</p>
-    </div>
-  );
-}
-
 // ---------------------------------------------------------- main page ---
 export default function SalesAssistant() {
   const [tab, setTab] = useState("prospects");
@@ -1681,7 +1666,7 @@ export default function SalesAssistant() {
           )}
         </div>
       )}
-      {tab === "calls" && <CallsComingSoon />}
+      {tab === "calls" && <OutboundCalls />}
     </div>
   );
 }

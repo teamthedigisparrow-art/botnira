@@ -5356,6 +5356,36 @@ async def voice_stream(ws: WebSocket, call_id: str):
         f"If the caller wants to book an appointment, collect name, phone and preferred date/time, then confirm it back."
     )
 
+    # Default voice
+    oai_voice = "alloy"
+
+    # OUTBOUND campaign call → build a sales-agent prompt from the campaign config.
+    campaign = None
+    if call.get("campaign_id"):
+        campaign = await db.campaign_out.find_one({"id": call["campaign_id"]}, {"_id": 0})
+    if campaign:
+        from outbound_call_routes import _openai_voice as _ov, GOALS as _GOALS
+        goal_label = campaign.get("goal_custom") or next(
+            (g["label"] for g in _GOALS if g["id"] == campaign.get("goal")), campaign.get("goal") or "")
+        vcfg = campaign.get("voice") or {}
+        oai_voice = _ov(vcfg.get("gender"), vcfg.get("tone"))
+        prospect_name = call.get("customer_name") or "there"
+        lang = campaign.get("language") or "English"
+        system_instructions = (
+            f"You are an outbound AI sales agent calling on behalf of {vendor.get('name','this business')}"
+            + (f", a business in the {campaign.get('industry')} industry" if campaign.get('industry') else "") + ". "
+            f"Start the conversation in {lang}, but if the person replies in another language, switch to their language. "
+            f"Speak in a {vcfg.get('tone','Friendly')} tone, natural and human, 1-3 short sentences per turn — never sound scripted.\n\n"
+            f"CALL GOAL: {goal_label}. Steer the conversation toward this goal.\n\n"
+            f"SALES SCRIPT / INSTRUCTIONS (follow the intent, adapt naturally, handle objections):\n{campaign.get('script') or ''}\n\n"
+            f"BUSINESS INFO (source of truth — never invent beyond this):\n{biz}\n\n"
+            f"FAQs:\n{faq_txt}\n\n"
+            f"You are speaking with {prospect_name}. Introduce yourself and the business first. "
+            f"Be respectful of their time. If they ask to be removed or say 'do not call', acknowledge politely and end the call. "
+            f"If the goal is to book an appointment or demo, collect the preferred date/time and confirm it back."
+        )
+        greeting = f"Warmly introduce yourself as an assistant from {vendor.get('name','our business')} and start the script."
+
     import websockets as _ws
     # `gpt-realtime` is the GA replacement for the retired `gpt-4o-realtime-preview-*`
     # snapshots. Beta endpoint + `OpenAI-Beta: realtime=v1` header are no
@@ -5367,14 +5397,18 @@ async def voice_stream(ws: WebSocket, call_id: str):
     # Create ONE persistent conversation for this whole call (not per-message)
     conv = await _ensure_conversation(
         vendor_id, None, "voice",
-        call.get("from_number") or "Caller",
-        call.get("from_number") or "",
+        call.get("customer_name") or call.get("from_number") or "Caller",
+        call.get("customer_contact") or call.get("from_number") or "",
     )
     conv_id = conv["id"]
     # Link call_record to conversation
     await db.call_records.update_one(
         {"id": call_id}, {"$set": {"conversation_id": conv_id}}
     )
+    if call.get("campaign_id"):
+        await db.campaign_calls.update_one(
+            {"id": call_id}, {"$set": {"conversation_id": conv_id}}
+        )
     logger.info("voice_stream: connecting to OpenAI Realtime for call %s (conv %s)", call_id, conv_id)
     try:
         async with _ws.connect(
@@ -5413,7 +5447,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
                         },
                         "output": {
                             "format": {"type": "audio/pcmu"},
-                            "voice": "alloy",
+                            "voice": oai_voice,
                         },
                     },
                 },
@@ -5709,6 +5743,14 @@ app.add_event_handler("startup", _email_start)
 from sales_routes import router as _sales_router, _start_sales_sender as _sales_start  # noqa: E402
 api_router.include_router(_sales_router, prefix="/sales")
 app.add_event_handler("startup", _sales_start)
+
+# Outbound AI Sales Calling Engine (Growth/Pro plan-gated) — campaign dialer
+from outbound_call_routes import (  # noqa: E402
+    router as _outbound_router,
+    start_outbound_dialer as _outbound_start,
+)
+api_router.include_router(_outbound_router, prefix="/sales/outbound")
+app.add_event_handler("startup", _outbound_start)
 
 # Provision Stripe products/prices + HST tax rate at boot. (startup_stripe was
 # defined but never registered — without this, STRIPE_PRICE_IDS stays empty and

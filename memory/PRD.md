@@ -16,6 +16,17 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Outbound AI Sales Calling Engine — Phase 1 (2026-06 / this session)
+- **New module `backend/outbound_call_routes.py`** mounted at `/api/sales/outbound` (Growth/Pro gated via `_require_sales_vendor`). Collections: `campaign_out`, `campaign_prospects`, `campaign_calls` (indexed).
+- **Campaign lifecycle**: create/update draft, launch (snapshots prospects from selected lists, dedupes by E.164, **blocks non-+1 international** numbers with clear error, skips invalid/DNC), pause, resume, cancel, delete, get detail, list, per-campaign call history.
+- **Dialer background loop** (`_dialer_loop`, startup hook): for each RUNNING campaign respects business hours + timezone (zoneinfo), daily limit (per campaign-local day), per-campaign concurrency (2), retry rules (no-answer/busy/voicemail, max attempts, retry-after), Do-Not-Call. Places REAL Twilio outbound calls via vendor subaccount → TwiML `<Connect><Stream>` → shared voice bridge.
+- **Voice-minute guard**: dialer + status-callback auto-pause ALL running campaigns at 0 minutes (`paused_reason=no_minutes`); resume/launch blocked until recharge. Never auto-charges. Minutes deducted on Twilio status callback (`/sales/outbound/status/{call_id}`).
+- **Campaign-aware voice bridge** (`server.py` `voice_stream`): when `call_records.campaign_id` present, builds a sales-agent system prompt from industry/goal/script/language, maps voice gender+tone → OpenAI Realtime voice, uses prospect name/contact; call saved as a `conversations` thread (Inbox-visible).
+- **Frontend `components/sales/OutboundCalls.jsx`** replaces the "coming soon" Calls tab: sub-tabs Dashboard (all summary counters + calls-per-day chart + no-minutes recharge banner), Campaigns (list + actions + **11-step Create Campaign wizard**), Call History (table), Analytics (rate bars). Verified via screenshots + curl.
+- **Tested (curl)**: create→launch (queued 1, blocked_international 1)→pause→resume→cancel→delete all pass; guards enforced. **Live end-to-end dialing pending vendor's provisioned number + funded OPENAI_REALTIME_API_KEY.**
+- **Deferred to Phase 2**: AI post-call summaries + AI-driven outcomes (interested/appointment/etc.), full analytics charts, call-list filters/search/export (CSV/Excel), individual call page. **Phase 3**: retry-restart actions, duplicate/archive/edit, in-dashboard notifications, audit/consent logs.
+
+
 ### Marketing site — Team page + Homepage trust overhaul (2026-06 / this session)
 - **New `/team` page** (`pages/Team.jsx`): CEO story (Kamaljeet Singh Sidhu — Conestoga B.Tech → ImmiPRO → The DigiSparrow 135-member → BotNira), team story, values, stats strip, CEO + team photos, shared SiteNav/SiteFooter, mobile responsive. Linked in nav + footer.
 - **Homepage (`pages/Landing.jsx`) upgrades** per founder conversion brief:
