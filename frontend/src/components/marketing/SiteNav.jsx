@@ -41,6 +41,7 @@ export default function SiteNav({ activeReferrals = false }) {
         <span className="text-[9px] font-bold uppercase tracking-widest bg-yellow-300 border border-black px-1 leading-tight">earn 15%</span>
       </Link>
       <Link to="/blog" data-testid="nav-blog" className="hover:text-[#002FA7]">Blog</Link>
+      <Link to="/team" data-testid="nav-team" className="hover:text-[#002FA7]">Team</Link>
       <NavLink to="/#faq" testid="nav-faq">FAQ</NavLink>
       <NavLink to="/#contact" testid="nav-contact">Contact</NavLink>
     </>

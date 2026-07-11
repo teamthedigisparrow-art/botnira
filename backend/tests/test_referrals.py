@@ -43,7 +43,7 @@ def _post_stripe_webhook(session, event: dict):
         headers["Stripe-Signature"] = f"t={ts},v1={sig}"
     return session.post(f"{API}/webhook/stripe", data=body, headers=headers)
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://multi-channel-inbox-3.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://scheduling-preview.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")

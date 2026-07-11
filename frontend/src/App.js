@@ -16,6 +16,7 @@ import SeoLandingPage from "./pages/SeoLandingPage";
 import ReferralsMarketing from "./pages/ReferralsMarketing";
 import Blog from "./pages/Blog";
 import BlogDetail from "./pages/BlogDetail";
+import Team from "./pages/Team";
 import AdminBlogs from "./pages/admin/AdminBlogs";
 import ScrollToHash from "./components/ScrollToHash";
 import { SEO_PAGES } from "./data/seoPages";
@@ -75,6 +76,7 @@ function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/referrals" element={<ReferralsMarketing />} />
             <Route path="/blog" element={<Blog />} />
+            <Route path="/team" element={<Team />} />
             <Route path="/blog/:slug" element={<BlogDetail />} />
             <Route path="/r/:code" element={<ReferralRedirect />} />
             <Route path="/login" element={<Login />} />

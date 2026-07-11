@@ -49,6 +49,7 @@ export default function SiteFooter() {
           <div className="font-display font-bold text-xs uppercase tracking-widest opacity-60">Company</div>
           <ul className="mt-3 space-y-1.5 text-sm opacity-90">
             <li><Link to="/login" className="hover:underline">Log in</Link></li>
+            <li><Link to="/team" className="hover:underline" data-testid="footer-team">Team</Link></li>
             <li><Link to="/signup" className="hover:underline">Start free trial</Link></li>
             <li><Link to="/privacy" className="hover:underline" data-testid="footer-privacy">Privacy</Link></li>
             <li><Link to="/terms" className="hover:underline" data-testid="footer-terms">Terms</Link></li>

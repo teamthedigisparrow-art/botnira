@@ -9,7 +9,7 @@ import urllib.parse
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://multi-channel-inbox-3.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://scheduling-preview.preview.emergentagent.com").rstrip("/")
 VENDOR_EMAIL = "kamal@thedigisparrow.com"
 VENDOR_PASSWORD = "Kamala98@hmu"
 

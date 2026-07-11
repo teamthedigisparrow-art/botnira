@@ -10,7 +10,7 @@ import requests
 import pytest
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://multi-channel-inbox-3.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://scheduling-preview.preview.emergentagent.com").rstrip("/")
 VENDOR_EMAIL = "kamal@thedigisparrow.com"
 VENDOR_PW = "Kamala98@hmu"
 VENDOR_SLUG = "the-digisparrow-2883"
