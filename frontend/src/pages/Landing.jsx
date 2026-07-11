@@ -397,6 +397,7 @@ const Pricing = () => (
         <div>
           <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Pricing</div>
           <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Simple monthly plans.</h2>
+          <p className="mt-2 text-sm text-neutral-600 italic" data-testid="pricing-value-line">If BotNira saves only ONE customer per month, it pays for itself.</p>
         </div>
         <p className="max-w-md text-neutral-700">
           Every plan auto-renews monthly. <strong>5-day free trial</strong> — no card required to start. Cancel anytime.
