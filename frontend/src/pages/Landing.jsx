@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle, Lock } from "lucide-react";
+import { ArrowRight, MessageSquare, Phone, Mail, MessageCircle, Bot, BarChart3, ShieldCheck, Zap, Building2, Sparkles, Check, Calendar, Headphones, ShoppingBag, GraduationCap, Scissors, Stethoscope, Wrench, Briefcase, Users, PackageCheck, Languages, PhoneCall, PlayCircle, Lock, MapPin, Database, PhoneForwarded } from "lucide-react";
 import BrandMark from "../components/BrandMark";
 import Reviews from "../components/marketing/Reviews";
 import TrustedBy from "../components/marketing/TrustedBy";
@@ -10,9 +10,15 @@ import { USE_CASE_PAGES } from "../data/useCases";
 import SiteNav from "../components/marketing/SiteNav";
 const Nav = () => <SiteNav />;
 
-const Hero = () => (
+const CEO_IMG = "https://customer-assets.emergentagent.com/job_0cab01e6-4d2b-4117-ae3f-80ebc10fc6b4/artifacts/0jvkuxmu_CEO%20image.png";
+const CALL_AUDIO = "https://customer-assets.emergentagent.com/job_0cab01e6-4d2b-4117-ae3f-80ebc10fc6b4/artifacts/n1tbemay_botnira%20call%20recording%20update.m4a";
+
+const Hero = () => {
+  const PHONE = "+12897784594";
+  const PHONE_DISPLAY = "+1 (289) 778-4594";
+  return (
   <section className="relative border-b-2 border-black bg-grid">
-    <div className="max-w-7xl mx-auto px-6 py-20 md:py-28 grid md:grid-cols-12 gap-10 items-center">
+    <div className="max-w-7xl mx-auto px-6 py-16 md:py-24 grid md:grid-cols-12 gap-10 items-center">
       <div className="md:col-span-7">
         <div className="inline-flex items-center gap-2 border-2 border-black px-3 py-1 mb-6 bg-white" data-testid="hero-badge">
           <Sparkles size={14} /> <span className="text-xs font-bold tracking-[0.15em] uppercase">AI Receptionist · AI Calling Software</span>
@@ -22,59 +28,63 @@ const Hero = () => (
           <span className="bg-[#002FA7] text-white px-3 inline-block">clocks out.</span>
         </h1>
         <p className="mt-6 text-lg md:text-xl max-w-2xl text-neutral-700 font-medium">
-          BotNira is an <strong>AI-based calling software</strong> and <strong>virtual receptionist</strong> that answers phone calls, WhatsApp, SMS, email and chat for your business — <strong>24/7</strong>.
-          Trained only on your own information. Books appointments automatically. Multi-language, vendor-ready.
+          Don't take our word for it — <strong>hear it.</strong> BotNira answers your phone calls, WhatsApp, SMS, email and chat <strong>24/7</strong>, books appointments automatically, and speaks your customer's language.
         </p>
-        <div className="mt-8 flex flex-wrap gap-4">
+
+        {/* Click-to-call — the single biggest trust builder */}
+        <a href={`tel:${PHONE}`} data-testid="hero-call-now" className="mt-7 inline-flex items-center gap-3 border-2 border-black bg-yellow-300 px-5 py-3 shadow-brutal hover-lift">
+          <PhoneCall size={22} />
+          <span className="text-left">
+            <span className="block text-[10px] font-bold tracking-[0.2em] uppercase text-black/60">Call our AI right now</span>
+            <span className="block font-display font-black text-xl md:text-2xl tracking-tight">{PHONE_DISPLAY}</span>
+          </span>
+        </a>
+
+        <div className="mt-6 flex flex-wrap gap-4">
           <Link to="/signup" data-testid="hero-cta-start" className="inline-flex items-center gap-2 bg-[#002FA7] text-white font-bold px-6 py-3 border-2 border-black shadow-brutal-lg hover-lift">
             Start free <ArrowRight size={18} />
           </Link>
-          <a href="#how" data-testid="hero-cta-demo" className="inline-flex items-center gap-2 bg-white font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift">
-            See how it works
+          <a href="#hear-call" data-testid="hero-cta-listen" className="inline-flex items-center gap-2 bg-white font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift">
+            <PlayCircle size={18} /> Hear a real call
           </a>
         </div>
-        <div className="mt-10 flex flex-wrap items-center gap-4 md:gap-6 text-xs font-mono text-neutral-600">
-          <span>NO CREDIT CARD</span>
-          <span className="hidden md:inline">•</span>
-          <span>24/7 AI CALLING</span>
-          <span className="hidden md:inline">•</span>
-          <span>MULTI-LANGUAGE</span>
-          <span className="hidden md:inline">•</span>
-          <SocialIcons variant="light" size={14} className="ml-0 md:ml-2" />
+
+        {/* Risk reversal — loud & stacked */}
+        <div className="mt-7 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-bold" data-testid="hero-risk-reversal">
+          {["5-day free trial", "No credit card", "Cancel anytime", "Live in 3 minutes"].map((t) => (
+            <span key={t} className="inline-flex items-center gap-1.5"><Check size={15} className="text-green-700"/> {t}</span>
+          ))}
         </div>
       </div>
+
+      {/* Hear-it-for-yourself card */}
       <div className="md:col-span-5">
-        <div className="border-2 border-black bg-white shadow-brutal-lg" data-testid="hero-preview">
-          <div className="flex items-center justify-between border-b-2 border-black px-4 py-2">
+        <div id="hear-call" className="border-2 border-black bg-white shadow-brutal-lg scroll-mt-24" data-testid="hero-audio-card">
+          <div className="flex items-center justify-between border-b-2 border-black px-4 py-2 bg-[#002FA7] text-white">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-xs font-mono font-bold">LIVE — ACME DENTAL</span>
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-xs font-mono font-bold">REAL BOTNIRA CALL</span>
             </div>
-            <span className="text-xs font-mono">#web</span>
+            <span className="text-xs font-mono">🎧 listen</span>
           </div>
-          <div className="p-5 space-y-3 text-sm">
-            <div className="flex gap-2">
-              <div className="w-8 h-8 border-2 border-black grid place-items-center font-bold">C</div>
-              <div className="border-2 border-black px-3 py-2 max-w-xs">Hi, what are your hours on Saturday?</div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <div className="bg-[#002FA7] text-white border-2 border-black px-3 py-2 max-w-xs">We're open Saturday 9am to 6pm. Would you like to book a slot?</div>
-              <div className="w-8 h-8 bg-black text-white grid place-items-center font-bold text-xs">BN</div>
-            </div>
-            <div className="flex gap-2">
-              <div className="w-8 h-8 border-2 border-black grid place-items-center font-bold">C</div>
-              <div className="border-2 border-black px-3 py-2 max-w-xs">Yes, 2pm for a cleaning please.</div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <div className="bg-[#002FA7] text-white border-2 border-black px-3 py-2 max-w-xs">Booked — Saturday at 2:00 PM for a cleaning. Can I grab your name and phone?</div>
-              <div className="w-8 h-8 bg-black text-white grid place-items-center font-bold text-xs">BN</div>
+          <div className="p-5">
+            <div className="font-display font-black text-2xl tracking-tight">Hear it before we tell you about it.</div>
+            <p className="mt-2 text-sm text-neutral-700">A real recording of BotNira handling a live call — natural voice, no robotic script-reading, books the appointment on its own.</p>
+            <audio controls preload="none" className="mt-4 w-full" data-testid="hero-audio-player">
+              <source src={CALL_AUDIO} type="audio/mp4" />
+              Your browser does not support the audio element.
+            </audio>
+            <div className="mt-4 flex items-center gap-3 border-2 border-black bg-neutral-50 px-3 py-2">
+              <PhoneForwarded size={18} className="shrink-0 text-[#002FA7]"/>
+              <span className="text-xs font-medium text-neutral-700">Prefer to talk? Tap the yellow number above to call BotNira yourself — it answers in under a second.</span>
             </div>
           </div>
         </div>
       </div>
     </div>
   </section>
-);
+  );
+};
 
 const CHANNELS = [
   { icon: Phone, label: "Voice Calls", sub: "Prepaid minutes" },
@@ -750,6 +760,112 @@ const Footer = () => (
   </footer>
 );
 
+const Reassurance = () => (
+  <section className="border-b-2 border-black bg-yellow-300" data-testid="reassurance-band">
+    <div className="max-w-7xl mx-auto px-6 py-5 flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="w-11 h-11 bg-black text-white border-2 border-black grid place-items-center"><ShieldCheck size={20}/></div>
+        <span className="font-display font-black text-lg md:text-xl">It never guesses.</span>
+      </div>
+      <p className="text-sm md:text-base font-medium text-black/80">
+        When BotNira isn't sure, it <strong>transfers the call to you</strong> or <strong>takes a message</strong> — your customers are never left with a wrong answer. You stay in control of every conversation.
+      </p>
+    </div>
+  </section>
+);
+
+const INDUSTRY_TILES = [
+  { icon: Scissors, label: "Salons & Spas", slug: "salon" },
+  { icon: Stethoscope, label: "Clinics & Dental", slug: "dental" },
+  { icon: Wrench, label: "Repair & Auto shops", slug: "home-services" },
+  { icon: GraduationCap, label: "Tutoring & Schools", slug: "education" },
+];
+
+const IndustryTiles = () => (
+  <section className="border-b-2 border-black bg-white" data-testid="industry-tiles">
+    <div className="max-w-7xl mx-auto px-6 py-14">
+      <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">See it for your business</div>
+      <h2 className="font-display text-3xl md:text-4xl font-black tracking-tighter mt-2">See how BotNira works for your industry.</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
+        {INDUSTRY_TILES.map((t) => (
+          <Link key={t.slug} to={`/use-case/${t.slug}`} data-testid={`industry-tile-${t.slug}`} className="group border-2 border-black bg-white p-6 shadow-brutal hover-lift block">
+            <div className="w-12 h-12 bg-[#002FA7] text-white border-2 border-black grid place-items-center"><t.icon size={22}/></div>
+            <div className="mt-4 font-display font-black text-lg leading-tight">{t.label}</div>
+            <div className="mt-3 text-xs font-bold tracking-widest uppercase text-[#002FA7] inline-flex items-center gap-1 group-hover:underline">See example <ArrowRight size={12}/></div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  </section>
+);
+
+const DATA_BADGES = [
+  { icon: Lock, title: "Encrypted in transit", body: "Every message and call is secured with TLS encryption from end to end." },
+  { icon: MapPin, title: "Canadian data residency", body: "Your customer data is stored and processed in Canada." },
+  { icon: Database, title: "Never used to train AI", body: "We do not train AI models on your data. Your conversations stay yours." },
+  { icon: ShieldCheck, title: "PIPEDA & GDPR aligned", body: "Built to align with Canadian PIPEDA and EU GDPR privacy standards." },
+];
+
+const DataSecurity = () => (
+  <section id="data" className="border-b-2 border-black bg-neutral-50" data-testid="data-security">
+    <div className="max-w-7xl mx-auto px-6 py-20">
+      <div className="max-w-3xl">
+        <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">Your data</div>
+        <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">You're letting AI talk to your customers. Here's where your data goes.</h2>
+        <p className="mt-4 text-neutral-700 text-lg">
+          Short answer: it stays yours. We keep every business in an isolated workspace, store data in Canada, encrypt it in transit, and never use it to train AI models.
+        </p>
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-10">
+        {DATA_BADGES.map((b, i) => (
+          <div key={i} data-testid={`data-badge-${i}`} className="border-2 border-black bg-white p-6 shadow-brutal">
+            <div className="w-11 h-11 bg-black text-white border-2 border-black grid place-items-center"><b.icon size={18}/></div>
+            <div className="mt-4 font-display font-black text-lg">{b.title}</div>
+            <div className="mt-2 text-sm text-neutral-700">{b.body}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6 text-sm font-mono text-neutral-600">Full details in our <Link to="/privacy" className="underline font-bold">Privacy Policy</Link>.</div>
+    </div>
+  </section>
+);
+
+const Founder = () => (
+  <section className="border-b-2 border-black bg-white" data-testid="founder-section">
+    <div className="max-w-7xl mx-auto px-6 py-20 grid md:grid-cols-[0.9fr_1.1fr] gap-10 items-center">
+      <div>
+        <img src={CEO_IMG} alt="Kamaljeet Singh Sidhu, Founder & CEO of BotNira" className="w-full border-2 border-black shadow-brutal-lg object-cover" loading="lazy" />
+      </div>
+      <div>
+        <div className="text-xs font-bold tracking-[0.2em] uppercase text-[#002FA7]">The human behind the AI</div>
+        <h2 className="font-display text-4xl md:text-5xl font-black tracking-tighter mt-2">Built by someone who watched the phone ring out.</h2>
+        <p className="mt-5 text-lg text-neutral-700 leading-relaxed">
+          "I built BotNira after watching small businesses — including people in my own circle — lose customers every week to calls nobody could answer in time. BotNira is the front desk I wish they'd had: it picks up every time, and hands off to a human the moment it should."
+        </p>
+        <div className="mt-5 font-display font-black text-xl">Kamaljeet Singh Sidhu</div>
+        <div className="text-sm font-bold text-[#002FA7]">Founder &amp; CEO, BotNira</div>
+        <div className="mt-1 text-sm text-neutral-600 inline-flex items-center gap-1"><MapPin size={14}/> Hamilton, Ontario, Canada</div>
+        <div className="mt-7 flex flex-wrap gap-3">
+          <a href="https://wa.me/15485773855" target="_blank" rel="noreferrer" data-testid="founder-book-call" className="inline-flex items-center gap-2 bg-[#002FA7] text-white font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift">Book a 15-min call <ArrowRight size={16}/></a>
+          <Link to="/team" data-testid="founder-read-story" className="inline-flex items-center gap-2 bg-white font-bold px-6 py-3 border-2 border-black shadow-brutal hover-lift">Read our story</Link>
+        </div>
+      </div>
+    </div>
+  </section>
+);
+
+const RiskReversal = () => (
+  <section className="border-b-2 border-black bg-black text-white" data-testid="risk-reversal-band">
+    <div className="max-w-7xl mx-auto px-6 py-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-4 text-center">
+      {["5-day free trial", "No credit card required", "Cancel anytime", "Live in 3 minutes"].map((t) => (
+        <div key={t} className="inline-flex items-center gap-2 font-display font-black text-base md:text-xl">
+          <Check size={18} className="text-yellow-300"/> {t}
+        </div>
+      ))}
+    </div>
+  </section>
+);
+
 export default function Landing() {
   // Inject the BotNira web widget ONLY on the landing page. We clean up on
   // unmount so it doesn't leak into the vendor app.
@@ -773,7 +889,7 @@ export default function Landing() {
   }, []);
   return (
     <div data-testid="landing-page">
-      <Nav /><Hero /><TryLive /><Channels /><TrustedBy /><Features /><UseCases /><MultiLanguage /><How /><Reviews /><Pricing /><FAQ /><Contact /><Footer />
+      <Nav /><Hero /><Reassurance /><TryLive /><IndustryTiles /><Channels /><TrustedBy /><Features /><UseCases /><MultiLanguage /><How /><DataSecurity /><Reviews /><Founder /><RiskReversal /><Pricing /><FAQ /><Contact /><Footer />
     </div>
   );
 }

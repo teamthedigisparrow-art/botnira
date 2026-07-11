@@ -114,13 +114,13 @@ export default function TrustedBy() {
       <div className="max-w-7xl mx-auto px-6 py-16">
         <div className="text-center">
           <div className="inline-flex items-center gap-2 border border-white/20 px-3 py-1 text-[10px] font-bold tracking-[0.25em] uppercase text-white/70">
-            <Building2 size={12} /> Trusted across the world
+            <Building2 size={12} /> Early access · Ontario, Canada
           </div>
           <h2 className="mt-5 font-display text-4xl md:text-5xl font-black tracking-tighter">
-            <span className="text-yellow-300">6,000+</span> businesses trust BotNira to handle their front desk.
+            Built for the <span className="text-yellow-300">local service businesses</span> that live and die by the phone.
           </h2>
           <p className="mt-3 text-sm font-mono text-white/60 max-w-2xl mx-auto">
-            Salons, dental clinics, plumbers, restaurants, real-estate brokerages, schools, mechanics, vets and home-services teams. Across 47 countries.
+            Salons, dental clinics, plumbers, restaurants, real-estate teams, schools, mechanics and home-services crews — the businesses BotNira is built for.
           </p>
         </div>
 
@@ -149,10 +149,10 @@ export default function TrustedBy() {
         {/* Stats strip */}
         <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { kpi: "6,000+", label: "Active businesses" },
-            { kpi: "47", label: "Countries served" },
-            { kpi: "1.2M", label: "Conversations / month" },
-            { kpi: "4.9★", label: "Customer rating" },
+            { kpi: "24/7", label: "Always answering" },
+            { kpi: "3-min", label: "To go live" },
+            { kpi: "95+", label: "Languages" },
+            { kpi: "Ontario", label: "Proudly local" },
           ].map((s) => (
             <div key={s.label} className="border border-white/15 p-5 text-center">
               <div className="font-display font-black text-3xl md:text-4xl tracking-tighter text-yellow-300">{s.kpi}</div>

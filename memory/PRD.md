@@ -16,6 +16,19 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Marketing site — Team page + Homepage trust overhaul (2026-06 / this session)
+- **New `/team` page** (`pages/Team.jsx`): CEO story (Kamaljeet Singh Sidhu — Conestoga B.Tech → ImmiPRO → The DigiSparrow 135-member → BotNira), team story, values, stats strip, CEO + team photos, shared SiteNav/SiteFooter, mobile responsive. Linked in nav + footer.
+- **Homepage (`pages/Landing.jsx`) upgrades** per founder conversion brief:
+  - Hero: click-to-call `+1 (289) 778-4594`, embedded **real call recording** audio player (m4a hosted on customer-assets), loud risk-reversal chips (5-day trial · no card · cancel anytime · live in 3 min), "Hear a real call" CTA.
+  - New **Reassurance band** ("It never guesses" — transfers/takes a message) above the fold.
+  - New **IndustryTiles** (Salons/Clinics/Repair/Tutoring → use-case pages).
+  - New **DataSecurity** section: TLS encryption, Canadian data residency, no AI training on data, PIPEDA & GDPR aligned (all confirmed true by owner).
+  - New **Founder** section: CEO photo + quote + Hamilton ON + "Book a 15-min call" (WhatsApp) + "Read our story".
+  - New **RiskReversal** black band before Pricing.
+  - **Honesty fix**: removed legally-flagged FAKE reviews (`Reviews.jsx` now illustrative "Example scenario" cards, no fabricated named/photo Google reviews) and removed inflated `TrustedBy` stats (6,000+/47 countries/1.2M/4.9★ → 24-7/3-min/95+/Ontario; "trusted by" → "built for").
+- **Deferred**: Point 8 (SSR / no-JS prerender) — skipped per owner, to be done later.
+
+
 ### Referral Program (v1 — 2026-05-24 iter 10-11)
 - **Vendor side complete**. Every vendor gets a unique, immutable referral link `https://botnira.com/r/<slug-6hex>`. 15% recurring commission on every successful payment from referred vendors. Accrued per Stripe `invoice.paid` event and finalised end-of-month for USD bank payout.
 - **New page** `/app/referrals` with 5 tabs: **Overview**, **My Referrals**, **Commissions**, **Payouts**, **Bank Account**. New nav item after Settings. **PaywallGuard bypasses /app/referrals** — vendors who joined just to earn referrals can keep using the page even when their trial expires (sidebar lifted to `z-[60]` so it stays clickable over the paywall overlay).
