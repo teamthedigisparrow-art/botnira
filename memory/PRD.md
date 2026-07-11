@@ -16,6 +16,18 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Outbound AI Sales Calling Engine — Phase 2 (2026-06 / this session)
+- **AI post-call analysis** (`_generate_call_summary`, Claude via Emergent LLM key): after an answered call, reads the transcript and stores in `call_ai_summaries` — summary, intent, sentiment, key questions, notes, next action, confidence, extracted entities (email/business/decision-maker/callback time/appointment date), and a **refined lead outcome** (interested/hot/warm/cold/appointment_booked/callback/transferred/etc.) that overrides the Twilio "answered" disposition on `campaign_calls` + `campaign_prospects`.
+- **Call recording**: `_place_call` now records; `/sales/outbound/recording/{call_id}` stores the media URL; `/sales/outbound/calls/{id}/recording` proxies the audio (parent-account Twilio basic auth) for authenticated playback.
+- **Filtered call list**: `GET /campaigns/{cid}/calls` supports outcome/status/search/date-range filters, sort, pagination.
+- **Export**: `GET /campaigns/{cid}/calls/export?fmt=csv|xlsx` (xlsx via openpyxl — added to requirements).
+- **Per-campaign analytics**: `GET /campaigns/{cid}/analytics` (outcome distribution, per-day, answer/interest/conversion/completion rates, retry count, minutes).
+- **Individual call detail**: `GET /calls/{call_id}` (call meta, campaign, transcript, AI summary, prospect/retry, recording flag).
+- **Frontend** (`OutboundCalls.jsx`): rich **Analytics** tab (recharts — rate bars, outcome pie, calls/day) with per-campaign selector; **Call History** with search/filters/sort/pagination + CSV & Excel export; row click opens **Call Detail modal** (customer info, recording player, AI summary w/ sentiment+entities, transcript, metadata, retry history).
+- **Tested (curl)**: analytics/filtered-calls/CSV/XLSX all 200 with correct shapes + content-types; UI tabs render. NOTE: AI summaries + recordings populate only on real answered calls (needs live dialing with vendor's number + funded OPENAI_REALTIME_API_KEY).
+- **Remaining — Phase 3**: retry-restart actions (failed/no-answer/busy/selected), duplicate/archive/edit campaign, add-more-lists, in-dashboard notifications (started/finished/out-of-minutes/hot-lead/appointment), Do-Not-Call management UI, audit/consent logs.
+
+
 ### Outbound AI Sales Calling Engine — Phase 1 (2026-06 / this session)
 - **New module `backend/outbound_call_routes.py`** mounted at `/api/sales/outbound` (Growth/Pro gated via `_require_sales_vendor`). Collections: `campaign_out`, `campaign_prospects`, `campaign_calls` (indexed).
 - **Campaign lifecycle**: create/update draft, launch (snapshots prospects from selected lists, dedupes by E.164, **blocks non-+1 international** numbers with clear error, skips invalid/DNC), pause, resume, cancel, delete, get detail, list, per-campaign call history.

@@ -27,17 +27,23 @@ How it works
   the vendor is prompted to recharge — we NEVER auto-charge.
 """
 import asyncio
+import csv
+import io
+import json
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 import server as _s
 from sales_routes import _require_sales_vendor, _combine_e164, _norm_phone_digits
 
+from twilio.rest import Client as TwilioClient
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 from twilio.base.exceptions import TwilioRestException
 
@@ -454,18 +460,202 @@ async def delete_campaign(cid: str, user: dict = Depends(_require_sales_vendor))
     return {"ok": True}
 
 
+def _calls_query(cid: str, vid: str, outcome, status, q, date_from, date_to) -> dict:
+    flt: Dict[str, Any] = {"campaign_id": cid, "vendor_id": vid}
+    if outcome:
+        flt["outcome"] = outcome
+    if status:
+        flt["status"] = status
+    if q:
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        flt["$or"] = [{"name": rx}, {"company": rx}, {"phone": rx}]
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to + "T23:59:59"
+        flt["started_at"] = rng
+    return flt
+
+
 @router.get("/campaigns/{cid}/calls")
 async def campaign_calls(cid: str, user: dict = Depends(_require_sales_vendor),
-                         limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+                         outcome: Optional[str] = None, status: Optional[str] = None,
+                         q: Optional[str] = None, date_from: Optional[str] = None,
+                         date_to: Optional[str] = None, sort: str = "started_at",
+                         order: int = -1, limit: int = Query(50, ge=1, le=200),
+                         offset: int = Query(0, ge=0)):
     vid = user["vendor_id"]
     c = await _s.db.campaign_out.find_one({"id": cid, "vendor_id": vid}, {"_id": 0, "id": 1})
     if not c:
         raise HTTPException(404, "Campaign not found")
-    flt = {"campaign_id": cid, "vendor_id": vid}
+    flt = _calls_query(cid, vid, outcome, status, q, date_from, date_to)
+    sort_field = sort if sort in ("started_at", "duration_sec", "attempt_no", "outcome") else "started_at"
     total = await _s.db.campaign_calls.count_documents(flt)
-    cur = _s.db.campaign_calls.find(flt, {"_id": 0}).sort("started_at", -1).skip(offset).limit(limit)
+    cur = _s.db.campaign_calls.find(flt, {"_id": 0}).sort(sort_field, 1 if order > 0 else -1).skip(offset).limit(limit)
     items = await cur.to_list(limit)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/campaigns/{cid}/calls/export")
+async def export_calls(cid: str, fmt: str = "csv", user: dict = Depends(_require_sales_vendor),
+                       outcome: Optional[str] = None, status: Optional[str] = None,
+                       q: Optional[str] = None, date_from: Optional[str] = None,
+                       date_to: Optional[str] = None):
+    vid = user["vendor_id"]
+    camp = await _s.db.campaign_out.find_one({"id": cid, "vendor_id": vid}, {"_id": 0, "name": 1})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    flt = _calls_query(cid, vid, outcome, status, q, date_from, date_to)
+    rows = await _s.db.campaign_calls.find(flt, {"_id": 0}).sort("started_at", -1).to_list(10000)
+    headers = ["Name", "Company", "Phone", "Date", "Duration (s)", "Attempt", "Status", "Outcome"]
+
+    def _row(r):
+        return [r.get("name", ""), r.get("company", ""), r.get("phone", ""),
+                (r.get("started_at") or "")[:19].replace("T", " "), r.get("duration_sec", 0),
+                r.get("attempt_no", ""), r.get("status", ""), (r.get("outcome") or "")]
+
+    safe = re.sub(r"[^a-zA-Z0-9]+", "_", camp["name"])[:40] or "campaign"
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Calls"
+        ws.append(headers)
+        for r in rows:
+            ws.append(_row(r))
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={safe}_calls.xlsx"})
+    # CSV
+    sio = io.StringIO()
+    w = csv.writer(sio)
+    w.writerow(headers)
+    for r in rows:
+        w.writerow(_row(r))
+    return Response(content=sio.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={safe}_calls.csv"})
+
+
+@router.get("/campaigns/{cid}/analytics")
+async def campaign_analytics(cid: str, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    camp = await _s.db.campaign_out.find_one({"id": cid, "vendor_id": vid}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    total_prospects = await _s.db.campaign_prospects.count_documents({"campaign_id": cid})
+    remaining = await _s.db.campaign_prospects.count_documents(
+        {"campaign_id": cid, "status": {"$in": ["pending", "claiming", "calling"]}})
+    dist = await _s.db.campaign_calls.aggregate([
+        {"$match": {"campaign_id": cid}},
+        {"$group": {"_id": "$outcome", "n": {"$sum": 1}}},
+    ]).to_list(50)
+    outcome_dist = {(d["_id"] or "pending"): d["n"] for d in dist}
+    agg = await _s.db.campaign_calls.aggregate([
+        {"$match": {"campaign_id": cid}},
+        {"$group": {"_id": None, "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                    "minutes": {"$sum": {"$ifNull": ["$minutes", 0]}},
+                    "duration": {"$sum": {"$ifNull": ["$duration_sec", 0]}}}},
+    ]).to_list(1)
+    a = agg[0] if agg else {}
+    completed = int(a.get("completed", 0))
+    answered = outcome_dist.get("answered", 0) + outcome_dist.get("interested", 0) + outcome_dist.get("appointment_booked", 0) + outcome_dist.get("not_interested", 0) + outcome_dist.get("callback_requested", 0)
+    interested = outcome_dist.get("interested", 0) + outcome_dist.get("hot_lead", 0) + outcome_dist.get("warm_lead", 0)
+    appointments = outcome_dist.get("appointment_booked", 0)
+    per_day = await _s.db.campaign_calls.aggregate([
+        {"$match": {"campaign_id": cid}},
+        {"$group": {"_id": {"$substr": ["$started_at", 0, 10]}, "calls": {"$sum": 1},
+                    "answered": {"$sum": {"$cond": [{"$in": ["$outcome", ["answered", "interested", "appointment_booked", "not_interested", "callback_requested"]]}, 1, 0]}}}},
+        {"$sort": {"_id": 1}},
+    ]).to_list(60)
+    retry_count = await _s.db.campaign_calls.count_documents({"campaign_id": cid, "attempt_no": {"$gt": 1}})
+    mins, _ex = await _vendor_minutes(vid)
+    rate = lambda n, d: round((n / d) * 100, 1) if d else 0.0
+    return {
+        "total_prospects": total_prospects,
+        "completed_calls": completed,
+        "remaining_calls": remaining,
+        "outcome_distribution": outcome_dist,
+        "answered": answered, "appointments": appointments, "interested": interested,
+        "transferred": outcome_dist.get("transferred", 0),
+        "no_answer": outcome_dist.get("no_answer", 0), "busy": outcome_dist.get("busy", 0),
+        "voicemail": outcome_dist.get("voicemail", 0),
+        "avg_duration_sec": round(float(a.get("duration", 0)) / completed, 1) if completed else 0.0,
+        "voice_minutes_used": round(float(a.get("minutes", 0)), 1),
+        "voice_minutes_remaining": round(mins, 1),
+        "answer_rate": rate(answered, completed),
+        "interest_rate": rate(interested, completed),
+        "conversion_rate": rate(appointments, completed),
+        "retry_count": retry_count,
+        "completion_percentage": rate(total_prospects - remaining, total_prospects),
+        "per_day": [{"day": d["_id"], "calls": d["calls"], "answered": d["answered"]} for d in per_day if d["_id"]],
+    }
+
+
+@router.get("/calls/{call_id}")
+async def call_detail(call_id: str, user: dict = Depends(_require_sales_vendor)):
+    vid = user["vendor_id"]
+    cc = await _s.db.campaign_calls.find_one({"id": call_id, "vendor_id": vid}, {"_id": 0})
+    if not cc:
+        raise HTTPException(404, "Call not found")
+    rec = await _s.db.call_records.find_one({"id": call_id}, {"_id": 0}) or {}
+    summary = await _s.db.call_ai_summaries.find_one({"call_id": call_id}, {"_id": 0})
+    transcript = []
+    if cc.get("conversation_id"):
+        msgs = await _s.db.messages.find(
+            {"conversation_id": cc["conversation_id"]}, {"_id": 0}).sort("created_at", 1).to_list(300)
+        transcript = [{"role": m["role"], "content": m.get("content", ""), "at": m.get("created_at")} for m in msgs]
+    prospect = None
+    if cc.get("campaign_prospect_id"):
+        prospect = await _s.db.campaign_prospects.find_one(
+            {"id": cc["campaign_prospect_id"]}, {"_id": 0, "attempts": 1, "outcome": 1, "next_attempt_at": 1, "status": 1})
+    campaign = await _s.db.campaign_out.find_one(
+        {"id": cc["campaign_id"]}, {"_id": 0, "name": 1, "industry": 1, "goal": 1, "language": 1, "voice": 1})
+    return {
+        "call": cc,
+        "meta": {"call_sid": rec.get("call_sid"), "direction": rec.get("direction"),
+                 "from": rec.get("from_number"), "to": rec.get("to_number"),
+                 "started_at": rec.get("started_at"), "ended_at": rec.get("ended_at"),
+                 "minutes": rec.get("minutes"), "language": (campaign or {}).get("language"),
+                 "voice": (campaign or {}).get("voice"), "model": _s.OPENAI_REALTIME_MODEL},
+        "campaign": campaign,
+        "prospect": prospect,
+        "summary": summary,
+        "transcript": transcript,
+        "has_recording": bool(cc.get("recording_url")),
+    }
+
+
+@router.get("/calls/{call_id}/recording")
+async def stream_recording(call_id: str, user: dict = Depends(_require_sales_vendor)):
+    cc = await _s.db.campaign_calls.find_one(
+        {"id": call_id, "vendor_id": user["vendor_id"]}, {"_id": 0, "recording_url": 1})
+    if not cc or not cc.get("recording_url"):
+        raise HTTPException(404, "No recording available")
+    # Twilio media is protected by HTTP basic auth; the PARENT account can read
+    # sub-account recordings, so we authenticate with the master credentials.
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(cc["recording_url"], auth=(_s.TWILIO_ACCOUNT_SID, _s.TWILIO_AUTH_TOKEN))
+    if r.status_code != 200:
+        raise HTTPException(502, "Could not fetch recording from Twilio")
+    return Response(content=r.content, media_type="audio/mpeg")
+
+
+@router.post("/recording/{call_id}")
+async def outbound_recording(call_id: str, request: _s._StripeRequest):
+    """Twilio recording-status callback — store the recording media URL."""
+    form = await request.form()
+    rec_sid = form.get("RecordingSid")
+    rec_url = form.get("RecordingUrl")
+    if rec_url:
+        media = rec_url if rec_url.endswith(".mp3") else rec_url + ".mp3"
+        await _s.db.campaign_calls.update_one({"id": call_id}, {"$set": {"recording_sid": rec_sid, "recording_url": media}})
+        await _s.db.call_records.update_one({"id": call_id}, {"$set": {"recording_url": media}})
+    return {"ok": True}
 
 
 # --------------------------------------------------------- public webhooks ---
@@ -568,6 +758,10 @@ async def outbound_status(call_id: str, request: _s._StripeRequest):
             await _s.db.campaign_out.update_many(
                 {"vendor_id": call["vendor_id"], "status": "running"},
                 {"$set": {"status": "paused", "paused_reason": "no_minutes", "updated_at": _s.now_iso()}})
+
+    # Kick off AI post-call analysis for answered calls (transcript-based).
+    if outcome == "answered":
+        asyncio.create_task(_generate_call_summary(call_id))
     return {"ok": True}
 
 
@@ -608,6 +802,10 @@ async def _place_call(camp: dict, cp: dict, conn: dict) -> bool:
             status_callback_method="POST",
             status_callback_event=["initiated", "ringing", "answered", "completed"],
             machine_detection="DetectMessageEnd",
+            record=True,
+            recording_status_callback=f"{base}/api/sales/outbound/recording/{call_id}",
+            recording_status_callback_method="POST",
+            recording_status_callback_event=["completed"],
             timeout=CALL_TIMEOUT_SEC,
         )
     except TwilioRestException as e:
@@ -724,3 +922,74 @@ async def start_outbound_dialer():
     except Exception as e:
         _s.logger.warning("[outbound] index warning: %s", e)
     asyncio.create_task(_dialer_loop())
+
+
+# ------------------------------------------------------------ AI summary ---
+LEAD_OUTCOMES = [
+    "interested", "hot_lead", "warm_lead", "cold_lead", "callback_requested",
+    "appointment_booked", "transferred", "existing_customer", "wrong_number",
+    "do_not_call", "not_interested", "voicemail", "no_answer", "busy", "failed", "unknown",
+]
+
+
+async def _generate_call_summary(call_id: str):
+    """Read the call transcript and produce a structured AI summary + refined
+    lead outcome. Runs as a fire-and-forget task after an answered call."""
+    await asyncio.sleep(4)  # allow final transcripts to flush
+    if not _s.EMERGENT_LLM_KEY:
+        return
+    call = await _s.db.call_records.find_one({"id": call_id}, {"_id": 0})
+    if not call or not call.get("conversation_id"):
+        return
+    msgs = await _s.db.messages.find(
+        {"conversation_id": call["conversation_id"]}, {"_id": 0}).sort("created_at", 1).to_list(300)
+    body = [m for m in msgs if (m.get("content") or "").strip()]
+    if not body:
+        return
+    transcript = "\n".join(
+        f"{'CUSTOMER' if m['role'] == 'user' else 'AGENT'}: {m['content']}" for m in body)
+    system = (
+        "You analyze an outbound sales phone call transcript between an AI AGENT and a CUSTOMER. "
+        "Return STRICT JSON only (no markdown fences, no prose). Schema: "
+        '{"summary": "<=280 char recap", "intent": "short phrase", '
+        '"sentiment": "positive|neutral|negative", "key_questions": ["..."], '
+        '"notes": "important notes", "next_action": "recommended next step", '
+        '"confidence": 0-100 integer, '
+        f'"outcome": one of {LEAD_OUTCOMES}, '
+        '"entities": {"email": "", "business_name": "", "decision_maker": "", '
+        '"preferred_callback_time": "", "appointment_date": ""}}. '
+        "Choose the single best outcome. Use empty strings for unknown entities."
+    )
+    try:
+        chat = _s.LlmChat(
+            api_key=_s.EMERGENT_LLM_KEY, session_id=f"callsum-{call_id}", system_message=system,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        raw = (await asyncio.wait_for(chat.send_message(_s.UserMessage(text=transcript)), timeout=30) or "").strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
+        data = json.loads(raw)
+    except Exception as e:
+        _s.logger.warning("[outbound] summary failed for %s: %s", call_id, e)
+        return
+    outcome = data.get("outcome") if data.get("outcome") in LEAD_OUTCOMES else "unknown"
+    doc = {
+        "call_id": call_id, "vendor_id": call["vendor_id"],
+        "campaign_id": call.get("campaign_id"),
+        "summary": data.get("summary", ""), "intent": data.get("intent", ""),
+        "sentiment": data.get("sentiment", "neutral"),
+        "key_questions": data.get("key_questions", []) or [],
+        "notes": data.get("notes", ""), "next_action": data.get("next_action", ""),
+        "confidence": int(data.get("confidence", 0) or 0),
+        "outcome": outcome, "entities": data.get("entities", {}) or {},
+        "created_at": _s.now_iso(),
+    }
+    await _s.db.call_ai_summaries.update_one({"call_id": call_id}, {"$set": doc}, upsert=True)
+    # Refine outcome only for calls that were actually answered by a human.
+    cc = await _s.db.campaign_calls.find_one(
+        {"id": call_id}, {"_id": 0, "outcome": 1, "campaign_prospect_id": 1})
+    if cc and cc.get("outcome") == "answered":
+        await _s.db.campaign_calls.update_one(
+            {"id": call_id}, {"$set": {"outcome": outcome, "ai_summary": doc}})
+        if cc.get("campaign_prospect_id"):
+            await _s.db.campaign_prospects.update_one(
+                {"id": cc["campaign_prospect_id"]}, {"$set": {"outcome": outcome}})
