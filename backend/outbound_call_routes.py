@@ -650,6 +650,32 @@ async def stream_recording(call_id: str, user: dict = Depends(_require_sales_ven
     return Response(content=r.content, media_type="audio/mpeg")
 
 
+@router.post("/amd/{call_id}")
+async def outbound_amd(call_id: str, request: _s._StripeRequest):
+    """Async answering-machine-detection callback. If Twilio detected a machine
+    (voicemail) we hang up immediately so we don't waste voice minutes."""
+    form = await request.form()
+    answered_by = (form.get("AnsweredBy") or "").lower()
+    if not (answered_by.startswith("machine") or answered_by == "fax"):
+        return {"ok": True}  # human — let the AI conversation continue
+    call = await _s.db.call_records.find_one({"id": call_id}, {"_id": 0})
+    if not call:
+        return {"ok": True}
+    # Flag as voicemail up front so the completed status-callback keeps it.
+    await _s.db.campaign_calls.update_one({"id": call_id}, {"$set": {"outcome": "voicemail"}})
+    # Hang up the live call to stop the minute meter.
+    sid = call.get("call_sid")
+    conn = await _s.db.voice_connections.find_one({"vendor_id": call["vendor_id"]}, {"_id": 0})
+    if sid and conn:
+        try:
+            cli = _s._twilio_subaccount_client_for_conn(conn)
+            if cli:
+                cli.calls(sid).update(status="completed")
+        except Exception as e:
+            _s.logger.warning("[outbound] amd hangup failed for %s: %s", call_id, e)
+    return {"ok": True}
+
+
 @router.post("/recording/{call_id}")
 async def outbound_recording(call_id: str, request: _s._StripeRequest):
     """Twilio recording-status callback — store the recording media URL."""
@@ -800,13 +826,21 @@ async def _place_call(camp: dict, cp: dict, conn: dict) -> bool:
         "conversation_id": None, "started_at": _s.now_iso(),
     })
     try:
-        cli.calls.create(
+        tw_call = cli.calls.create(
             to=to_e164, from_=conn["phone_number"],
             url=f"{base}/api/sales/outbound/twiml/{call_id}", method="POST",
             status_callback=f"{base}/api/sales/outbound/status/{call_id}",
             status_callback_method="POST",
             status_callback_event=["initiated", "ringing", "answered", "completed"],
-            machine_detection="DetectMessageEnd",
+            # ASYNC answering-machine detection: the call/TwiML executes with NO
+            # delay (bot greets a human immediately), and Twilio reports the
+            # human/machine verdict to /amd/{call_id} out-of-band. On a machine we
+            # hang up right away so we don't burn voice minutes on a voicemail.
+            machine_detection="Enable",
+            machine_detection_timeout=15,
+            async_amd="true",
+            async_amd_status_callback=f"{base}/api/sales/outbound/amd/{call_id}",
+            async_amd_status_callback_method="POST",
             record=True,
             recording_status_callback=f"{base}/api/sales/outbound/recording/{call_id}",
             recording_status_callback_method="POST",
@@ -823,7 +857,11 @@ async def _place_call(camp: dict, cp: dict, conn: dict) -> bool:
     except Exception as e:
         _s.logger.exception("[outbound] place_call error: %s", e)
         return False
-    # Mark prospect as calling + increment attempts + daily counter
+    # Mark prospect as calling + increment attempts + store Twilio call SID
+    sid = getattr(tw_call, "sid", None)
+    if sid:
+        await _s.db.call_records.update_one({"id": call_id}, {"$set": {"call_sid": sid}})
+        await _s.db.campaign_calls.update_one({"id": call_id}, {"$set": {"call_sid": sid}})
     await _s.db.campaign_prospects.update_one({"id": cp["id"]}, {
         "$set": {"status": "calling", "last_call_id": call_id, "updated_at": _s.now_iso()},
         "$inc": {"attempts": 1},

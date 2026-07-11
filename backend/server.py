@@ -5453,11 +5453,12 @@ async def voice_stream(ws: WebSocket, call_id: str):
                 },
             }
             await oai.send(json.dumps(session_cfg))
-            # Proactive greeting (GA uses `output_modalities`, not `modalities`).
-            await oai.send(json.dumps({
-                "type": "response.create",
-                "response": {"output_modalities": ["audio"], "instructions": f"Greet the caller warmly in one short sentence: {greeting}"},
-            }))
+            # Proactive greeting: DEFERRED until Twilio sends its "start" event.
+            # If we fire response.create now, the greeting's audio deltas arrive
+            # before stream_sid exists and get dropped — the caller then hears
+            # silence until they speak (the ~4s "dead air" bug). We instead send
+            # the greeting the moment the media stream is live (see 'start').
+            greeting_prompt = f"Greet the caller warmly in one short sentence: {greeting}"
 
             # Barge-in bookkeeping
             state = {
@@ -5466,6 +5467,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
                 "response_start_timestamp": None,
                 "latest_media_timestamp": 0,   # ms from Twilio (from media events)
                 "bot_speaking": False,
+                "greeted": False,
             }
 
             async def send_mark_to_twilio():
@@ -5522,6 +5524,17 @@ async def voice_stream(ws: WebSocket, call_id: str):
                         if etype == "start":
                             stream_sid = ev["start"]["streamSid"]
                             logger.info("voice_stream: twilio 'start' streamSid=%s", stream_sid)
+                            # Now that the media stream is live, fire the greeting
+                            # so the bot speaks first (fixes the initial dead-air).
+                            if not state["greeted"]:
+                                state["greeted"] = True
+                                try:
+                                    await oai.send(json.dumps({
+                                        "type": "response.create",
+                                        "response": {"output_modalities": ["audio"], "instructions": greeting_prompt},
+                                    }))
+                                except Exception as e:
+                                    logger.warning("greeting send failed: %s", e)
                         elif etype == "media":
                             ts = int(ev["media"].get("timestamp", 0))
                             if ts:
