@@ -747,6 +747,13 @@ async def outbound_status(call_id: str, request: _s._StripeRequest):
     else:
         outcome = "failed"
 
+    # Async AMD may have already flagged this as a voicemail (and hung up). The
+    # real Twilio 'completed' callback usually arrives WITHOUT AnsweredBy, so we
+    # must NOT clobber a prior voicemail verdict with 'answered'.
+    _existing = await _s.db.campaign_calls.find_one({"id": call_id}, {"_id": 0, "outcome": 1})
+    if _existing and _existing.get("outcome") == "voicemail":
+        outcome = "voicemail"
+
     updates = {"status": "completed", "ended_at": _s.now_iso(), "minutes": mins}
     await _s.db.call_records.update_one({"id": call_id}, {"$set": updates})
     await _s.db.campaign_calls.update_one({"id": call_id}, {"$set": {

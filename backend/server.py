@@ -5418,7 +5418,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
             logger.info("voice_stream: OpenAI connected for call %s", call_id)
             # Configure OpenAI session. CRITICAL settings:
             # - VAD threshold 0.6 (less sensitive → stops false triggers from background noise)
-            # - silence_duration_ms 600 (wait 0.6s of silence before ending user's turn)
+            # - silence_duration_ms 500 (wait 0.5s of silence before ending user's turn)
             # - prefix_padding_ms 300 (keep 0.3s of audio before detected speech)
             # - temperature 0.7 (natural but on-topic)
             # OpenAI Realtime GA (`gpt-realtime`) session schema. The LEGACY beta
@@ -5440,7 +5440,7 @@ async def voice_stream(ws: WebSocket, call_id: str):
                                 "type": "server_vad",
                                 "threshold": 0.6,
                                 "prefix_padding_ms": 300,
-                                "silence_duration_ms": 600,
+                                "silence_duration_ms": 500,
                                 "create_response": True,
                             },
                             "transcription": {"model": "whisper-1"},

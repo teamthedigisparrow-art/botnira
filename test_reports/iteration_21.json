@@ -1,0 +1,15 @@
+{
+  "summary": "Re-verified the CRITICAL voicemail-preservation fix in outbound_status. Ran full pytest suite /app/backend/tests/test_outbound_amd_status_iter20.py — all 15 tests PASS (5.63s). Specifically confirmed: (1) test_status_completed_preserves_voicemail_no_ai_summary — AMD-flagged voicemail is preserved through subsequent /status completion callback (outcome stays 'voicemail', no call_ai_summaries doc created); (2) test_status_completed_normal_answered — untouched, fresh answered path still yields outcome='answered' and minutes=1.0. AMD detection (machine_start, machine_end_beep, fax) and human/unknown branches all pass. TwiML and campaign regression cases also pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_outbound_amd_status_iter20.py", "/app/test_reports/pytest/iter21_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Suite auto-inserts and cleans synthetic TEST_ campaign_calls docs; no residual data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 21 verified the voicemail preservation critical fix. All 15 tests in test_outbound_amd_status_iter20.py pass. Fix in outbound_call_routes.py (~line 753) correctly reads existing campaign_calls.outcome and preserves 'voicemail' before writing status updates; _generate_call_summary only triggers when outcome=='answered'.",
+  "rca of the issue": "Previous defect: outbound /status webhook overwrote AMD-set outcome='voicemail' with 'answered' when Twilio completion callback arrived without AnsweredBy. Fix: pre-read existing campaign_calls doc and short-circuit outcome update if already 'voicemail'; also gate AI summary generation to outcome=='answered'. Verified via pytest cases covering both preservation and normal answered paths."
+}

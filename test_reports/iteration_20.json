@@ -1,0 +1,78 @@
+{
+  "summary": "Iter 20: Ran the ready-made pytest suite for outbound voicemail/AMD/status webhook and verified Privacy page + CalendarsTab in-app disclosure. 14/15 backend tests pass. One CRITICAL bug found: the /status webhook still OVERWRITES a prior voicemail flag with 'answered' when Twilio posts CallStatus=completed without AnsweredBy (the exact bug the fix was supposed to prevent). Frontend Privacy page and CalendarsTab disclosure are perfect.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/sales/outbound/status/{call_id}",
+        "issue": "Voicemail preservation NOT working. After AMD sets outcome='voicemail', posting CallStatus=completed with no AnsweredBy flips outcome to 'answered'. See outbound_call_routes.py line 742: `outcome = \"voicemail\" if answered_by.startswith(\"machine\") else \"answered\"` — this unconditionally computes outcome from AnsweredBy of the CURRENT request and doesn't read the existing campaign_calls doc to preserve a prior voicemail flag. Test test_status_completed_preserves_voicemail_no_ai_summary asserts outcome stays 'voicemail' but got 'answered'. This is the primary bug the iter20 change was supposed to fix. It also risks triggering _generate_call_summary (AI cost) for actual voicemails.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "privacy_page_verification": {
+    "route": "/privacy renders (200)",
+    "section_6_google_user_data": "PASS — 'Google user data (Google Calendar integration)' heading present",
+    "scopes_calendar_and_userinfo_openid": "PASS — text contains 'calendar' and 'userinfo.email'/'openid'",
+    "limited_use_phrase": "PASS",
+    "google_api_policy_link": "PASS — https://developers.google.com/terms/api-services-user-data-policy present",
+    "myaccount_permissions_link": "PASS — https://myaccount.google.com/permissions present",
+    "section_numbering_1_to_13_unique": "PASS — [1,2,3,4,5,6,7,8,9,10,11,12,13]",
+    "footer_privacy_testid": "PASS — data-testid='footer-privacy' present on the marketing/landing footer (not on the /privacy page itself which uses a slim legal header, which matches the spec)"
+  },
+  "in_app_disclosure_verification": {
+    "route": "/app/appointments Calendars tab loads cleanly",
+    "gcal-connect-btn": "visible (account is Not connected)",
+    "gcal-privacy-link": "visible, href='/privacy'",
+    "Limited Use note": "PASS — 'Limited Use requirements' text present",
+    "Google API Services User Data Policy link": "PASS — visible link next to connect button"
+  },
+  "pytest_results": {
+    "total": 15,
+    "passed": 14,
+    "failed": 1,
+    "failed_tests": [
+      "TestStatusCallback::test_status_completed_preserves_voicemail_no_ai_summary"
+    ],
+    "passed_tests": [
+      "TestAMDVoicemail::test_amd_machine_start_sets_voicemail",
+      "TestAMDVoicemail::test_amd_machine_end_beep_sets_voicemail",
+      "TestAMDVoicemail::test_amd_fax_sets_voicemail",
+      "TestAMDVoicemail::test_amd_human_does_not_flag_voicemail",
+      "TestAMDVoicemail::test_amd_unknown_call_still_returns_ok",
+      "TestStatusCallback::test_status_completed_normal_answered",
+      "TestStatusCallback::test_status_progress_states_just_update_status",
+      "TestStatusCallback::test_status_no_answer_maps_to_no_answer",
+      "TestStatusCallback::test_status_busy_maps_to_busy",
+      "TestTwiML::test_twiml_known_call_returns_stream",
+      "TestTwiML::test_twiml_unknown_call_returns_hangup",
+      "TestCampaignRegression::test_dashboard_200",
+      "TestCampaignRegression::test_list_campaigns_200",
+      "TestCampaignRegression::test_create_and_delete_draft_campaign"
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_outbound_amd_status_iter20.py",
+    "/app/test_reports/pytest/iter20.xml"
+  ],
+  "action_items": [
+    "FIX outbound_call_routes.py::outbound_status voicemail preservation. Before computing outcome on 'completed', read the existing campaign_calls doc; if its outcome is already 'voicemail', preserve it (do NOT overwrite to 'answered') and skip AI-summary enqueue. Example fix around line 741-742: `existing = await _s.db.campaign_calls.find_one({'id': call_id}, {'outcome': 1}); prior = (existing or {}).get('outcome'); if prior == 'voicemail': outcome = 'voicemail' else: outcome = 'voicemail' if answered_by.startswith('machine') else 'answered'`. Also gate the `if outcome == 'answered'` block so it does not run when prior was voicemail."
+  ],
+  "critical_code_review_comments": [
+    "outbound_call_routes.py line 742: outcome is computed purely from the current webhook's AnsweredBy field, ignoring the DB. This defeats the whole point of the async AMD hangup fix — because the real Twilio 'completed' callback usually arrives WITHOUT AnsweredBy after AMD hung up, the voicemail flag gets clobbered every time.",
+    "outbound_call_routes.py line 794: `if outcome == 'answered': asyncio.create_task(_generate_call_summary(call_id))` — because of the bug above, this will fire for real voicemails too, wasting LLM tokens. Fix by preserving voicemail as noted."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "93% (14/15)", "frontend": "100%"},
+  "test_credentials": "kamal@thedigisparrow.com / Kamala98@hmu (verified working via /api/auth/login)",
+  "seed_data_creation": "Synthetic TEST_ prefixed call_records + campaign_calls docs inserted per-test in fixture and cleaned up on teardown. No production data touched. No /launch call made (no real dials placed).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Only 1 backend bug remains — voicemail preservation in outbound_status. Re-run: pytest /app/backend/tests/test_outbound_amd_status_iter20.py::TestStatusCallback::test_status_completed_preserves_voicemail_no_ai_summary -v after fix. Privacy page and CalendarsTab disclosure are fully verified — no need to retest. Do NOT call /api/sales/outbound/campaigns/{id}/launch.",
+  "rca of the issue": "Root cause: outbound_status() in /app/backend/outbound_call_routes.py (lines 741-755) computes `outcome` solely from the incoming form's AnsweredBy. When Twilio invokes AMD first, the AMD webhook correctly stamps outcome='voicemail' on campaign_calls. Then Twilio's regular status callback fires with CallStatus=completed but usually WITHOUT AnsweredBy (the field only appears on the AMD webhook). Because the code has no read-modify-write against the existing outcome, it re-computes to 'answered' and $set-overwrites the voicemail. Reproduction: (1) insert campaign_calls doc, (2) POST /amd/{id} AnsweredBy=machine_start → outcome=voicemail (correct), (3) POST /status/{id} CallStatus=completed CallDuration=8 → outcome flips to answered (BUG). Mitigation: before assigning outcome in the 'completed' branch, look up the existing campaign_calls doc; if its outcome is already 'voicemail', keep it and also skip the _generate_call_summary AI task."
+}

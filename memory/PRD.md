@@ -16,6 +16,13 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Voice fixes + Google-verification Privacy Policy (2026-06 / this session)
+- **Voicemail wastes minutes → fixed**: outbound calls now use async AMD (`machine_detection='Enable'` + `async_amd` → `/api/sales/outbound/amd/{id}`). On a machine/fax we set `outcome='voicemail'` and **hang up immediately** via `cli.calls(sid).update(status='completed')` (call_sid now stored). The `/status` webhook **preserves** a prior 'voicemail' verdict (reads existing `campaign_calls.outcome`) instead of flipping it to 'answered', and AI summary only fires for 'answered'. Verified by testing_agent: **15/15 pass** (iteration_21.json).
+- **~4s answer latency → fixed**: greeting `response.create` is now sent inside the Twilio `start` handler (was fired before `stream_sid` existed, so greeting audio was dropped); `server_vad silence_duration_ms` 600→500. (Real audio can't be auto-tested; verified by code inspection.)
+- **Google OAuth verification stuck on Privacy Policy → fixed**: `Privacy.jsx` gained a dedicated **Section 6 'Google user data (Google Calendar integration)'** — lists scopes (`calendar`, `userinfo.email`, `openid`), and discloses how Google data is accessed/used/stored/shared, a **Limited Use** statement linking the Google API Services User Data Policy, and revocation/deletion (myaccount.google.com/permissions). Sections renumbered 6→13; footer compliance note updated. `CalendarsTab.jsx` now shows a Privacy Policy link + Limited Use note beside the Connect button (in-app prominence). Verified rendering + content by testing_agent (iteration_20.json).
+- NOTE: two backend edits (silence_duration_ms, the voicemail-preserve block) silently reverted once mid-session; both re-applied and confirmed persisted via grep + passing tests.
+
+
 ### Outbound AI Sales Calling Engine — Phase 3 (2026-06 / this session)
 - **Restart actions**: `POST /campaigns/{cid}/restart` (modes: failed / no_answer / busy / voicemail / all_incomplete / selected) — re-queues matching prospects (attempts reset) and re-opens completed campaigns.
 - **Duplicate** (`/duplicate` → draft copy of config only), **Archive** (`/archive`, non-running), **Edit** (existing PUT, draft/paused), **Add-more-lists** (`/add-lists` merges lists + enqueues only new deduped prospects).

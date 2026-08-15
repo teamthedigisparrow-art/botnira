@@ -29,8 +29,9 @@ export default function Privacy() {
           <p>
             BotNira ("we", "our", "us", operated by <strong>The Digi Sparrow</strong>) provides an AI-powered
             receptionist platform that lets businesses ("Vendors") answer customer inquiries and book
-            appointments across multiple channels including web chat, WhatsApp, SMS and email.
-            This Privacy Policy explains what information we collect, how we use it, and the choices you have.
+            appointments across multiple channels including web chat, WhatsApp, SMS and email, and integrates
+            with third-party tools such as Google Calendar. This Privacy Policy explains what information we
+            collect, how we use it, and the choices you have.
           </p>
         </section>
 
@@ -98,7 +99,36 @@ export default function Privacy() {
           </ul>
         </Section>
 
-        <Section n="6" title="How long we retain data">
+        <Section n="6" title="Google user data (Google Calendar integration)">
+          <p>
+            If a Vendor chooses to connect their Google Calendar, BotNira requests access to that Vendor's
+            Google Account through Google's OAuth&nbsp;2.0 consent screen. This section discloses exactly how
+            BotNira accesses, uses, stores and shares Google user data, in accordance with the{" "}
+            <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" className="underline font-bold">Google API Services User Data Policy</a>.
+          </p>
+          <p><strong>Scopes we request and why</strong></p>
+          <ul>
+            <li><code>.../auth/calendar</code> — to read the Vendor's calendar busy/free times and existing events (so the AI receptionist never double-books a slot) and to create, update and delete the appointment events that BotNira books on the Vendor's behalf.</li>
+            <li><code>.../auth/userinfo.email</code> and <code>openid</code> — to identify which Google Account was connected and display that email address in the Vendor's dashboard.</li>
+          </ul>
+          <p><strong>How we access it</strong> — Access occurs only after the Vendor explicitly grants consent on Google's screen, and only for that Vendor's own Google Account. End users who book appointments never connect their Google accounts.</p>
+          <p><strong>How we use it</strong></p>
+          <ul>
+            <li>Read upcoming events and busy periods to calculate real-time availability and prevent double-booking across BotNira and Google Calendar.</li>
+            <li>Create and manage calendar events for appointments booked through BotNira (via voice, chat, WhatsApp, or the public booking page).</li>
+            <li>Display the connected account's email so the Vendor knows which calendar is linked.</li>
+          </ul>
+          <p><strong>How we store it</strong> — We store the OAuth access token and refresh token for the connected account in our secured backend database (encrypted in transit and at rest). These tokens are never exposed to client-side code and are never accessible to any other Vendor. Calendar busy/free data is read on demand to compute availability; it is not repurposed or resold.</p>
+          <p><strong>How we share it</strong> — We do <strong>not</strong> sell, rent, or transfer Google user data to third parties. We do <strong>not</strong> use Google user data to develop, improve, or train generalized or non-personalized AI/ML models. Google user data is used solely to provide and improve the user-facing calendar-sync feature the Vendor has explicitly enabled.</p>
+          <p>
+            <strong>Limited Use.</strong> BotNira's use and transfer to any other app of information received from
+            Google APIs will adhere to the{" "}
+            <a href="https://developers.google.com/terms/api-services-user-data-policy#additional_requirements_for_specific_api_scopes" target="_blank" rel="noopener noreferrer" className="underline font-bold">Google API Services User Data Policy</a>, including the Limited Use requirements.
+          </p>
+          <p><strong>Revoking access &amp; deletion</strong> — A Vendor can disconnect Google Calendar at any time from <em>Appointments → Calendars → Disconnect</em>, which deletes the stored tokens from our systems. Vendors may also revoke BotNira's access directly at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" className="underline font-bold">myaccount.google.com/permissions</a>. On disconnection or workspace deletion, all stored Google tokens and cached calendar data are permanently deleted within 30 days.</p>
+        </Section>
+
+        <Section n="7" title="How long we retain data">
           <ul>
             <li><strong>Conversations & transcripts</strong>: retained for as long as the Vendor's workspace is active. Vendors can delete individual conversations at any time.</li>
             <li><strong>Billing records</strong>: 7 years (legal requirement).</li>
@@ -106,7 +136,7 @@ export default function Privacy() {
           </ul>
         </Section>
 
-        <Section n="7" title="Your rights">
+        <Section n="8" title="Your rights">
           <p>Depending on your jurisdiction (GDPR, PIPEDA, CCPA), you have the right to:</p>
           <ul>
             <li>Access a copy of your data</li>
@@ -121,7 +151,7 @@ export default function Privacy() {
           </p>
         </Section>
 
-        <Section n="8" title="Security">
+        <Section n="9" title="Security">
           <p>
             We encrypt data in transit (TLS 1.2+) and at rest. Access tokens are stored only in our backend
             database, never in client-side code. Production access is restricted to a small number of
@@ -129,22 +159,22 @@ export default function Privacy() {
           </p>
         </Section>
 
-        <Section n="9" title="International transfers">
+        <Section n="10" title="International transfers">
           <p>
             BotNira is operated from Canada. Data may be transferred to and processed in the United States
             and the European Union by our sub-processors listed above, each under Standard Contractual Clauses.
           </p>
         </Section>
 
-        <Section n="10" title="Children">
+        <Section n="11" title="Children">
           <p>BotNira is not directed at children under 16 and we do not knowingly collect their data.</p>
         </Section>
 
-        <Section n="11" title="Changes to this policy">
+        <Section n="12" title="Changes to this policy">
           <p>If we materially change this policy we'll notify active Vendors by email 30 days before the change takes effect.</p>
         </Section>
 
-        <Section n="12" title="Contact us">
+        <Section n="13" title="Contact us">
           <p>
             Data protection queries: <strong>privacy@thedigisparrow.com</strong><br/>
             Mailing: The Digi Sparrow, Toronto, Canada

@@ -101,6 +101,13 @@ export default function CalendarsTab() {
               <li className="flex items-center gap-2"><Calendar size={14} className="text-[#4285F4]" /> Events on your Google Calendar block those times in BotNira (no double-booking).</li>
               <li className="flex items-center gap-2"><Video size={14} className="text-[#34A853]" /> Set an appointment type's location to "Google Meet" to auto-generate a Meet link.</li>
             </ul>
+            <p className="mt-4 text-xs text-neutral-500 leading-relaxed">
+              By connecting, you allow BotNira to read your calendar availability and create/manage appointment
+              events. BotNira's use of Google user data adheres to the{" "}
+              <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" className="underline font-bold">Google API Services User Data Policy</a>,
+              including the Limited Use requirements. See our{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline font-bold" data-testid="gcal-privacy-link">Privacy Policy</a>.
+            </p>
           </div>
         )}
       </div>
