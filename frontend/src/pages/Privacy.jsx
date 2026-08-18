@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import BrandMark from "../components/BrandMark";
+import { setCanonical } from "../lib/seo";
 
 const LegalNav = () => (
   <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b-2 border-black">
@@ -17,6 +19,7 @@ const LegalNav = () => (
 );
 
 export default function Privacy() {
+  useEffect(() => { setCanonical("/privacy"); }, []);
   return (
     <div className="min-h-screen bg-white" data-testid="privacy-page">
       <LegalNav />

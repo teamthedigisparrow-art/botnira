@@ -1,0 +1,27 @@
+{
+  "summary": "Independently re-ran `yarn build` in /app/frontend. react-snap postbuild successfully crawled 19/19 routes in ~29s. Verified static prerender artifacts for the three authoritative assertions and validated live SPA on preview URL for the required routes.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/blog (listing), /team, /privacy on LIVE SPA", "issues": ["link[rel=canonical] and meta[property=og:url] still resolve to the homepage URL (https://botnira.com/) instead of the page's own URL. Only routes that explicitly set per-slug canonical (BlogDetail, UseCasePage, Home) override correctly. Not required by this review's scope, but recommended for full SEO parity across all public pages."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_22.json"],
+  "action_items": [
+    "(Optional / follow-up) Have BlogListing (/blog), Team (/team), Privacy (/privacy), Terms (/terms) set their own per-page canonical + og:url in a useEffect, mirroring what BlogDetail/UseCasePage already do. Their prerendered build files DO include the correct per-page canonical (since react-snap snapshots after mount), so this only affects the live-navigated SPA DOM, not raw HTML crawlers."
+  ],
+  "critical_code_review_comments": [
+    "index.js hydrate/createRoot fallback is correct.",
+    "reactSnap config in package.json includes puppeteerArgs (--no-sandbox) so it works in the container.",
+    "postbuild is intentionally non-fatal (`|| echo ...`) so builds still succeed if headless Chromium is unavailable — good defensive design."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend/build only)", "frontend": "100% on required assertions"},
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Prerender assertions verified: (a) build/use-case/dental/index.html = 50,681B, contains 'Dental', 'receptionist', 'appointment', <link rel=\"canonical\" href=\"https://botnira.com/use-case/dental\"> and matching og:url. (b) build/blog/ai-receptionists-in-2026-why-your-front-desk-needs-one/index.html = 40,756B, real article body prerendered, canonical + og:url = https://botnira.com/blog/ai-receptionists-in-2026-why-your-front-desk-needs-one (its own URL, NOT homepage). (c) build/index.html = 173,536B, canonical + og:url = https://botnira.com/. react-snap crawled 19/19 routes: /, /404.html, /team, /terms, /login, /blog, /referrals, /signup, /use-case/{salon,home-services,dental,education,real-estate,auto-repair,restaurant,healthcare-clinic}, /forgot-password, /blog/ai-receptionists-in-2026-why-your-front-desk-needs-one, /privacy. Live SPA on preview URL renders body content on / (13,302 chars), /blog (1,153), /blog/<slug> (947), /use-case/dental (2,452), /team (4,252), /privacy (7,960) — no white screen, no crashes, no pageerror. Live DOM canonical/og:url are correct on /, /use-case/dental, /blog/<slug>; the /blog listing, /team, /privacy live DOM still fall back to homepage canonical (minor, outside review scope). Note: preview dev-server curl of raw HTML still returns the CRA shell + 'enable JavaScript' — the prerender only exists in build/ output and will appear in production after redeploy, as expected.",
+  "rca of the issue": "N/A — feature works as designed. All three primary assertions (prerender content + per-page canonical/og:url on Home, UseCase/dental, BlogDetail) PASS in the build/ artifacts, and the SPA hydrate switch does not break the live app."
+}

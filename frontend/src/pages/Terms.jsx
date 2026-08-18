@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import BrandMark from "../components/BrandMark";
+import { setCanonical } from "../lib/seo";
 
 const LegalNav = () => (
   <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b-2 border-black">
@@ -26,6 +28,7 @@ const Section = ({ n, title, children }) => (
 );
 
 export default function Terms() {
+  useEffect(() => { setCanonical("/terms"); }, []);
   return (
     <div className="min-h-screen bg-white" data-testid="terms-page">
       <LegalNav />

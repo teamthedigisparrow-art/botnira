@@ -46,6 +46,18 @@ export default function BlogDetail() {
             return m;
           })();
         meta.setAttribute("content", b.seo_description || b.excerpt || "");
+        // Per-page canonical + og:url (baked into prerendered HTML by react-snap)
+        const canonicalUrl = `https://botnira.com/blog/${b.slug || slug}`;
+        const setHead = (selector, create) => {
+          let el = document.querySelector(selector);
+          if (!el) { el = create(); document.head.appendChild(el); }
+          return el;
+        };
+        setHead('link[rel="canonical"]', () => { const l = document.createElement("link"); l.rel = "canonical"; return l; }).setAttribute("href", canonicalUrl);
+        setHead('meta[property="og:url"]', () => { const m = document.createElement("meta"); m.setAttribute("property", "og:url"); return m; }).setAttribute("content", canonicalUrl);
+        setHead('meta[property="og:title"]', () => { const m = document.createElement("meta"); m.setAttribute("property", "og:title"); return m; }).setAttribute("content", `${b.seo_title || b.title} | BotNira Blog`);
+        setHead('meta[property="og:description"]', () => { const m = document.createElement("meta"); m.setAttribute("property", "og:description"); return m; }).setAttribute("content", b.seo_description || b.excerpt || "");
+        setHead('meta[property="og:type"]', () => { const m = document.createElement("meta"); m.setAttribute("property", "og:type"); return m; }).setAttribute("content", "article");
       })
       .catch(() => setState("notfound"));
 

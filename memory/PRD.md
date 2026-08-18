@@ -16,6 +16,14 @@ See `/app/memory/test_credentials.md`.
 
 ## Implemented (current)
 
+### Crawler SSR/prerendering + per-page canonical/og:url (2026-06 / this session)
+- **Problem confirmed**: BotNira is a CRA (CRACO) client-side SPA — non-JS crawlers (GPTBot/ClaudeBot/PerplexityBot/etc.) received only the app shell + "enable JavaScript"; blog/use-case content invisible in raw HTML.
+- **Fix**: added **react-snap** build-time prerendering (`postbuild: "react-snap || echo skipped"` — non-fatal so it never breaks deploy; `reactSnap` config with `--no-sandbox`, `skipThirdPartyRequests:false`, `crawl:true`). `index.js` now `hydrateRoot`s prerendered markup (else `createRoot`). Result: each public route ships **real static HTML** (home, /team, /privacy, /terms, /blog, every /use-case/*, and blog posts existing at build time). Verified via build artifacts: use-case/dental & a blog post contain full body text.
+- **Per-page canonical + og:url**: added `src/lib/seo.js` `setCanonical(path)` used by Blog/Team/Privacy/Terms; BlogDetail sets canonical+og per post; UseCasePage already per-slug. Build artifacts confirm each page's canonical is self-referential (not homepage).
+- **Verified**: testing_agent iteration_22 — 100% pass, no critical/minor issues (prerender build output + live SPA health + DOM meta). Canonical follow-up for /blog,/team,/privacy,/terms verified via build-output grep.
+- **Caveats**: prerender only manifests in a production **build** (preview runs the dev server, so curling preview still shows the SPA shell — expected); takes effect after **redeploy**. Blog posts published after a deploy need a rebuild to be prerendered. react-snap needs headless Chromium in the deploy build (fallback is non-fatal).
+
+
 ### Voice fixes + Google-verification Privacy Policy (2026-06 / this session)
 - **Voicemail wastes minutes → fixed**: outbound calls now use async AMD (`machine_detection='Enable'` + `async_amd` → `/api/sales/outbound/amd/{id}`). On a machine/fax we set `outcome='voicemail'` and **hang up immediately** via `cli.calls(sid).update(status='completed')` (call_sid now stored). The `/status` webhook **preserves** a prior 'voicemail' verdict (reads existing `campaign_calls.outcome`) instead of flipping it to 'answered', and AI summary only fires for 'answered'. Verified by testing_agent: **15/15 pass** (iteration_21.json).
 - **~4s answer latency → fixed**: greeting `response.create` is now sent inside the Twilio `start` handler (was fired before `stream_sid` existed, so greeting audio was dropped); `server_vad silence_duration_ms` 600→500. (Real audio can't be auto-tested; verified by code inspection.)

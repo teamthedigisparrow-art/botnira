@@ -4,6 +4,7 @@ import axios from "axios";
 import { ArrowRight, Calendar, Eye, Tag, BookOpen } from "lucide-react";
 import SiteNav from "../components/marketing/SiteNav";
 import SiteFooter from "../components/marketing/SiteFooter";
+import { setCanonical } from "../lib/seo";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -17,6 +18,7 @@ const fmtDate = (iso) => {
 };
 
 export default function Blog() {
+  useEffect(() => { setCanonical("/blog"); }, []);
   const [blogs, setBlogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTag, setActiveTag] = useState(null);
