@@ -749,6 +749,7 @@ const Footer = () => (
           <li><Link to="/signup" className="hover:underline">Start free trial</Link></li>
           <li><Link to="/privacy" className="hover:underline" data-testid="footer-privacy">Privacy</Link></li>
           <li><Link to="/terms" className="hover:underline" data-testid="footer-terms">Terms</Link></li>
+          <li><a href="https://compliance.botnira.com/" target="_blank" rel="noopener noreferrer" className="hover:underline" data-testid="footer-trust-center">Trust Center</a></li>
         </ul>
       </div>
     </div>
