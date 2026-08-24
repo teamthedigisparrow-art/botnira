@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight, GraduationCap, Rocket, Globe2, Users, Sparkles, Building2 } from "lucide-react";
 import SiteNav from "../components/marketing/SiteNav";
 import SiteFooter from "../components/marketing/SiteFooter";
-import { setCanonical } from "../lib/seo";
+import { setPageSeo } from "../lib/seo";
 
 const CEO_IMG =
   "https://customer-assets.emergentagent.com/job_0cab01e6-4d2b-4117-ae3f-80ebc10fc6b4/artifacts/0jvkuxmu_CEO%20image.png";
@@ -50,7 +50,13 @@ const VALUES = [
 ];
 
 export default function Team() {
-  useEffect(() => { setCanonical("/team"); }, []);
+  useEffect(() => {
+    setPageSeo({
+      path: "/team",
+      title: "About BotNira — The Team Behind the AI Receptionist",
+      description: "Meet the founders and 135-person engineering team behind BotNira — the AI receptionist that answers every call, chat and message 24/7 so businesses never miss a customer.",
+    });
+  }, []);
   return (
     <div className="min-h-screen bg-[#FDFBF7] text-black" data-testid="team-page">
       <SiteNav />

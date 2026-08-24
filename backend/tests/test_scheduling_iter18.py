@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pymongo import MongoClient
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://scheduling-preview.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sales-automation-89.preview.emergentagent.com").rstrip("/")
 VENDOR_EMAIL = "kamal@thedigisparrow.com"
 VENDOR_PASSWORD = "Kamala98@hmu"
 

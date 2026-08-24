@@ -1,30 +1,30 @@
 <analysis>**original_problem_statement**: 
-BotNira is an AI-powered receptionist platform (vendor-ready system) that answers business calls, handles customer inquiries, and books appointments automatically 24/7 across calls, WhatsApp, text, and emails. 
-
-PRODUCT REQUIREMENTS (New Major Update):
-- Botnira Appointment System Upgrade – Complete Scheduling Hub: Upgrade existing Appointments module into a centralized Scheduling Hub.
-- Native Scheduling Core: Vendor availability settings (working hours, breaks, exceptions, holidays), appointment types (duration, buffer times), public booking page ().
-- Calendar Integrations: Two-way real-time (or periodic polling) sync with Google Calendar and Calendly. Prevent double-booking across all synced calendars and native appointments.
-- AI Integration: AI receptionist must check real-time availability before confirming slots via Voice/WhatsApp/Chat.
-- Notifications & Reminders: Configurable confirmation, reminder, reschedule, and cancellation notices via Email, SMS, and WhatsApp.
-- Mobile Responsiveness: All vendor  pages and Auth pages (Login/Signup) must be mobile-friendly.
+BotNira is an AI-powered receptionist platform (vendor-ready system) that answers business calls, handles customer inquiries, and books appointments automatically 24/7 across calls, WhatsApp, text, and emails.
+PRODUCT REQUIREMENTS (New Major Update): 
+- BotNira AI Outbound Sales Calling Engine: Allow businesses (Growth/Pro plans) to create outbound AI calling campaigns that automatically call prospects, speak naturally following a script, save conversations, generate AI summaries, track analytics, and handle voicemails/retry logic using their remaining voice minutes.
+- SEO & Crawler SSR: Implement server-side rendering or prerendering so non-JS crawlers can index content (blogs, use-cases) properly.
 
 **User's preferred language**: English (INSTRUCT next agent to respond in English only)
 
 **what currently exists?** 
-A fully functional React + FastAPI + MongoDB multi-tenant SaaS. Recent major overhauls include: completely mobile-responsive vendor dashboard and auth pages, an integrated Google Auth sign-in/sign-up flow, a fully functional Native Scheduling Hub (Availability tabs, Appointment Types, public booking page), two-way Google Calendar sync via the user's custom Google Cloud OAuth credentials, configurable Email reminders, and an AI availability guard that successfully prevents the bot from double-booking slots. Stripe billing upgrade/top-up API flows are active and stable.
+A fully functional React SPA + FastAPI + MongoDB multi-tenant SaaS. It has an integrated Google Auth sign-in, Native Scheduling Hub, two-way Google Calendar sync, and Stripe billing. 
+Recently added:
+- Mobile-responsive Team page.
+- Overhauled Homepage with real audio call recordings, risk reversal tags, a founder section, and premium AI SaaS testimonial cards with business logos.
+- Fully functional Outbound AI Sales Calling Engine (Campaign CRUD, Twilio/OpenAI Voice bridge, AI summaries, CSV/Excel export, DNC list, restart/retry actions). 
+- Prerendering via  and  for SEO crawlers.
 
 **Last working item**: 
-    - Last item agent was working: Fixing the Plan price not provisioned yet (503) bug that occurred during Stripe checkout/upgrade for new trial users. The agent found that  was accidentally detached from the FastAPI startup events during a previous refactor. The handler was re-attached, correctly provisioning the Stripe plan/topup IDs on boot.
+    - Last item agent was working: Adding the BotNira Trust Center link () to the website footers ( and ).
     - Status: USER VERIFICATION PENDING
     - Agent Testing Done: Y
-    - Which testing method agent to use?: NA (Testing already successfully completed via )
+    - Which testing method agent to use?: Screenshot tool
     - User Testing Done: N
 
 **All Pending/In progress Issue list**: 
   Issue 1: Live Google Calendar connect test (P0)
      - Attempted fixes: Agent fully built the Google OAuth flow, but the AI cannot interactively click the Google Allow consent screen.
-     - Next debug checklist: Await user confirmation that they successfully logged in as , clicked Connect Google Calendar, and verified 2-way sync.
+     - Next debug checklist: Await user confirmation that they successfully logged in, clicked Connect Google Calendar, and verified 2-way sync.
      - Why fix this issue and what will be achieved with the fix?: Completes verification of Scheduling Phase 2.
      - Status: USER VERIFICATION PENDING
      - Is recurring issue?: N
@@ -32,15 +32,15 @@ A fully functional React + FastAPI + MongoDB multi-tenant SaaS. Recent major ove
      - Blocked on other issue: None
 
   Issue 2: Google App Verification status (P1)
-     - Attempted fixes: The user's Google Cloud app is currently under review for sensitive scopes (Calendar). 
-     - Next debug checklist: Monitor status. The app works for up to 100 test users while under review.
+     - Attempted fixes: App is under review for sensitive scopes. The agent updated the Privacy Policy to explicitly disclose Google user data scopes and Limited Use policy as per Google's feedback.
+     - Next debug checklist: Monitor status to see if Google approves the app following the Privacy Policy update.
      - Status: BLOCKED (Waiting on Google)
      - Is recurring issue?: N
 
 **In progress Task List**: 
   Task 1: SMS + WhatsApp Reminders/Notifications (Scheduling Phase 4 remainder) (P1)
-     - Where to resume: Expand the newly added  in  and frontend .
-     - What will be achieved with this?: Currently, confirmations/reminders only send via Email. Needs to utilize the existing Twilio/Meta channels to send SMS and WhatsApp reminders based on vendor toggle settings.
+     - Where to resume: Expand  in  and frontend .
+     - What will be achieved with this?: Reminders will utilize existing Twilio/Meta channels to send SMS and WhatsApp reminders based on vendor settings.
      - Status: NOT STARTED
      - Should Test frontend/backend/both after fix?: Both
      - Blocked on something: None
@@ -54,8 +54,8 @@ A fully functional React + FastAPI + MongoDB multi-tenant SaaS. Recent major ove
 
 **Upcoming and Future Tasks**
   - P1: Phase 3 — Calendly two-way sync (Requires user to have a paid Calendly plan + OAuth app).
-  - P1: Phase 2.1 — Google Meet per-appointment-type toggle (currently it auto-generates a link if meet or online is in the location string).
-  - P2: Voice reliability decision (Spoken fallback vs Twilio call-forwarding vs SignalWire migration - from previous session).
+  - P1: Phase 2.1 — Google Meet per-appointment-type toggle.
+  - P2: Voice reliability decision (Spoken fallback vs Twilio call-forwarding vs SignalWire migration).
   - P2: Implement Hold Period for Referral Commissions.
   - P2: Superadmin vendor analytics drill-down.
   - P2: Implement Vendor Onboarding wizard (4-step guided setup).
@@ -65,76 +65,78 @@ A fully functional React + FastAPI + MongoDB multi-tenant SaaS. Recent major ove
   - P2: Team invites (multi-user per vendor).
 
 **Completed work in this session**
-- Made all Vendor Dashboard pages () mobile responsive (VendorLayout, Inbox, SalesAssistant grids). (DONE)
-- Made Login/Signup pages mobile responsive and added fully functioning Google Auth (). (DONE)
-- Scheduling Phase 1: Built , public booking page, availability constraints, appointment types, and . (DONE)
-- Scheduling Phase 2: Built , Google OAuth setup using user's GCP credentials, and two-way sync polling. (DONE)
-- Scheduling Phase 4: Added configurable Email appointment reminders and confirmation UI toggles. (DONE)
-- Scheduling Phase 5: Added strict availability guard inside 's  so AI cannot double-book or book outside operating hours. (DONE)
-- Fixed Stripe Plan price not provisioned 503 bug by restoring  in . (DONE)
-- Updated  with correct superadmin info. (DONE)
+- Built  page with CEO/Team stories and integrated it into Nav/Footer. (DONE)
+- Overhauled Homepage with embedded call recordings, Data Security section, Risk Reversal strip, and Industry Tiles. (DONE)
+- Replaced placeholder reviews with premium Testimonial cards using generated business logos. (DONE)
+- Built Outbound AI Sales Calling Engine Phase 1: Dashboard, multi-step campaign wizard, logic guards (no international calls, zero minutes pause). (DONE)
+- Built Outbound Calling Phase 2: Post-call AI summaries (intent, sentiment, entities), Analytics charts, Call History filtering, and CSV/Excel export. (DONE)
+- Built Outbound Calling Phase 3: Retry/Restart logic, Duplicate/Archive/Edit flows, Do-Not-Call (DNC) management, and audit logs. (DONE)
+- Fixed outbound voice bugs: switched to async AMD to hang up instantly on voicemails to save minutes, and tuned VAD  to 500ms while fixing greeting timing. (DONE)
+- Updated Privacy Policy to explicitly mention Google API Scopes and Limited Use statement to satisfy Google App Verification reviewers. (DONE)
+- Solved SSR/SEO issue: Implemented  prerendering and  for accurate per-page  and  tagging so bots (like GPTBot) can crawl content. (DONE)
+- Passed Pre-Deployment Agent health check. (DONE)
+- Added Trust Center links to standard and homepage footers. (DONE)
 
 **Earlier issues found/mentioned but not fixed**
 None.
 
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork: Twilio 60s voice limit resurfaced (Blocked by 3rd party).
+  - Issue recurrence in previous fork: Twilio 60s voice limit resurfaced.
   - Recurrence count: 3
-  - Status: BLOCKED
+  - Status: BLOCKED (by 3rd party constraints)
 
 **Code Architecture**
-/book/:slug
+
 
 **Key Technical Concepts**
-React SPA, FastAPI, MongoDB, Stripe Billing, Twilio Voice/SMS, Meta WhatsApp Cloud API, OpenAI Realtime API (WebSocket),  for direct Google Cloud Integration.
+React SPA with  for Prerendering, FastAPI, MongoDB, Stripe Billing, Twilio Voice/SMS, Meta WhatsApp Cloud API, OpenAI Realtime API (WebSocket),  (Excel generation). 
 
 **key DB schema**
-  - : uid=0(root) gid=0(root) groups=0(root), , , , , , 
-  - : , , , 
-  - : includes  dict (configured, connected, access_token, refresh_token)
+  - : stores outbound calling configuration, lists, status, and analytics.
+  - : records individual dialed attempts, outcomes, and linked AI summaries.
 
 **changes in tech stack**
-- Added  to python dependencies for native Google API OAuth flows.
+- Added  via pip for Excel exports.
+- Added  and  to frontend  for prerendering HTML during build time for SEO bots.
 
 **All files of reference** 
-- : Manages slots, buffers, boundaries, booking creation, and the async .
-- : Manages the OAuth handshake and the  background process.
-- : Houses  (AI availability guard) and  (restored handler).
-- : Main routing container for the new vendor scheduling tabs.
-- : Public interface for users to pick dates/time slots based on availability.
+- : Handles outbound campaign management, dialer loop, retry logic, and export endpoints.
+- : Twilio AMD adjustments, Voice WebSocket session configurations, and AI greeting timing.
+- : Comprehensive frontend for the Outbound AI feature.
+- : Modified for graceful  hydration.
+- : Shared helper to inject correct  and  tags into the head.
 
 **Areas that need refactoring**: 
--  is approaching 5800 lines. The Stripe webhooks and Twilio voice sockets should be extracted to router modules to reduce clutter.
+-  is huge (~5800 lines). Twilio voice sockets and webhooks should be extracted to reduce monolith footprint.
 
 **key api endpoints**
--  & : Stripe checkout generation.
--  & : Google Calendar OAuth flow.
-- : Fetches valid available times based on buffers and calendar syncs.
-- : Creates appointment and fires initial confirmation email.
+- : Webhook for Twilio call status events and AMD processing.
+- : Aggregates active campaign metrics.
+- : Initiates calling sequence.
 
 **Critical Info for New Agent** 
-- **Two Environments**: The user has deployed this app to production (). We are working in PREVIEW. If the user complains an issue is persisting, remind them they must redeploy to push preview changes to production. DO NOT use the deployed URL for testing; rely on .
-- **Google OAuth Testing**: The Google consent screen blocks automated bot inputs. The  can verify the callback logic and URL generation, but the final Allow button click *must* be done by the user interactively.
-- **Stripe Provisioning**: Stripe product/price IDs are populated on FastAPI boot via . If backend restarts fail, check the provisioning logs.
+- **Two Environments**: PREVIEW (dev) vs PRODUCTION (). All tests must be done in the preview environment. Remind user to redeploy if they don't see changes on the live site.
+- **Outbound Gating**: The new Outbound AI Calling Engine requires a provisioned Twilio number and Growth/Pro plan status. Use  correctly.
+- **react-snap builds**: Prerendering runs as a post-build step in the CRA process. Changes affecting SEO tags or hydration should be checked using a build command, but UI changes can still be viewed dynamically on the dev server.
+- **Twilio AMD**: We explicitly use async Answering Machine Detection to hang up *immediately* if it hits voicemail to avoid burning voice minutes on long greetings.
 
 **documents and test reports created in this job** 
-  -  (Mobile UI frontend checks)
-  -  (Google Auth flow checks)
-  -  (Google Calendar logic verification)
-  -  (Reminders & AI Guard verification)
-  -  (Stripe 503 fix verification)
+  -  (Voicemail initial tests - incomplete run)
+  -  (Verified Twilio webhook voicemail-preservation fix via pytest)
+  -  (Verified react-snap prerender output for bots)
+  - 
 
 **Last 10 User Messages and any pending HUMAN messages** 
- 1. (Pending) Agent explained Stripe topup bug was fixed; awaits user direction on whether to start SMS/WhatsApp Reminders next.
- 2. (Completed) User asked if the addon/topup purchasing had the exact same issue fixed.
- 3. (Completed) User reported a bug: clicking upgrade on trial shows Plan price not provisioned yet. Agent fixed by re-registering startup hook.
- 4. (Completed) User asked what is pending. Agent summarized the phase gaps.
- 5. (Completed) User asked to check Phase 4 (Reminders) & Phase 5 (AI Real-time booking guard). Agent built and verified both.
- 6. (Completed) User instructed agent to connect the google account using . Agent explained AI cannot interactively click Google's prompt and handed off to user.
- 7. (Completed) User shared Google Cloud Console link showing app is under review.
- 8. (Completed) User noted that Branding verification passed in Google Cloud.
- 9. (Completed) User requested step-by-step instructions on Google app verification.
- 10. (Completed) User provided Google OAuth Client ID and Secret.
+ 1. (Completed) User requested adding Trust Center link to the footer. Agent added and verified via screenshot.
+ 2. (Completed) User asked to run Deployment Agent health check. Agent ran it; confirmed ready for deployment.
+ 3. (Completed) User reported SSR/SEO issue where crawlers see enable JS. Agent implemented  and .
+ 4. (Completed) User requested Privacy Policy update for Google Verification. Agent added specific Google data clauses.
+ 5. (Completed) User reported outbound bugs (voicemail minute loss + greeting delay). Agent fixed async AMD and greeting timing.
+ 6. (Completed) User requested Phase 3 of Outbound Calling (DNC, Audit logs, Restarts). Agent built and verified.
+ 7. (Completed) User requested Phase 2 of Outbound Calling (AI summaries, analytics, exports). Agent built and verified.
+ 8. (Completed) User requested Phase 1 of BotNira AI Outbound Engine. Agent built and verified.
+ 9. (Completed) User asked to add text on homepage pricing section. Agent added it.
+ 10. (Completed) User provided specs to replace fictional reviews with real-style Testimonial cards with logos. Agent generated images and built component.
 
 **Project Health Check:**
 - Broken: None.
@@ -142,124 +144,25 @@ React SPA, FastAPI, MongoDB, Stripe Billing, Twilio Voice/SMS, Meta WhatsApp Clo
 
 **3rd Party Integrations** 
 - OpenAI GPT-4o-mini (Text Gen) — uses Emergent LLM Key via LiteLLM
+- Gemini 3.1 Flash Image Preview (Image Generation) — uses Emergent LLM Key 
 - OpenAI Realtime API (Voice) — Requires User API Key ()
 - Meta WhatsApp Cloud API — requires User API Keys
 - Twilio (Voice & SMS) — requires User API Keys
 - Stripe (Payments + Tax) — requires User API Keys
-- Custom SMTP/IMAP (Gmail/Hostinger) — requires App Password
 - Google OAuth 2.0 (Google Calendar API) — requires User API Keys
 
 **Testing status**
-  - Testing agent used after significant changes: YES (Iterations 15 through 19).
+  - Testing agent used after significant changes: YES 
   - Troubleshoot agent used after agent stuck in loop: NO
-  - Test files created: , 
-  - Known regressions: Testing agent found a regression during Iteration 18 where public bookings returned null; Agent immediately fixed and verified it.
+  - Test files created: 
+  - Known regressions: Testing agent successfully caught a state-preservation bug where Twilio status updates were overwriting  tags with . Main agent successfully resolved and re-tested.
 
 **Credentials to test flow:**
-Refer to  (Superadmin:  / , Vendor:  / ).
+Refer to 
 
 **What agent forgot to execute**
-- The agent explicitly paused before implementing SMS/WhatsApp reminders to await user confirmation. Ensure this is prioritized if the user proceeds.
+- User deferred the SMS/WhatsApp remiders implementation in favor of building the Outbound Calling Engine. Ensure this is prioritized if the user intends to finish scheduling reminders.
 
 **Debugging checklist for current issue**
-  Issue: Verification pending for Stripe startup provisioning fix.
-  - Next debug checklist: Await user's confirmation. If Stripe checkout still throws an error, verify  completes fully without exceptions in the backend logs using INFO:     Waiting for application startup.
-INFO:botnira:[email] poller started (every 60s)
-INFO:botnira:[sales] sender loop started
-INFO:botnira:[sales-wa] sender loop started
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/products?limit=100&active=true
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/products?limit=100&active=true response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UYvAKuAk4tqE8V&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UYvAKuAk4tqE8V&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYBHvFPnHx8H&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYBHvFPnHx8H&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYkJvuoTHGi0&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYkJvuoTHGi0&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYHbKMpSUNL5&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYHbKMpSUNL5&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYA0fF98Vxbz&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYA0fF98Vxbz&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYF4TdH4aQh5&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYF4TdH4aQh5&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYordRi03pQj&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYordRi03pQj&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYQPe9A6T9KC&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYQPe9A6T9KC&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGY32dHQ5xDvk&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGY32dHQ5xDvk&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYZ3qMzYNjTk&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYZ3qMzYNjTk&active=true&limit=10 response_code=200
-INFO:botnira:Stripe price provisioning complete: {'plans': {'basic': 'price_1TZnKCC8HSANh2JGwhzqV24y', 'starter': 'price_1TPU1jC8HSANh2JGgM0Pd2jb', 'growth': 'price_1TPU1jC8HSANh2JGAJekafOJ', 'pro': 'price_1TPU1kC8HSANh2JGuNzD5USl'}, 'topups': {'spark': 'price_1TPU1kC8HSANh2JGOewQurbd', 'boost': 'price_1TPU1lC8HSANh2JGHDDbhKLR', 'rocket': 'price_1TPU1lC8HSANh2JG1SJbXoku', 'jet': 'price_1TPU1mC8HSANh2JGnvVoNQjE', 'fleet': 'price_1TPU1mC8HSANh2JGH9Yv99p1', 'armada': 'price_1TPU1nC8HSANh2JGowcUSZNL'}}
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/tax_rates?active=true&limit=100
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/tax_rates?active=true&limit=100 response_code=200
-INFO:botnira:Using HST tax rate txr_1TQWk3C8HSANh2JGkEzzQKDF
-INFO:botnira:Blog object storage initialised
-INFO:     Application startup complete.
-WARNING:  WatchFiles detected changes in 'tests/test_billing_iter19_upgrade.py'. Reloading...
-INFO:     Shutting down
-INFO:     Waiting for application shutdown.
-INFO:     Application shutdown complete.
-INFO:     Finished server process [397]
-INFO:     Started server process [545]
-INFO:     Waiting for application startup.
-INFO:botnira:[email] poller started (every 60s)
-INFO:botnira:[sales] sender loop started
-INFO:botnira:[sales-wa] sender loop started
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/products?limit=100&active=true
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/products?limit=100&active=true response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UYvAKuAk4tqE8V&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UYvAKuAk4tqE8V&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYBHvFPnHx8H&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYBHvFPnHx8H&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYkJvuoTHGi0&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYkJvuoTHGi0&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYHbKMpSUNL5&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYHbKMpSUNL5&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYA0fF98Vxbz&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYA0fF98Vxbz&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYF4TdH4aQh5&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYF4TdH4aQh5&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYordRi03pQj&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYordRi03pQj&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYQPe9A6T9KC&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYQPe9A6T9KC&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGY32dHQ5xDvk&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGY32dHQ5xDvk&active=true&limit=10 response_code=200
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/prices?product=prod_UOGYZ3qMzYNjTk&active=true&limit=10
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/prices?product=prod_UOGYZ3qMzYNjTk&active=true&limit=10 response_code=200
-INFO:botnira:Stripe price provisioning complete: {'plans': {'basic': 'price_1TZnKCC8HSANh2JGwhzqV24y', 'starter': 'price_1TPU1jC8HSANh2JGgM0Pd2jb', 'growth': 'price_1TPU1jC8HSANh2JGAJekafOJ', 'pro': 'price_1TPU1kC8HSANh2JGuNzD5USl'}, 'topups': {'spark': 'price_1TPU1kC8HSANh2JGOewQurbd', 'boost': 'price_1TPU1lC8HSANh2JGHDDbhKLR', 'rocket': 'price_1TPU1lC8HSANh2JG1SJbXoku', 'jet': 'price_1TPU1mC8HSANh2JGnvVoNQjE', 'fleet': 'price_1TPU1mC8HSANh2JGH9Yv99p1', 'armada': 'price_1TPU1nC8HSANh2JGowcUSZNL'}}
-INFO:stripe:message='Request to Stripe api' method=get url=https://api.stripe.com/v1/tax_rates?active=true&limit=100
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/tax_rates?active=true&limit=100 response_code=200
-INFO:botnira:Using HST tax rate txr_1TQWk3C8HSANh2JGkEzzQKDF
-INFO:botnira:Blog object storage initialised
-INFO:     Application startup complete.
-INFO:botnira:OTP email sent to billing_qa+76e1117b@example.com (purpose=signup)
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/customers
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/customers response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:botnira:OTP email sent to billing_qa+48599ca5@example.com (purpose=signup)
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/customers
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/customers response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:botnira:OTP email sent to billing_qa+1cac77dd@example.com (purpose=signup)
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/customers
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/customers response_code=200
-INFO:stripe:message='Request to Stripe api' method=post url=https://api.stripe.com/v1/checkout/sessions
-INFO:stripe:message='Stripe API response' path=https://api.stripe.com/v1/checkout/sessions response_code=200
-INFO:     Will watch for changes in these directories: ['/app/backend']
-INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
-INFO:     Started reloader process [43] using WatchFiles.</analysis>
+  Issue: Trust Center footer link addition needs user validation.
+  - Next debug checklist: Await user confirmation that the link correctly redirects to  in their production build. No further action needed natively unless styles conflict.</analysis>

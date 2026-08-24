@@ -62,15 +62,8 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "postbuild": "react-snap || echo 'react-snap prerender skipped (non-fatal)'",
+    "postbuild": "node scripts/prerender.js || echo 'prerender skipped (non-fatal)'",
     "test": "craco test"
-  },
-  "reactSnap": {
-    "puppeteerArgs": ["--no-sandbox", "--disable-setuid-sandbox"],
-    "skipThirdPartyRequests": false,
-    "inlineCss": false,
-    "crawl": true,
-    "include": ["/", "/team", "/privacy", "/terms", "/blog"]
   },
   "browserslist": {
     "production": [

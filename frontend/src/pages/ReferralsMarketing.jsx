@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import SiteNav from "../components/marketing/SiteNav";
 import SiteFooter from "../components/marketing/SiteFooter";
+import { setPageSeo } from "../lib/seo";
 
 /* -------------------------------------------------------------------------- */
 /* Local helpers                                                              */
@@ -798,10 +799,14 @@ function FinalCTA() {
 /* Page                                                                       */
 /* -------------------------------------------------------------------------- */
 export default function ReferralsMarketing() {
-  // Set document title for SEO. React Helmet isn't installed; this is fine.
+  // Per-page SEO: unique title + description + self-referential canonical.
   useEffect(() => {
     const prev = document.title;
-    document.title = "BotNira Referral Program — Earn 15% Recurring Commission";
+    setPageSeo({
+      path: "/referrals",
+      title: "BotNira Referral Program — Earn 15% Recurring Commission",
+      description: "Refer businesses to BotNira and earn 15% recurring commission on every payment they make, for as long as they stay. Free to join — get your unique referral link today.",
+    });
     return () => { document.title = prev; };
   }, []);
 
