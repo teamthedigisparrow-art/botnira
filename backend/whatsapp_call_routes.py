@@ -16,6 +16,7 @@ Meta bills WhatsApp calls separately from Twilio voice minutes, so these calls
 are logged (call_records + thread) but do NOT deduct Twilio voice minutes.
 """
 import json
+import asyncio
 from typing import Optional, Dict, Any, Set
 
 import httpx
@@ -176,6 +177,31 @@ def _fmt_dur(secs) -> str:
     return f"{s // 60}m {s % 60}s" if s >= 60 else f"{s}s"
 
 
+async def _summarize_wa_call(vendor_id: str, conv_id: str):
+    """Generate a short AI summary of a just-ended WhatsApp call and post it
+    into the same thread (best-effort — same style as Twilio call summaries)."""
+    msgs = await _s.db.messages.find(
+        {"conversation_id": conv_id, "role": {"$in": ["user", "bot"]}},
+        {"_id": 0, "role": 1, "content": 1}).sort("created_at", 1).to_list(60)
+    turns = [m for m in msgs if not (m.get("content") or "").startswith("📞")]
+    if len(turns) < 2:
+        return
+    transcript = "\n".join(f"{'Caller' if m['role'] == 'user' else 'AI'}: {m['content']}" for m in turns[-40:])
+    system = ("Summarize this WhatsApp voice call between an AI receptionist and a caller in ONE short "
+              "sentence (<=180 chars), focusing on what the caller wanted and any outcome/booking. "
+              "Return only the sentence, no quotes.")
+    try:
+        chat = _s.LlmChat(api_key=_s.EMERGENT_LLM_KEY, session_id=f"wacallsum-{conv_id}",
+                          system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        summary = (await asyncio.wait_for(chat.send_message(_s.UserMessage(text=transcript)), timeout=25) or "").strip()
+    except Exception as e:
+        _s.logger.warning("[wa-call] summary llm failed: %s", e)
+        return
+    if summary:
+        await _s._push_message(conv_id, vendor_id, "agent", f"📝 Call summary: {summary}",
+                               extra={"call_kind": "whatsapp_summary"})
+
+
 async def handle_whatsapp_calls(value: dict, wc: dict):
     """Process the `calls` field from a WhatsApp webhook change."""
     vendor_id = wc["vendor_id"]
@@ -197,16 +223,16 @@ async def handle_whatsapp_calls(value: dict, wc: dict):
                 await _broadcast(vendor_id, {"type": "wa_call_answer", "call_id": call_id,
                                              "session": call.get("session")})
             else:
-                # Inbound call: log in thread + ring the agent's browser.
+                # Inbound call: log it, then let the AI ANSWER it (like Twilio calls).
                 await _s._push_message(conv["id"], vendor_id, "user",
                                        "📞 Incoming WhatsApp call", external_id=call_id,
                                        extra={"call_kind": "whatsapp_inbound", "call_status": "ringing"})
                 await _s.db.conversations.update_one({"id": conv["id"]}, {"$set": {"unread": True}})
-                await _broadcast(vendor_id, {
-                    "type": "wa_call_incoming", "call_id": call_id,
-                    "conversation_id": conv["id"], "from": wa_id, "name": cname,
-                    "session": call.get("session"),
-                })
+                try:
+                    from whatsapp_ai_answer import start_ai_answer
+                    await start_ai_answer(call, wc, conv["id"])
+                except Exception as e:
+                    _s.logger.warning("[wa-call] AI answer failed to start: %s", e)
             await _s.db.wa_calls.update_one({"id": call_id},
                 {"$set": {"id": call_id, "vendor_id": vendor_id, "conversation_id": conv["id"],
                           "wa_id": wa_id, "direction": direction, "status": "connect",
@@ -236,6 +262,17 @@ async def handle_whatsapp_calls(value: dict, wc: dict):
                 "started_at": _s.now_iso(), "ended_at": _s.now_iso(),
             })
             await _broadcast(vendor_id, {"type": "wa_call_terminate", "call_id": call_id, "status": status})
+            try:
+                from whatsapp_ai_answer import stop_ai_answer
+                await stop_ai_answer(call_id)
+            except Exception:
+                pass
+            # Post-call AI summary into the same thread (best-effort).
+            if not out:
+                try:
+                    await _summarize_wa_call(vendor_id, conv["id"])
+                except Exception as e:
+                    _s.logger.warning("[wa-call] summary failed: %s", e)
             await _s.db.wa_calls.update_one({"id": call_id},
                 {"$set": {"status": "terminate", "duration": dur, "updated_at": _s.now_iso()}}, upsert=True)
 

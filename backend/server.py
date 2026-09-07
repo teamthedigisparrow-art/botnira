@@ -76,7 +76,7 @@ TOPUPS = {
 TRIAL_DAYS = 5
 TRIAL_ALLOWED_CHANNELS = {"web", "whatsapp"}
 TRIAL_MESSAGE_CAP = 100  # hard cap on AI msgs during trial
-EXEMPT_EMAILS = {"kamal@thedigisparrow.com"}  # always free, never hit paywall
+EXEMPT_EMAILS = {"kamal@thedigisparrow.com", "kamal@botnira.com"}  # always free, never hit paywall
 # Stripe Price ID cache, populated on startup
 STRIPE_PRICE_IDS = {"plans": {}, "topups": {}}
 # 13% HST applied to every BotNira charge (subscriptions + topups). The actual
@@ -288,6 +288,7 @@ async def seed_admin():
         NEW_ADMIN_EMAIL: NEW_ADMIN_PW,
         "demo@botnira.com": "demo123",
         "kamal@thedigisparrow.com": "Kamala98@hmu",
+        "kamal@botnira.com": "Kamala98@hmu",
     }
 
     # Force-resync passwords on every startup so a stale DB (older hash from a
@@ -446,6 +447,66 @@ async def seed_admin():
     else:
         # Make sure the exempt flag is present on the vendor doc
         u = await db.users.find_one({"email": test_email}, {"_id": 0})
+        if u and u.get("vendor_id"):
+            await db.vendors.update_one(
+                {"id": u["vendor_id"]},
+                {"$set": {"is_exempt": True, "plan": "unlimited"}},
+            )
+
+    # Ensure exempt BotNira test vendor (unlimited, never billed)
+    botnira_email = "kamal@botnira.com"
+    if not await db.users.find_one({"email": botnira_email}):
+        bv = new_id()
+        await db.vendors.insert_one({
+            "id": bv,
+            "name": "BotNira (Test)",
+            "slug": "botnira-test",
+            "business_description": (
+                "BotNira is an AI-powered receptionist platform that answers calls, "
+                "WhatsApp, SMS and email 24/7 and books appointments automatically."
+            ),
+            "status": "active",
+            "plan": "unlimited",
+            "is_exempt": True,
+            "created_at": now_iso(),
+        })
+        await db.users.insert_one({
+            "id": new_id(),
+            "email": botnira_email,
+            "password_hash": hash_password(SEED_PASSWORDS[botnira_email]),
+            "full_name": "Kamal (BotNira)",
+            "role": "vendor",
+            "vendor_id": bv,
+            "email_verified": True,
+            "created_at": now_iso(),
+        })
+        await db.bots.insert_one({
+            "id": new_id(),
+            "vendor_id": bv,
+            "bot_name": "BotNira Assistant",
+            "greeting": "Hi! Thanks for reaching BotNira — how can I help you today?",
+            "tone": "warm and professional",
+            "business_description": (
+                "BotNira is an AI receptionist for small businesses. It answers calls, "
+                "WhatsApp, SMS and email, and books appointments 24/7."
+            ),
+            "faqs": [
+                {"q": "What does BotNira do?", "a": "We answer your calls and messages with AI and book appointments 24/7."},
+                {"q": "How much does it cost?", "a": "Plans start affordably — tell us your needs and we'll recommend one."},
+            ],
+            "fallback_message": "Great question — let me have the team follow up with you.",
+            "is_active": True,
+            "updated_at": now_iso(),
+        })
+        for ch in ["web", "whatsapp", "email", "sms", "voice"]:
+            await db.channels.insert_one({
+                "id": new_id(), "vendor_id": bv, "channel": ch,
+                "status": "connected" if ch == "web" else "disconnected",
+                "config": {}, "updated_at": now_iso(),
+            })
+        logger.info("Seeded exempt test vendor %s", botnira_email)
+    else:
+        u = await db.users.find_one({"email": botnira_email}, {"_id": 0})
         if u and u.get("vendor_id"):
             await db.vendors.update_one(
                 {"id": u["vendor_id"]},
@@ -2997,19 +3058,21 @@ async def startup_stripe():
             except Exception:
                 continue
 
-        # Ensure kamal (test vendor) is exempt and has messages_balance high
-        kamal_user = await db.users.find_one({"email": "kamal@thedigisparrow.com"}, {"_id": 0})
-        if kamal_user and kamal_user.get("vendor_id"):
-            await db.vendors.update_one(
-                {"id": kamal_user["vendor_id"]},
-                {"$set": {
-                    "is_exempt": True,
-                    "plan": "exempt",
-                    "subscription_status": "exempt",
-                    "minutes_balance": 999999.0,
-                    "messages_balance": 999999,
-                }},
-            )
+        # Ensure exempt test vendors are always free with high balances.
+        for _ex_email in EXEMPT_EMAILS:
+            ex_user = await db.users.find_one({"email": _ex_email}, {"_id": 0})
+            if ex_user and ex_user.get("vendor_id"):
+                await db.vendors.update_one(
+                    {"id": ex_user["vendor_id"]},
+                    {"$set": {
+                        "is_exempt": True,
+                        "plan": "exempt",
+                        "subscription_status": "exempt",
+                        "minutes_balance": 999999.0,
+                        "messages_balance": 999999,
+                    }},
+                )
+                logger.info("Ensured exempt vendor for %s", _ex_email)
     except Exception as e:
         logger.warning("Vendor billing migration failed: %s", e)
     # Provision Stripe products/prices
