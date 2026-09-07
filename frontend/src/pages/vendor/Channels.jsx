@@ -10,6 +10,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import ConnectWhatsAppButton from "../../components/botnira/ConnectWhatsAppButton";
 import ConnectVoicePanel from "../../components/botnira/ConnectVoicePanel";
 import WhatsAppProfilePanel from "../../components/botnira/WhatsAppProfilePanel";
+import WhatsAppCallingPanel from "../../components/botnira/WhatsAppCallingPanel";
 import WhatsAppTemplatesPanel from "../../components/botnira/WhatsAppTemplatesPanel";
 import ConnectEmailPanel from "../../components/botnira/ConnectEmailPanel";
 
@@ -249,6 +250,8 @@ export default function Channels() {
                 <div className="text-xs font-mono text-neutral-600 mt-1 break-all">/api/whatsapp/webhook</div>
               </div>
             </div>
+
+            <WhatsAppCallingPanel />
 
             {/* Cloud-API registration banner: surfaces when Meta reports
                 code_verification_status != VERIFIED. Without this step,

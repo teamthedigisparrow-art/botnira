@@ -2502,6 +2502,14 @@ async def whatsapp_webhook(request: _FastAPIRequest):
                     continue
                 vendor_id = wc["vendor_id"]
 
+                # WhatsApp voice calls (inbound + call status events)
+                if value.get("calls") or (change.get("field") == "calls"):
+                    try:
+                        from whatsapp_call_routes import handle_whatsapp_calls
+                        await handle_whatsapp_calls(value, wc)
+                    except Exception as e:
+                        logger.warning("wa call handling failed: %s", e)
+
                 # Inbound messages from customers
                 for msg in value.get("messages", []) or []:
                     if msg.get("type") != "text":
@@ -5764,6 +5772,14 @@ from outbound_call_routes import (  # noqa: E402
 )
 api_router.include_router(_outbound_router, prefix="/sales/outbound")
 app.add_event_handler("startup", _outbound_start)
+
+# In-browser human callback (Twilio Voice JS SDK / WebRTC)
+from browser_call_routes import router as _browser_call_router  # noqa: E402
+api_router.include_router(_browser_call_router, prefix="/voice/browser")
+
+# WhatsApp Business Calling (Meta) + TURN + signaling WS
+from whatsapp_call_routes import router as _wa_call_router  # noqa: E402
+api_router.include_router(_wa_call_router)
 
 # Provision Stripe products/prices + HST tax rate at boot. (startup_stripe was
 # defined but never registered — without this, STRIPE_PRICE_IDS stays empty and

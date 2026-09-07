@@ -4,6 +4,19 @@ import { toast } from "sonner";
 import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe, Search, Sparkles, Loader2, X, Dot, ChevronLeft } from "lucide-react";
 import DOMPurify from "dompurify";
 import RichText from "../../components/botnira/RichText";
+import CallWidget from "../../components/botnira/CallWidget";
+
+// Derive a callable E.164 number from a conversation. Only voice / sms /
+// whatsapp threads carry a phone number in customer_contact.
+function toCallable(conv) {
+  if (!conv || !["voice", "sms", "whatsapp"].includes(conv.channel)) return "";
+  const raw = (conv.customer_contact || "").trim();
+  if (!raw) return "";
+  let digits = raw.replace(/[^\d]/g, "");
+  if (!digits) return "";
+  const e164 = raw.trim().startsWith("+") ? "+" + digits : "+" + digits;
+  return /^\+[1-9]\d{7,15}$/.test(e164) ? e164 : "";
+}
 
 const ICONS = { web: Globe, whatsapp: MessageCircle, email: Mail, sms: MessageSquare, voice: Phone };
 const CHANNELS = ["web", "whatsapp", "email", "sms", "voice"];
@@ -59,6 +72,9 @@ export default function Inbox() {
 
   const [active, setActive] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [callTarget, setCallTarget] = useState(null);
+  const [waStatus, setWaStatus] = useState(null);
+  const [incomingCall, setIncomingCall] = useState(null);
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [channelFilter, setChannelFilter] = useState("all");
@@ -75,6 +91,23 @@ export default function Inbox() {
     const id = setTimeout(() => setDebouncedSearch(search.trim()), 280);
     return () => clearTimeout(id);
   }, [search]);
+
+  // WhatsApp calling: learn outbound eligibility + listen for inbound calls.
+  useEffect(() => {
+    let ws; let alive = true;
+    (async () => {
+      try { const { data } = await api.get("/whatsapp/calling/status"); if (alive) setWaStatus(data); } catch (_) {}
+      try {
+        const token = localStorage.getItem("botnira_token");
+        const base = (process.env.REACT_APP_BACKEND_URL || "").replace(/^http/, "ws");
+        ws = new WebSocket(`${base}/api/ws/wa-call?token=${encodeURIComponent(token || "")}`);
+        ws.onmessage = (evt) => {
+          try { const m = JSON.parse(evt.data); if (m.type === "wa_call_incoming") setIncomingCall(m); } catch (_) {}
+        };
+      } catch (_) {}
+    })();
+    return () => { alive = false; try { ws?.close(); } catch (_) {} };
+  }, []);
 
   const buildQuery = (offset) => {
     const p = new URLSearchParams();
@@ -392,6 +425,21 @@ export default function Inbox() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {toCallable(detail?.conversation) && (
+              <button
+                data-testid="inbox-callback-btn"
+                onClick={() => setCallTarget({
+                  number: toCallable(detail.conversation),
+                  name: detail.conversation.customer_name,
+                  conversationId: active,
+                  provider: detail.conversation.channel === "whatsapp" && waStatus?.outbound_supported ? "whatsapp" : "twilio",
+                })}
+                className="text-sm font-bold border-2 border-black px-3 py-2 hover-lift bg-green-500 text-white flex items-center gap-2"
+                title="Call this customer back from your browser"
+              >
+                <Phone size={14} /> Call back
+              </button>
+            )}
             {detail?.call?.recording_url && (
               <a
                 href={detail.call.recording_url}
@@ -467,6 +515,15 @@ export default function Inbox() {
           </div>
         </div>
       </div>
+
+      {callTarget && <CallWidget target={callTarget} onClose={() => setCallTarget(null)} />}
+      {incomingCall && (
+        <CallWidget
+          target={{ name: incomingCall.name, number: incomingCall.from, provider: "whatsapp", conversationId: incomingCall.conversation_id }}
+          incoming={incomingCall}
+          onClose={() => setIncomingCall(null)}
+        />
+      )}
     </div>
   );
 }
