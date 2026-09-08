@@ -5,6 +5,7 @@ import { Send, CheckCircle2, Phone, MessageCircle, Mail, MessageSquare, Globe, S
 import DOMPurify from "dompurify";
 import RichText from "../../components/botnira/RichText";
 import CallWidget from "../../components/botnira/CallWidget";
+import Dialer from "../../components/botnira/Dialer";
 
 // Derive a callable E.164 number from a conversation. Only voice / sms /
 // whatsapp threads carry a phone number in customer_contact.
@@ -73,6 +74,7 @@ export default function Inbox() {
   const [active, setActive] = useState(null);
   const [detail, setDetail] = useState(null);
   const [callTarget, setCallTarget] = useState(null);
+  const [showDialer, setShowDialer] = useState(false);
   const [waStatus, setWaStatus] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
 
@@ -284,11 +286,14 @@ export default function Inbox() {
           <span className="text-xs font-bold tracking-widest uppercase">
             Threads <span data-testid="thread-count">({convs.length}/{total})</span>
           </span>
-          {channelFilter !== "all" && (
-            <span className="text-[10px] font-mono px-2 py-0.5 bg-yellow-200 border border-black">
-              {channelFilter.toUpperCase()} only
-            </span>
-          )}
+          <button
+            data-testid="new-call-btn"
+            onClick={() => setShowDialer(true)}
+            className="text-xs font-bold border-2 border-black px-3 py-1.5 bg-green-500 text-white flex items-center gap-1.5 hover:-translate-y-0.5 transition-transform"
+            title="Place a new phone call"
+          >
+            <Phone size={13} /> New call
+          </button>
         </div>
         {/* Mobile-only filters (the dedicated filter pane is hidden < lg) */}
         <div className="lg:hidden border-b-2 border-black px-3 py-2 space-y-2 bg-neutral-50 flex-shrink-0" data-testid="inbox-mobile-filters">
@@ -517,6 +522,17 @@ export default function Inbox() {
       </div>
 
       {callTarget && <CallWidget target={callTarget} onClose={() => setCallTarget(null)} />}
+      {showDialer && (
+        <Dialer
+          onClose={() => setShowDialer(false)}
+          onStart={({ number, name, conversationId }) => {
+            setShowDialer(false);
+            setCallTarget({ number, name, conversationId, provider: "twilio" });
+            setActive(conversationId);
+            load();
+          }}
+        />
+      )}
       {incomingCall && (
         <CallWidget
           target={{ name: incomingCall.name, number: incomingCall.from, provider: "whatsapp", conversationId: incomingCall.conversation_id }}

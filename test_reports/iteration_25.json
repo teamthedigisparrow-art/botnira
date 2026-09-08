@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only test of the new manual Twilio dialer in the vendor Inbox. Verified all six required behaviors: (1) New call button opens the dialer modal, (2) Call button is gated on E.164 validity (disabled for '+' alone and for '12345'), (3) Number can be entered via input field and via the 12-key dialpad; backspace works; (4) With a valid number (+447700900123) + optional name (Test Lead), clicking Call closes the modal, opens the CallWidget in the TOP-RIGHT (bbox x=1576 y=24 in 1920x900), and creates a new voice thread in the Inbox that contains the '\ud83d\udcde Outgoing call to +447700900123' message, (5) CallWidget ends in the expected 'Couldn\u2019t connect / Voice is not fully set up for this account yet.' error state with data-testid=call-error and call-done-btn (EXPECTED PASS per spec, no real Twilio subaccount), (6) Modal dismisses via both the X (dialer-close) and the overlay click. Mobile viewport (390x844): New call button visible in threads header, dialer modal opens and dialpad keys render correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Inbox (mobile channel filter)", "issues": ["React hydration console warning: <span> cannot be a child of <option> in the m-channel-filter <select>. Likely coming from injected instrumentation attributes (x-dynamic spans) but worth ensuring options render only plain text."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Dialer.press() has a subtle no-op for the '+' key: `n === '+' ? '+' : n) + k` means typing anything after '+' works fine, but if a user clears back to '+' and taps '*' or '#' the resulting '+*'/ '+#' will fail E.164 regex silently (button stays disabled). Consider disallowing '*'/'#' when the buffer is just '+' or providing inline feedback.",
+    "Dialer overlay click closes the modal on any click that isn\u2019t within the inner card (stopPropagation on modal). This is fine, but consider preventing close while a call POST is in-flight (loading=true) to avoid interrupting the request.",
+    "Inbox `toCallable` builds '+' + digits regardless of the leading char check \u2014 the two branches produce the same string; the ternary is dead code. Minor cleanup."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested", "frontend": "100%"},
+  "test_credentials": "kamal@botnira.com / Kamala98@hmu (vendor, exempt).",
+  "seed_data_creation": "Created one voice conversation via the flow: '+447700900123' / 'Test Lead' with an 'Outgoing call to +447700900123' seed message.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Dialer flow is fully wired: Inbox 'New call' -> Dialer -> POST /api/voice/browser/dial-prepare -> onStart sets callTarget (provider=twilio), reloads threads, opens CallWidget top-right. On this exempt test account the CallWidget expectedly ends in 'Couldn\u2019t connect (Voice not fully set up)' \u2014 that is by design and should not be flagged. If retesting, note that each successful Call creates a persistent voice thread; the backend reuses it on repeat dials to the same number.",
+  "rca of the issue": "N/A \u2014 no defects found in the dialer UI flow."
+}

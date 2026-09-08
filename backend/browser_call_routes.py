@@ -125,6 +125,38 @@ async def browser_token(request: _s._StripeRequest, user: dict = Depends(_s.requ
     }
 
 
+class DialPrepareReq(BaseModel):
+    number: str
+    name: Optional[str] = None
+
+
+@router.post("/dial-prepare")
+async def dial_prepare(req: DialPrepareReq, user: dict = Depends(_s.require_vendor)):
+    """Manual dialer: validate a typed number, ensure a voice conversation exists
+    (so the outgoing call shows in the Inbox), and return its conversation_id."""
+    vendor_id = user["vendor_id"]
+    ok, reason = await _s._vendor_can_use_channel(vendor_id, "voice")
+    if not ok:
+        raise HTTPException(402, reason)
+    number = (req.number or "").strip().replace(" ", "").replace("-", "")
+    if not _E164.match(number):
+        raise HTTPException(400, "Enter a valid number in international format, e.g. +14155550123")
+    conn = await _s.db.voice_connections.find_one({"vendor_id": vendor_id}, {"_id": 0})
+    if not conn or not conn.get("phone_number"):
+        raise HTTPException(400, "No phone number provisioned. Buy a number in Channels → Voice first.")
+    name = (req.name or "").strip()
+    conv = await _s.db.conversations.find_one(
+        {"vendor_id": vendor_id, "channel": "voice", "customer_contact": number}, {"_id": 0})
+    if not conv:
+        conv = await _s._ensure_conversation(vendor_id, None, "voice", name or number, number)
+        await _s._push_message(conv["id"], vendor_id, "agent",
+                               f"📞 Outgoing call to {number}", extra={"call_kind": "outbound_human"})
+    elif name and (conv.get("customer_name") in (None, "", number)):
+        await _s.db.conversations.update_one({"id": conv["id"]}, {"$set": {"customer_name": name}})
+    return {"conversation_id": conv["id"], "number": number,
+            "name": name or conv.get("customer_name") or number}
+
+
 @router.post("/twiml")
 async def browser_twiml(request: _s._StripeRequest):
     """TwiML App Voice URL. Twilio calls this when the browser places a call.
