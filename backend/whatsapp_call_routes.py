@@ -17,6 +17,7 @@ are logged (call_records + thread) but do NOT deduct Twilio voice minutes.
 """
 import json
 import asyncio
+import os
 from typing import Optional, Dict, Any, Set
 
 import httpx
@@ -26,6 +27,11 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 import server as _s
 
 router = APIRouter()
+
+# The WhatsApp Business CALLING API requires Graph API v23.0+ (messaging uses an
+# older pinned version elsewhere). Keep this independent + env-overridable.
+GRAPH_CALL_VERSION = os.environ.get("GRAPH_CALL_VERSION", "v23.0")
+GRAPH_CALL_BASE = f"https://graph.facebook.com/{GRAPH_CALL_VERSION}"
 
 # Business-initiated calling is unavailable for these business-number country
 # codes (Meta restriction). Longest prefixes first for correct matching.
@@ -66,7 +72,7 @@ def _outbound_supported(display_number: str) -> bool:
 
 async def _graph_get(path: str, token: str, params: dict = None):
     async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.get(f"{_s.GRAPH_BASE}/{path}",
+        r = await c.get(f"{GRAPH_CALL_BASE}/{path}",
                          headers={"Authorization": f"Bearer {token}"}, params=params or {})
         r.raise_for_status()
         return r.json()
@@ -74,12 +80,33 @@ async def _graph_get(path: str, token: str, params: dict = None):
 
 async def _graph_post(path: str, token: str, body: dict):
     async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.post(f"{_s.GRAPH_BASE}/{path}",
+        r = await c.post(f"{GRAPH_CALL_BASE}/{path}",
                          headers={"Authorization": f"Bearer {token}"}, json=body)
         if r.status_code >= 400:
             _s.logger.warning("[wa-call] graph %s -> %s %s", path, r.status_code, r.text[:300])
         r.raise_for_status()
         return r.json()
+
+
+def _friendly_calling_error(text: str) -> str:
+    """Turn Meta's raw calling-API error JSON into an actionable message."""
+    err = {}
+    try:
+        err = (json.loads(text) or {}).get("error", {}) or {}
+    except Exception:
+        pass
+    code = err.get("code")
+    if code == 138015:
+        return (
+            "WhatsApp calling can't be turned on for this number yet. Meta only allows it once the "
+            "number reaches a messaging limit of at least 2,000 customers per day AND your app is "
+            "subscribed to the 'calls' webhook field. New numbers start at a lower tier — keep sending "
+            "WhatsApp messages to quality contacts to grow your tier, subscribe to the 'calls' webhook "
+            "in Meta App settings, then try again. (Meta error 138015)"
+        )
+    msg = err.get("message") or "Meta could not enable WhatsApp calling for this number right now."
+    details = ((err.get("error_data") or {}).get("details")) or ""
+    return f"{msg}{(' — ' + details) if details else ''}"
 
 
 async def _get_wc(vendor_id: str) -> dict:
@@ -151,7 +178,7 @@ async def calling_enable(user: dict = Depends(_s.require_vendor)):
     try:
         await _graph_post(f"{wc['phone_number_id']}/settings", token, body)
     except httpx.HTTPStatusError as e:
-        raise HTTPException(400, f"Meta rejected enabling calling: {e.response.text[:200]}")
+        raise HTTPException(400, _friendly_calling_error(e.response.text))
     await _s.db.whatsapp_connections.update_one(
         {"vendor_id": user["vendor_id"]}, {"$set": {"calling_enabled": True}})
     display = await _display_number(wc)

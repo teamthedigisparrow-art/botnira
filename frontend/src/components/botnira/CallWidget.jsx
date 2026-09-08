@@ -106,7 +106,7 @@ export const CallWidget = ({ target, incoming, onClose }) => {
       if (m.type === "graph_result" && m.action === "connect") {
         const id = m.result?.calls?.[0]?.id; if (id) callIdRef.current = id;
       } else if (m.type === "call_permission_needed") {
-        setError("We asked the customer for permission to call on WhatsApp. They'll get a request — try again once they accept."); setPhase("error");
+        setError("WhatsApp requires the customer's permission before we can call them. We just sent them a call-permission request on WhatsApp — once they tap Accept, try the callback again."); setPhase("error");
       } else if (m.type === "wa_call_answer") {
         try { await pc.setRemoteDescription({ type: "answer", sdp: m.session?.sdp }); } catch (_) {}
       } else if (m.type === "wa_call_terminate") {

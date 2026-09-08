@@ -46,6 +46,11 @@ export default function WhatsAppCallingPanel() {
               ? "Customers can call you on WhatsApp, and your team can call them back over WhatsApp from the Inbox."
               : "Customers can call you on WhatsApp. Outbound WhatsApp calls aren't allowed for this number's country, so callbacks from the Inbox use a regular phone call instead."}
           </div>
+          {!status.calling_enabled && (
+            <div className="text-[11px] text-neutral-500 mt-2 max-w-md leading-snug border-l-2 border-neutral-300 pl-2">
+              Meta only allows calling once this number reaches a <b>2,000/day messaging tier</b> and your app is subscribed to the <b>calls</b> webhook. New numbers start lower — grow your tier first, or you'll see error 138015.
+            </div>
+          )}
         </div>
         {!status.calling_enabled && (
           <button data-testid="wa-calling-enable-btn" onClick={enable} disabled={enabling}
