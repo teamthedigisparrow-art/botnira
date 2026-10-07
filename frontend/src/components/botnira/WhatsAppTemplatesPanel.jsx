@@ -57,6 +57,7 @@ export default function WhatsAppTemplatesPanel({ phoneRegistered = true }) {
     body_text: "",
     footer_text: "",
     body_example_vars: [],
+    buttons: [],
   });
   const placeholdersInBody = useMemo(() => placeholderCount(form.body_text), [form.body_text]);
 
@@ -88,6 +89,7 @@ export default function WhatsAppTemplatesPanel({ phoneRegistered = true }) {
       body_text: "",
       footer_text: "",
       body_example_vars: [],
+      buttons: [],
     });
     setShowCreate(false);
   };
@@ -105,6 +107,12 @@ export default function WhatsAppTemplatesPanel({ phoneRegistered = true }) {
         header_text: form.header_text.trim() || null,
         footer_text: form.footer_text.trim() || null,
         body_example_vars: placeholdersInBody > 0 ? form.body_example_vars.slice(0, placeholdersInBody) : null,
+        buttons: (form.buttons || []).filter((b) => (b.text || "").trim()).slice(0, 2).map((b) => ({
+          type: b.type,
+          text: b.text.trim(),
+          url: b.type === "URL" ? (b.url || "").trim() : undefined,
+          phone_number: b.type === "PHONE_NUMBER" ? (b.phone_number || "").trim() : undefined,
+        })),
       };
       const { data } = await api.post("/whatsapp/templates", payload);
       toast.success(`Submitted "${data.submitted_name}" — awaiting Meta approval`);
@@ -320,6 +328,53 @@ export default function WhatsAppTemplatesPanel({ phoneRegistered = true }) {
               placeholder="Reply STOP to unsubscribe"
             />
           </div>
+
+          {/* Buttons (up to 2): quick-reply or call-to-action */}
+          <div data-testid="wa-tpl-buttons">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-neutral-600">Buttons (optional, up to 2)</label>
+              {(form.buttons?.length || 0) < 2 && (
+                <div className="flex gap-1">
+                  <button type="button" data-testid="wa-tpl-add-qr"
+                    onClick={() => setForm({ ...form, buttons: [...(form.buttons || []), { type: "QUICK_REPLY", text: "" }] })}
+                    className="text-[11px] font-bold border-2 border-black px-2 py-1 hover:bg-neutral-100">+ Quick reply</button>
+                  <button type="button" data-testid="wa-tpl-add-url"
+                    onClick={() => setForm({ ...form, buttons: [...(form.buttons || []), { type: "URL", text: "", url: "" }] })}
+                    className="text-[11px] font-bold border-2 border-black px-2 py-1 hover:bg-neutral-100">+ Visit website</button>
+                  <button type="button" data-testid="wa-tpl-add-phone"
+                    onClick={() => setForm({ ...form, buttons: [...(form.buttons || []), { type: "PHONE_NUMBER", text: "", phone_number: "" }] })}
+                    className="text-[11px] font-bold border-2 border-black px-2 py-1 hover:bg-neutral-100">+ Call</button>
+                </div>
+              )}
+            </div>
+            <div className="space-y-2 mt-1">
+              {(form.buttons || []).map((b, i) => {
+                const upd = (patch) => { const n = [...form.buttons]; n[i] = { ...n[i], ...patch }; setForm({ ...form, buttons: n }); };
+                return (
+                  <div key={i} className="border-2 border-black p-2 bg-white" data-testid={`wa-tpl-button-${i}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono border border-black px-1.5 py-0.5">
+                        {b.type === "URL" ? "URL" : b.type === "PHONE_NUMBER" ? "CALL" : "QUICK REPLY"}
+                      </span>
+                      <input data-testid={`wa-tpl-button-text-${i}`} maxLength={25} value={b.text}
+                        onChange={(e) => upd({ text: e.target.value })} placeholder="Button label (≤25 chars)"
+                        className="flex-1 border-2 border-black px-2 py-1 text-sm" />
+                      <button type="button" onClick={() => setForm({ ...form, buttons: form.buttons.filter((_, j) => j !== i) })}
+                        className="text-neutral-500 hover:text-red-600" data-testid={`wa-tpl-button-remove-${i}`}><X size={14} /></button>
+                    </div>
+                    {b.type === "URL" && (
+                      <input data-testid={`wa-tpl-button-url-${i}`} value={b.url || ""} onChange={(e) => upd({ url: e.target.value })}
+                        placeholder="https://example.com" className="w-full mt-2 border-2 border-black px-2 py-1 text-sm font-mono" />
+                    )}
+                    {b.type === "PHONE_NUMBER" && (
+                      <input data-testid={`wa-tpl-button-phone-${i}`} value={b.phone_number || ""} onChange={(e) => upd({ phone_number: e.target.value })}
+                        placeholder="+14165550123" className="w-full mt-2 border-2 border-black px-2 py-1 text-sm font-mono" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           <div className="flex gap-2 pt-1">
             <button
               data-testid="wa-tpl-submit"
@@ -378,6 +433,18 @@ export default function WhatsAppTemplatesPanel({ phoneRegistered = true }) {
                   {header && <div className="mt-2 text-xs font-bold text-neutral-700">{header}</div>}
                   <div className="mt-1 text-sm whitespace-pre-wrap break-words">{body}</div>
                   {footer && <div className="mt-1 text-xs text-neutral-500">{footer}</div>}
+                  {(() => {
+                    const btns = ((tpl.components || []).find((c) => c.type === "BUTTONS")?.buttons) || [];
+                    return btns.length ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {btns.map((b, i) => (
+                          <span key={i} className="text-[10px] font-bold text-[#002FA7] border border-[#002FA7] rounded-full px-2 py-0.5">
+                            {b.type === "URL" ? "🔗 " : b.type === "PHONE_NUMBER" ? "📞 " : "💬 "}{b.text}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <div className="flex items-center gap-1">
                   {status === "APPROVED" && (

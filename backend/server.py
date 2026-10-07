@@ -2319,6 +2319,13 @@ async def whatsapp_test_send(req: WhatsAppTestReq, user: dict = Depends(require_
 
 
 # --- WhatsApp message templates (24h+ session re-engagement) -----------------
+class WhatsAppTemplateButton(BaseModel):
+    type: str = "QUICK_REPLY"          # QUICK_REPLY | URL | PHONE_NUMBER
+    text: str                           # button label (<=25 chars)
+    url: Optional[str] = None           # for URL
+    phone_number: Optional[str] = None  # for PHONE_NUMBER
+
+
 class WhatsAppTemplateCreateReq(BaseModel):
     name: str
     language: str = "en_US"
@@ -2327,6 +2334,7 @@ class WhatsAppTemplateCreateReq(BaseModel):
     body_example_vars: Optional[List[str]] = None  # sample values for {{1}}, {{2}}...
     header_text: Optional[str] = None
     footer_text: Optional[str] = None
+    buttons: Optional[List[WhatsAppTemplateButton]] = None  # up to 2 (quick-reply or CTA)
 
 
 class WhatsAppTemplateSendReq(BaseModel):
@@ -2334,6 +2342,47 @@ class WhatsAppTemplateSendReq(BaseModel):
     template_name: str
     language: str = "en_US"
     body_vars: Optional[List[str]] = None  # ordered values for {{1}}, {{2}}...
+
+
+async def _update_wa_delivery_status(st: dict):
+    """Map a WhatsApp delivery receipt (statuses[]) onto the matching outbound
+    campaign recipient and recompute campaign delivered/read/failed counts."""
+    wamid = st.get("id")
+    dstatus = (st.get("status") or "").lower()
+    if not wamid or not dstatus:
+        return
+    rec = await db.sales_wa_campaign_recipients.find_one({"message_id": wamid}, {"_id": 0})
+    if not rec:
+        return
+    upd = {"delivery_status": dstatus, "updated_at": now_iso()}
+    if dstatus == "delivered":
+        upd["delivered_at"] = now_iso()
+    elif dstatus == "read":
+        upd["read_at"] = now_iso()
+    elif dstatus == "failed":
+        errs = st.get("errors") or []
+        e0 = errs[0] if errs else {}
+        detail = ""
+        if isinstance(e0.get("error_data"), dict):
+            detail = e0["error_data"].get("details") or ""
+        msg = f"{e0.get('code', '')} {e0.get('title', '')}".strip()
+        if detail:
+            msg = f"{msg} — {detail}" if msg else detail
+        upd["status"] = "failed"
+        upd["error"] = msg or "Delivery failed"
+    await db.sales_wa_campaign_recipients.update_one({"id": rec["id"]}, {"$set": upd})
+
+    cid = rec.get("campaign_id")
+    if cid:
+        delivered = await db.sales_wa_campaign_recipients.count_documents(
+            {"campaign_id": cid, "delivery_status": {"$in": ["delivered", "read"]}})
+        read = await db.sales_wa_campaign_recipients.count_documents(
+            {"campaign_id": cid, "delivery_status": "read"})
+        failed = await db.sales_wa_campaign_recipients.count_documents(
+            {"campaign_id": cid, "$or": [{"status": "failed"}, {"delivery_status": "failed"}]})
+        await db.sales_wa_campaigns.update_one(
+            {"id": cid}, {"$set": {"delivered_count": delivered, "read_count": read,
+                                   "failed_count": failed, "updated_at": now_iso()}})
 
 
 def _normalize_template_name(name: str) -> str:
@@ -2409,6 +2458,28 @@ async def whatsapp_templates_create(
 
     if req.footer_text and req.footer_text.strip():
         components.append({"type": "FOOTER", "text": req.footer_text.strip()[:60]})
+
+    # Buttons (quick-reply and/or call-to-action). Meta allows up to ~10 but we
+    # cap at 2 here; QUICK_REPLY and URL/PHONE_NUMBER can't be mixed arbitrarily,
+    # but Meta accepts a mix of CTA types. Build the BUTTONS component.
+    btns = []
+    for b in (req.buttons or [])[:2]:
+        bt = (b.type or "QUICK_REPLY").upper()
+        label = (b.text or "").strip()[:25]
+        if not label:
+            continue
+        if bt == "URL":
+            if not (b.url or "").strip():
+                raise HTTPException(status_code=400, detail="URL button needs a url")
+            btns.append({"type": "URL", "text": label, "url": b.url.strip()})
+        elif bt == "PHONE_NUMBER":
+            if not (b.phone_number or "").strip():
+                raise HTTPException(status_code=400, detail="Call button needs a phone_number")
+            btns.append({"type": "PHONE_NUMBER", "text": label, "phone_number": b.phone_number.strip()})
+        else:
+            btns.append({"type": "QUICK_REPLY", "text": label})
+    if btns:
+        components.append({"type": "BUTTONS", "buttons": btns})
 
     payload = {
         "name": name,
@@ -2570,6 +2641,15 @@ async def whatsapp_webhook(request: _FastAPIRequest):
                         await handle_whatsapp_calls(value, wc)
                     except Exception as e:
                         logger.warning("wa call handling failed: %s", e)
+
+                # Delivery receipts (sent/delivered/read/FAILED) for outbound
+                # campaign messages — this is how a campaign row goes from "sent"
+                # to delivered/read, or surfaces the real failure reason.
+                for st in value.get("statuses", []) or []:
+                    try:
+                        await _update_wa_delivery_status(st)
+                    except Exception as e:
+                        logger.warning("wa delivery status failed: %s", e)
 
                 # Inbound messages from customers
                 for msg in value.get("messages", []) or []:

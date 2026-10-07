@@ -1478,11 +1478,16 @@ function WaCampaignsPanel({ lists, waConnected }) {
                               <td className="px-2 py-1 font-mono">{r.phone}</td>
                               <td className="px-2 py-1">{r.name || "—"}</td>
                               <td className="px-2 py-1">
-                                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 ${
-                                  r.status === "sent" ? "bg-green-200 text-green-900"
-                                  : r.status === "failed" ? "bg-red-200 text-red-900"
-                                  : "bg-neutral-200"
-                                }`}>{r.status}</span>
+                                {(() => {
+                                  const ds = r.delivery_status || r.status;
+                                  const label = (ds || "sent").toUpperCase();
+                                  const cls = ds === "read" ? "bg-blue-200 text-blue-900"
+                                    : ds === "delivered" ? "bg-green-200 text-green-900"
+                                    : ds === "failed" || r.status === "failed" ? "bg-red-200 text-red-900"
+                                    : ds === "sent" ? "bg-amber-200 text-amber-900"
+                                    : "bg-neutral-200";
+                                  return <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 ${cls}`}>{label}</span>;
+                                })()}
                               </td>
                               <td className="px-2 py-1 font-mono text-[10px]">{r.sent_at ? new Date(r.sent_at).toLocaleString() : "—"}</td>
                               <td className="px-2 py-1 text-red-700 text-[10px]">{r.error || ""}</td>
