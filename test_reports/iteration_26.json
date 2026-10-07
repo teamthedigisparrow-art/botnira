@@ -1,0 +1,27 @@
+{
+  "summary": "Verified WhatsApp delivery-status webhook bug fix + Template Buttons feature (both backend & frontend). All targeted checks pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": {
+    "test_wa_delivery_status.py": "5/5 PASS — delivered recipient marked delivered; failed recipient marked failed with Meta reason '131049 Healthy ecosystem engagement limit — Marketing message not delivered.' surfaced; campaign counts delivered=1 failed=1 correct.",
+    "test_wa_calling_error.py": "3/3 PASS — graph v23 URL, friendly 138015 mapping, friendly generic mapping.",
+    "POST /api/whatsapp/templates with buttons payload": "PASS (expected) — kamal@botnira.com returns HTTP 400 'WhatsApp not connected' (no 422). Buttons payload accepted by Pydantic model & request processed up to Meta step as expected.",
+    "Frontend Templates panel UI (kamal@thedigisparrow.com, has active WA connection)": "PASS — [wa-templates-panel] visible, [wa-tpl-create-btn] opens [wa-tpl-create-form] which contains [wa-tpl-buttons] section with [wa-tpl-add-qr], [wa-tpl-add-url], [wa-tpl-add-phone]. Clicking +Visit website adds [wa-tpl-button-0] with [wa-tpl-button-text-0], [wa-tpl-button-url-0], [wa-tpl-button-remove-0]. Clicking +Call adds [wa-tpl-button-1] with [wa-tpl-button-phone-1]. Max 2 enforced: all three add-buttons hidden after 2 added. Remove restores add buttons."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_wa_delivery_status.py",
+    "/app/backend/tests/test_wa_calling_error.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "kamal@botnira.com (the primary exempt test account named in the review request) does NOT have a WhatsApp Meta connection, so the Message Templates panel is not rendered on /app/channels for that user (panel is gated on wa.connection.status === 'active'). The UI test had to be performed with kamal@thedigisparrow.com (also exempt) which has an active WA connection. If the team wants kamal@botnira.com to self-serve the panel, seed a dev WA connection for that vendor.",
+    "WhatsAppTemplatesPanel.jsx — buttons UI is well-wired with testids and max-2 cap works. No issues observed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "kamal@botnira.com / Kamala98@hmu (used for backend buttons-accept check — WA not connected on this account); kamal@thedigisparrow.com / Kamala98@hmu (used for frontend templates panel UI check — has active WA connection).",
+  "seed_data_creation": "test_wa_delivery_status.py seeds its own campaign + 2 recipients and cleans up / is isolated.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Delivery-status webhook fix and template-buttons feature both verified. If retesting the UI, use kamal@thedigisparrow.com since kamal@botnira.com has no WA Meta connection and thus the templates panel is hidden for that vendor."
+}
